@@ -1,0 +1,44 @@
+name: CMS AI Automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      conversation_id:
+        description: CMS AI conversation ID
+        required: true
+        type: string
+      job_id:
+        description: CMS AI job ID
+        required: true
+        type: string
+
+concurrency:
+  group: cms-ai-${{ inputs.conversation_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+
+jobs:
+  cms-ai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Repositoryをcheckout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Node.jsを準備
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: CMS AIを実行
+        uses: acecore-systems/cms-ai/runner@v1
+        with:
+          job-id: ${{ inputs.job_id }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
