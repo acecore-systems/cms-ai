@@ -81,15 +81,16 @@ async function createInstallationToken(env: AppEnv, site: SiteConfig) {
 
 async function createAppJwt(env: AppEnv) {
   const clientId = String(env.CMS_AI_GITHUB_APP_CLIENT_ID || "").trim();
-  const privateKey = String(env.CMS_AI_GITHUB_APP_PRIVATE_KEY || "")
+  const configuredPrivateKey = String(env.CMS_AI_GITHUB_APP_PRIVATE_KEY || "")
     .replace(/\\n/g, "\n")
     .trim();
 
-  if (!clientId || !privateKey.includes("BEGIN PRIVATE KEY")) {
+  if (!clientId || !configuredPrivateKey) {
     throw new HttpError(503, "CMS AI GitHub Appの設定を確認できません。");
   }
 
   try {
+    const privateKey = normalizePrivateKey(configuredPrivateKey);
     const key = await importPKCS8(privateKey, "RS256");
     const now = Math.floor(Date.now() / 1000);
 
@@ -102,6 +103,87 @@ async function createAppJwt(env: AppEnv) {
   } catch {
     throw new HttpError(503, "CMS AI GitHub Appの秘密鍵を確認できません。");
   }
+}
+
+function normalizePrivateKey(privateKey: string) {
+  if (privateKey.includes("-----BEGIN PRIVATE KEY-----")) {
+    return privateKey;
+  }
+
+  const match = privateKey.match(
+    /^-----BEGIN RSA PRIVATE KEY-----\s*([A-Za-z0-9+/=\s]+?)\s*-----END RSA PRIVATE KEY-----$/,
+  );
+  if (!match) throw new Error("Unsupported GitHub App private key format.");
+
+  const pkcs1 = decodeBase64(match[1].replace(/\s/g, ""));
+  const version = Uint8Array.of(0x02, 0x01, 0x00);
+  const rsaEncryptionAlgorithm = Uint8Array.of(
+    0x30,
+    0x0d,
+    0x06,
+    0x09,
+    0x2a,
+    0x86,
+    0x48,
+    0x86,
+    0xf7,
+    0x0d,
+    0x01,
+    0x01,
+    0x01,
+    0x05,
+    0x00,
+  );
+  const privateKeyOctetString = encodeDerValue(0x04, pkcs1);
+  const pkcs8 = encodeDerValue(
+    0x30,
+    concatBytes(version, rsaEncryptionAlgorithm, privateKeyOctetString),
+  );
+
+  return encodePem("PRIVATE KEY", pkcs8);
+}
+
+function encodeDerValue(tag: number, value: Uint8Array) {
+  return concatBytes(Uint8Array.of(tag), encodeDerLength(value.length), value);
+}
+
+function encodeDerLength(length: number) {
+  if (length < 0x80) return Uint8Array.of(length);
+
+  const bytes: number[] = [];
+  for (let remaining = length; remaining > 0; remaining >>>= 8) {
+    bytes.unshift(remaining & 0xff);
+  }
+  return Uint8Array.of(0x80 | bytes.length, ...bytes);
+}
+
+function concatBytes(...parts: Uint8Array[]) {
+  const result = new Uint8Array(
+    parts.reduce((length, part) => length + part.length, 0),
+  );
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result;
+}
+
+function decodeBase64(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function encodePem(label: string, value: Uint8Array) {
+  let binary = "";
+  for (const byte of value) binary += String.fromCharCode(byte);
+  const base64 = btoa(binary);
+  const lines = base64.match(/.{1,64}/g) || [];
+  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
 }
 
 function githubHeaders(token: string) {
