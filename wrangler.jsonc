@@ -5,6 +5,12 @@
   "compatibility_date": "2026-08-31",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "cms-ai.acecore.net",
+      "custom_domain": true,
+    },
+  ],
   "ai": {
     "binding": "AI",
   },
@@ -22,7 +28,7 @@
     "CMS_AI_GITHUB_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
     "CMS_AI_MODEL": "@cf/zai-org/glm-5.3",
     "CMS_AI_RUNNER_AUDIENCE": "https://cms-ai.acecore.net/runner",
-    "CMS_AI_SITE_AUDIENCES": "{}",
+    "CMS_AI_SITE_AUDIENCES": "{\"acecore-net\":[\"d8314ba8196a4b69ca22614ec1a823061424ab26fe3c6d6a86368ea968af6264\"],\"acecore-systems\":[\"57bc3a48647d76bd098cfa1fd2001711ea9ef7e7d98e0343a7e566d6f3426a15\"],\"aceserver-portal\":[\"3c891371aa539493f09b2030c67d9d7c42011ce274b2aa42fdad0ad90e809265\"]}",
   },
   "observability": {
     "enabled": true,
