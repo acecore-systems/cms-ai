@@ -12,6 +12,7 @@
     {
       "binding": "CMS_AI_DB",
       "database_name": "cms-ai",
+      "database_id": "2ba0d709-4600-482f-8256-3d12005820b3",
       "migrations_dir": "migrations",
     },
   ],
