@@ -26,7 +26,13 @@ describe("shared client and runner assets", () => {
     expect(runner).toMatch(/isWritablePath/);
     expect(runner).toMatch(/allowedScripts/);
     expect(runner).not.toMatch(/'pr',\s*'merge'|auto.?merge\s*=\s*true/i);
+    expect(workflow).toMatch(/workflow_dispatch:/);
+    expect(workflow).not.toMatch(/repository_dispatch:/);
+    expect(workflow).toMatch(/contents: write/);
     expect(workflow).toMatch(/id-token: write/);
+    expect(workflow).toMatch(/pull-requests: write/);
+    expect(workflow).toMatch(/actions\/checkout@v7/);
+    expect(workflow).toMatch(/actions\/setup-node@v7/);
     expect(workflow).toMatch(/acecore-systems\/cms-ai\/runner@v1/);
   });
 

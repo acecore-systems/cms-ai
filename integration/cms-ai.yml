@@ -22,19 +22,22 @@ permissions:
   pull-requests: write
 
 jobs:
-  cms-ai:
+  implement:
+    if: ${{ inputs.job_id != '' }}
+    name: CMS AI request
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Repositoryをcheckout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: main
 
       - name: Node.jsを準備
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: .node-version
 
       - name: CMS AIを実行
         uses: acecore-systems/cms-ai/runner@v1

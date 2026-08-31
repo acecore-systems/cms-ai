@@ -85,14 +85,11 @@ export async function runInference(
     },
     temperature: 0.1,
   };
-  const ai = env.AI as unknown as {
-    run(model: string, input: unknown): Promise<unknown>;
-  };
   const model = getModel(env);
   let response: unknown;
 
   try {
-    response = await ai.run(model, request);
+    response = await env.AI.run(model, request);
   } catch (error) {
     const { response_format: _responseFormat, ...fallbackRequest } = request;
 
@@ -103,7 +100,7 @@ export async function runInference(
         reason: error instanceof Error ? error.message : String(error),
       }),
     );
-    response = await ai.run(model, fallbackRequest);
+    response = await env.AI.run(model, fallbackRequest);
   }
 
   const parsed = parseInferenceResponse(site, response);

@@ -15,13 +15,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Repositoryをcheckout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Node.jsを準備
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           cache: npm
-          node-version: 22
+          node-version-file: .node-version
 
       - name: 依存関係を再現
         run: npm ci
