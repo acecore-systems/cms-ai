@@ -76,7 +76,7 @@ export async function runInference(
             type: "array",
           },
           clarification: { type: "string" },
-          summary: { type: "string" },
+          summary: { minLength: 1, type: "string" },
         },
         required: ["summary", "clarification", "changes"],
         type: "object",
@@ -180,17 +180,16 @@ export function parseInferenceResponse(
     throw new HttpError(502, "AIの応答形式を確認できません。");
   }
 
-  const summary = limitedText(parsed.summary, 2_000);
+  const modelSummary = limitedText(parsed.summary, 2_000);
   const clarification = limitedText(parsed.clarification, 2_000);
   const changes = parseChanges(site, parsed.changes);
-
-  if (!summary) {
-    throw new HttpError(502, "AIの要約を確認できません。");
-  }
 
   if (changes.length === 0 && !clarification) {
     throw new HttpError(502, "AIから回答または変更案を受け取れませんでした。");
   }
+
+  const summary =
+    modelSummary || clarification || "サイト変更案を作成しました。";
 
   return { changes, clarification, summary };
 }

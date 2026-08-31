@@ -131,6 +131,22 @@ describe("Workers AI inference", () => {
       summary: "回答しました。",
     });
   });
+
+  it("会話回答があれば空のsummaryを安全に補完する", () => {
+    expect(
+      parseInferenceResponse(site, {
+        response: {
+          changes: [],
+          clarification: "Cherry CMS AI canary OK",
+          summary: "",
+        },
+      }),
+    ).toEqual({
+      changes: [],
+      clarification: "Cherry CMS AI canary OK",
+      summary: "Cherry CMS AI canary OK",
+    });
+  });
 });
 
 function job(overrides: Partial<Job> = {}): Job {
