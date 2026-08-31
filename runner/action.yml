@@ -1,0 +1,24 @@
+name: Acecore CMS AI runner
+description: CMS AIの会話ジョブを検証し、確認用Pull Requestへ反映します。
+inputs:
+  job-id:
+    description: CMS AI job ID
+    required: true
+  runner-url:
+    description: Central CMS AI runner endpoint
+    required: false
+    default: https://cms-ai.acecore.net/runner
+  runner-audience:
+    description: GitHub Actions OIDC audience
+    required: false
+    default: https://cms-ai.acecore.net/runner
+runs:
+  using: composite
+  steps:
+    - name: CMS AI jobを実行
+      shell: bash
+      env:
+        CMS_AI_JOB_ID: ${{ inputs.job-id }}
+        CMS_AI_RUNNER_AUDIENCE: ${{ inputs.runner-audience }}
+        CMS_AI_RUNNER_URL: ${{ inputs.runner-url }}
+      run: node "$GITHUB_ACTION_PATH/index.mjs" "$CMS_AI_JOB_ID"

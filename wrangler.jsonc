@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cms-ai",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "ai": {
+    "binding": "AI",
+  },
+  "d1_databases": [
+    {
+      "binding": "CMS_AI_DB",
+      "database_name": "cms-ai",
+      "database_id": "2ba0d709-4600-482f-8256-3d12005820b3",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "vars": {
+    "CMS_AI_ACCESS_TEAM_DOMAIN": "https://acecore.cloudflareaccess.com",
+    "CMS_AI_AUTOMERGE_ENABLED": "false",
+    "CMS_AI_GITHUB_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
+    "CMS_AI_MODEL": "@cf/zai-org/glm-5.3",
+    "CMS_AI_RUNNER_AUDIENCE": "https://cms-ai.acecore.net/runner",
+    "CMS_AI_SITE_AUDIENCES": "{}",
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1,
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.05,
+    },
+  },
+}
