@@ -26,12 +26,13 @@ jobs:
     if: ${{ inputs.job_id != '' }}
     name: CMS AI request
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Repositoryをcheckout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: main
 
       - name: Node.jsを準備

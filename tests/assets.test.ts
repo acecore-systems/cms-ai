@@ -25,6 +25,12 @@ describe("shared client and runner assets", () => {
     expect(runner).toMatch(/ACTIONS_ID_TOKEN_REQUEST_URL/);
     expect(runner).toMatch(/isWritablePath/);
     expect(runner).toMatch(/allowedScripts/);
+    expect(runner).toMatch(/assertNoPersistedGitHubCredential/);
+    expect(runner).toMatch(/assertNoSymlinkPath/);
+    expect(runner).toMatch(/cms-ai-validation-/);
+    expect(runner).toMatch(/runSandboxCommand/);
+    expect(runner).toMatch(/allowNetwork \? "bridge" : "none"/);
+    expect(runner).not.toMatch(/runCommand\("npm"/);
     expect(runner).not.toMatch(/'pr',\s*'merge'|auto.?merge\s*=\s*true/i);
     expect(workflow).toMatch(/workflow_dispatch:/);
     expect(workflow).not.toMatch(/repository_dispatch:/);
@@ -32,8 +38,10 @@ describe("shared client and runner assets", () => {
     expect(workflow).toMatch(/id-token: write/);
     expect(workflow).toMatch(/pull-requests: write/);
     expect(workflow).toMatch(/actions\/checkout@v7/);
+    expect(workflow).toMatch(/persist-credentials: false/);
     expect(workflow).toMatch(/actions\/setup-node@v7/);
     expect(workflow).toMatch(/acecore-systems\/cms-ai\/runner@v1/);
+    expect(workflow).toMatch(/timeout-minutes: 45/);
   });
 
   it("Worker設定はGLM-5.3を使いautomergeをfalseに固定する", async () => {

@@ -1,6 +1,24 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, extname, relative, resolve, sep } from "node:path";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import {
+  basename,
+  dirname,
+  extname,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -14,6 +32,13 @@ const runnerAudience = process.env.CMS_AI_RUNNER_AUDIENCE || runnerUrl;
 const workspace = resolve(process.env.GITHUB_WORKSPACE || process.cwd());
 const maxContextBytes = 768 * 1024;
 const maxConversationChangedPaths = 100;
+const validationExcludedDirectories = new Set([
+  ".astro",
+  ".wrangler",
+  "coverage",
+  "dist",
+  "node_modules",
+]);
 const allowedExtensions = new Set([
   ".astro",
   ".css",
@@ -58,7 +83,6 @@ async function main() {
     summary: "AIが会話と関連ソースを確認しています。",
   });
   const existingBranch = await prepareConversationBranch(job, policy);
-  await installDependencies(policy);
   let validationFeedback = "";
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -386,6 +410,7 @@ async function applyChanges(changes, policy) {
 
     const path = normalizePath(change.path);
     const absolute = resolveWorkspacePath(path);
+    await assertNoSymlinkPath(path);
     const original = await readFile(absolute, "utf8").catch((error) => {
       if (error?.code === "ENOENT") return null;
       throw error;
@@ -398,6 +423,23 @@ async function applyChanges(changes, policy) {
   return originals;
 }
 
+async function assertNoSymlinkPath(path) {
+  let current = workspace;
+
+  for (const part of path.split("/")) {
+    current = resolve(current, part);
+    const stats = await lstat(current).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+
+    if (!stats) return;
+    if (stats.isSymbolicLink()) {
+      throw new Error("symbolic link経由のファイル変更は許可されていません。");
+    }
+  }
+}
+
 async function restoreChanges(originals) {
   for (const [path, original] of originals) {
     const absolute = resolveWorkspacePath(path);
@@ -407,31 +449,191 @@ async function restoreChanges(originals) {
 }
 
 async function runValidation(policy) {
+  await assertNoPersistedGitHubCredential();
+  const nodeVersion = await readNodeVersion();
+  const sandbox = await createValidationSandbox();
   const output = [];
-  const cwd = resolveWorkspacePath(policy.packageDirectory, true);
 
-  for (const entry of policy.validationCommands) {
-    const result = await runCommand(entry.command, entry.args, { cwd });
-    output.push(
-      "$ " + entry.command + " " + entry.args.join(" ") + "\n" + result.output,
+  try {
+    const install = await runSandboxCommand(
+      sandbox.workspace,
+      policy.packageDirectory,
+      nodeVersion,
+      "npm",
+      ["ci", "--no-audit", "--no-fund"],
+      true,
     );
-    if (!result.ok) {
-      return { ok: false, output: trimOutput(output.join("\n\n"), 16_000) };
+    output.push("$ npm ci --no-audit --no-fund\n" + install.output);
+
+    if (!install.ok) {
+      return {
+        ok: false,
+        output: trimOutput(output.join("\n\n"), 16_000),
+      };
     }
+
+    for (const entry of policy.validationCommands) {
+      const result = await runSandboxCommand(
+        sandbox.workspace,
+        policy.packageDirectory,
+        nodeVersion,
+        entry.command,
+        entry.args,
+        false,
+      );
+      output.push(
+        "$ " +
+          entry.command +
+          " " +
+          entry.args.join(" ") +
+          "\n" +
+          result.output,
+      );
+      if (!result.ok) {
+        return {
+          ok: false,
+          output: trimOutput(output.join("\n\n"), 16_000),
+        };
+      }
+    }
+  } finally {
+    await removeValidationSandbox(sandbox.root);
   }
 
   return { ok: true, output: trimOutput(output.join("\n\n"), 4_000) };
 }
 
-async function installDependencies(policy) {
-  const cwd = resolveWorkspacePath(policy.packageDirectory, true);
-  const result = await runCommand("npm", ["ci"], { cwd });
+async function assertNoPersistedGitHubCredential() {
+  const result = await runCommand("git", [
+    "config",
+    "--local",
+    "--get-regexp",
+    "^http\\..*\\.extraheader$",
+  ]);
 
-  if (!result.ok) {
-    throw new Error(
-      "依存関係を再現できませんでした。\n" + trimOutput(result.output, 4_000),
-    );
+  if (result.ok && result.output.trim()) {
+    throw new Error("checkout資格情報がworktreeへ残っているため停止しました。");
   }
+}
+
+async function readNodeVersion() {
+  const value = (
+    await readFile(resolveWorkspacePath(".node-version"), "utf8")
+  ).trim();
+
+  if (!/^\d+\.\d+\.\d+$/.test(value)) {
+    throw new Error("検証用Node.jsのversionを確認できません。");
+  }
+
+  return value;
+}
+
+async function createValidationSandbox() {
+  const root = await mkdtemp(join(resolve(tmpdir()), "cms-ai-validation-"));
+  const sandboxWorkspace = join(root, "workspace");
+
+  try {
+    await cp(workspace, sandboxWorkspace, {
+      filter(source) {
+        const path = relative(workspace, source).replaceAll("\\", "/");
+
+        return (
+          !path ||
+          !path
+            .split("/")
+            .some((part) => validationExcludedDirectories.has(part))
+        );
+      },
+      recursive: true,
+      verbatimSymlinks: true,
+    });
+  } catch (error) {
+    await removeValidationSandbox(root);
+    throw error;
+  }
+
+  return { root, workspace: sandboxWorkspace };
+}
+
+async function removeValidationSandbox(root) {
+  const resolvedRoot = resolve(root);
+
+  if (
+    dirname(resolvedRoot) !== resolve(tmpdir()) ||
+    !basename(resolvedRoot).startsWith("cms-ai-validation-")
+  ) {
+    throw new Error("検証用一時directoryの削除範囲を確認できません。");
+  }
+
+  await rm(resolvedRoot, { force: true, recursive: true });
+}
+
+function runSandboxCommand(
+  sandboxWorkspace,
+  packageDirectory,
+  nodeVersion,
+  command,
+  args,
+  allowNetwork,
+) {
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  const gid = typeof process.getgid === "function" ? process.getgid() : null;
+
+  if (!Number.isInteger(uid) || !Number.isInteger(gid)) {
+    throw new Error("検証sandboxはLinux runnerで実行してください。");
+  }
+
+  const normalizedPackageDirectory =
+    packageDirectory === "." ? "" : normalizePath(packageDirectory);
+
+  if (normalizedPackageDirectory === null) {
+    throw new Error("検証対象directoryを確認できません。");
+  }
+
+  const packagePath = normalizedPackageDirectory
+    ? "/workspace/" + normalizedPackageDirectory
+    : "/workspace";
+  const dockerArgs = [
+    "run",
+    "--rm",
+    "--init",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "512",
+    "--memory",
+    "4g",
+    "--cpus",
+    "2",
+    "--user",
+    `${uid}:${gid}`,
+    "--network",
+    allowNetwork ? "bridge" : "none",
+    "--env",
+    "CI=true",
+    "--env",
+    "HOME=/tmp",
+    "--mount",
+    `type=bind,src=${sandboxWorkspace},dst=/workspace`,
+    "--workdir",
+    packagePath,
+  ];
+
+  for (const name of [
+    "GITHUB_ACTIONS",
+    "GITHUB_REF",
+    "GITHUB_REF_NAME",
+    "GITHUB_REPOSITORY",
+    "GITHUB_SHA",
+  ]) {
+    const value = process.env[name];
+    if (value) dockerArgs.push("--env", `${name}=${value}`);
+  }
+
+  dockerArgs.push(`node:${nodeVersion}-bookworm`, command, ...args);
+  return runCommand("docker", dockerArgs);
 }
 
 async function createPullRequest(
@@ -815,9 +1017,23 @@ async function runRequired(command, args, options = {}) {
 
 async function runCommand(command, args, options = {}) {
   try {
+    const environment = { ...process.env, CI: "true" };
+
+    if (command === "git") {
+      const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
+
+      if (token) {
+        environment.GIT_CONFIG_COUNT = "1";
+        environment.GIT_CONFIG_KEY_0 = "http.https://github.com/.extraheader";
+        environment.GIT_CONFIG_VALUE_0 =
+          "AUTHORIZATION: basic " +
+          Buffer.from("x-access-token:" + token).toString("base64");
+      }
+    }
+
     const result = await execFileAsync(command, args, {
       cwd: options.cwd || workspace,
-      env: { ...process.env, CI: "true" },
+      env: environment,
       maxBuffer: 2 * 1024 * 1024,
       windowsHide: true,
     });

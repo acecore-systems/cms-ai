@@ -16,7 +16,7 @@ AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤で�
 
 - `src/`: Cloudflare Worker。Access JWT検証、D1会話・権限、Workers AI、GitHub workflow起動を担当します。
 - `migrations/`: 共通D1のschemaです。
-- `runner/`: 各サイトのGitHub Actionsから呼び出す共通Actionです。
+- `runner/`: 各サイトのGitHub Actionsから呼び出す共通Actionです。AI生成コードの依存関係インストール・テスト・ビルドは、GitHub/OIDC資格情報を渡さない一時Docker workspaceだけで実行します。
 - `client/`: 各Sveltia CMSへvendorする会話UIです。
 - `integration/`: Pages Functions用の薄いService Binding adapterとworkflow例です。
 
@@ -32,6 +32,8 @@ npm run deploy:dry-run
 ```
 
 Workers AIの実推論はremote bindingが必要です。通常の単体テストではfixtureを使い、実モデル確認は本番反映前の明示的な検証で行います。
+
+共有runnerはGitHub-hosted Linux runnerのDockerを利用します。依存関係の取得時だけsandboxのnetworkを有効にし、その後の検証コマンドはnetworkなしで実行します。
 
 ## 本番設定
 
