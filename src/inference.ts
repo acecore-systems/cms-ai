@@ -382,7 +382,7 @@ function parseJson(value: string): unknown {
 function getModel(env: AppEnv) {
   const configured = String(env.CMS_AI_MODEL || "").trim();
 
-  return configured || "@cf/zai-org/glm-5.3";
+  return configured || "@cf/zai-org/glm-5.3-flash";
 }
 
 function limitedText(value: unknown, maxLength: number) {
