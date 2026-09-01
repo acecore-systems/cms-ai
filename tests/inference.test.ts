@@ -33,7 +33,7 @@ describe("Workers AI inference", () => {
           };
         },
       },
-      CMS_AI_MODEL: "@cf/zai-org/glm-5.3",
+      CMS_AI_MODEL: "@cf/zai-org/glm-5.3-flash",
     } as unknown as AppEnv;
     const previous = job({
       assistantMessage: "現在の見出しを確認しました。",
@@ -55,7 +55,7 @@ describe("Workers AI inference", () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].model).toBe("@cf/zai-org/glm-5.3");
+    expect(calls[0].model).toBe("@cf/zai-org/glm-5.3-flash");
     expect(calls[0].input.reasoning_effort).toBe("high");
     expect(calls[0].input.response_format.type).toBe("json_schema");
     expect(calls[0].input.messages.map((message: any) => message.role)).toEqual(
