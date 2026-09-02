@@ -4,7 +4,7 @@ AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤で�
 
 ## 方針
 
-- モデルはCloudflare Workers AIの`@cf/zai-org/glm-5.3-flash`を使います。
+- モデルはCloudflare Workers AIの`@cf/zai-org/glm-5.3`を使います。
 - 推論深度はメッセージごとに`low`、`medium`、`high`から選べます。
 - 質問、相談、修正依頼は同じ会話で扱い、対象URLの入力は求めません。
 - 画像入力と画像生成は扱いません。
