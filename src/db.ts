@@ -5,6 +5,7 @@ import {
   REASONING_EFFORTS,
   ROLES,
   type Job,
+  type ImageAttachment,
   type JobStatus,
   type Membership,
   type ReasoningEffort,
@@ -22,6 +23,7 @@ type MembershipRow = {
 };
 
 type JobRow = {
+  attachments_json: string;
   assistant_message: string | null;
   branch_name: string;
   changed_paths_json: string;
@@ -46,7 +48,7 @@ const JOB_COLUMNS = [
   "id, site_id, conversation_id, turn_number, requested_by, requested_role,",
   "instruction, reasoning_effort, status, branch_name, assistant_message,",
   "summary, clarification, pr_url, changed_paths_json, error_message,",
-  "created_at, updated_at",
+  "created_at, updated_at, attachments_json",
 ].join(" ");
 
 export async function getMembership(
@@ -198,6 +200,8 @@ export async function revokeMembership(
 export async function createJob(
   env: AppEnv,
   input: {
+    id?: string;
+    attachments?: ImageAttachment[];
     conversationId?: string;
     instruction: string;
     reasoningEffort: ReasoningEffort;
@@ -206,7 +210,8 @@ export async function createJob(
     siteId: string;
   },
 ) {
-  const id = crypto.randomUUID();
+  const id = input.id || crypto.randomUUID();
+  assertId(id);
   const conversationId = input.conversationId || id;
   const existingJobs = input.conversationId
     ? await getConversation(
@@ -241,8 +246,8 @@ export async function createJob(
         "INSERT INTO cms_ai_jobs",
         "(id, site_id, conversation_id, turn_number, requested_by, requested_role,",
         "instruction, reasoning_effort, status, branch_name, changed_paths_json,",
-        "pr_url, created_at, updated_at)",
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "pr_url, created_at, updated_at, attachments_json)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       ].join(" "),
     )
       .bind(
@@ -260,6 +265,7 @@ export async function createJob(
         existingPrUrl,
         now,
         now,
+        JSON.stringify(input.attachments || []),
       )
       .run();
   } catch (error) {
@@ -277,6 +283,7 @@ export async function createJob(
   }
 
   return {
+    attachments: input.attachments || [],
     assistantMessage: null,
     branchName,
     changedPaths: [],
@@ -451,6 +458,7 @@ function parseMembership(row: MembershipRow): Membership {
 
 function parseJob(row: JobRow): Job {
   return {
+    attachments: JSON.parse(row.attachments_json || "[]") as ImageAttachment[],
     assistantMessage: limitOptionalText(row.assistant_message, 4_000),
     branchName: row.branch_name,
     changedPaths: parseChangedPaths(row.changed_paths_json),

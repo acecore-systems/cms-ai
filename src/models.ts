@@ -27,6 +27,7 @@ export type Membership = {
 };
 
 export type Job = {
+  attachments: ImageAttachment[];
   assistantMessage: string | null;
   branchName: string;
   changedPaths: string[];
@@ -45,6 +46,13 @@ export type Job = {
   summary: string | null;
   turnNumber: number;
   updatedAt: string;
+};
+
+export type ImageAttachment = {
+  id: string;
+  name: string;
+  type: "image/png" | "image/jpeg" | "image/webp";
+  size: number;
 };
 
 export function parseRole(value: unknown): Role {

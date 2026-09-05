@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AppEnv } from "../src/env.ts";
 import {
@@ -12,7 +12,92 @@ import { getSiteById } from "../src/sites.ts";
 const site = getSiteById("homepage-hatt")!;
 
 describe("Workers AI inference", () => {
-  it("GLM-5.3へeffortと会話履歴を渡しeditorの変更を許可する", async () => {
+  it("現在と過去の画像を元のuser turnに付けて渡す", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const attachment = {
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      name: "reference.png",
+      type: "image/png" as const,
+      size: 3,
+    };
+    const run = vi.fn().mockResolvedValue({
+      response: {
+        changes: [],
+        summary: "回答",
+        clarification: "青い四角です",
+      },
+    });
+    const get = vi
+      .fn()
+      .mockResolvedValue({ size: 3, arrayBuffer: async () => bytes.buffer });
+    const env = { AI: { run }, CMS_AI_IMAGES: { get } } as unknown as AppEnv;
+    const previous = job({
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      attachments: [attachment],
+      turnNumber: 1,
+      status: "responded",
+    });
+    const current = job({ attachments: [attachment], turnNumber: 2 });
+    await runInference(
+      env,
+      site,
+      current,
+      [{ path: "src/pages/index.astro", content: "<main/>" }],
+      [previous, current],
+    );
+    const input = run.mock.calls[0][1];
+    expect(input.messages[1].content[1].image_url.url).toBe(
+      "data:image/png;base64,AQID",
+    );
+    expect(input.messages[3].content[1].image_url.url).toBe(
+      "data:image/png;base64,AQID",
+    );
+    expect(get.mock.calls.map((call) => call[0])).toEqual([
+      `attachments/${current.id}/${attachment.id}`,
+      `attachments/${previous.id}/${attachment.id}`,
+    ]);
+  });
+
+  it("推論失敗に含まれる画像データをログやエラーに出さない", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const run = vi.fn().mockRejectedValue(new Error("private-image-payload"));
+      await expect(
+        runInference(
+          { AI: { run } } as unknown as AppEnv,
+          site,
+          job(),
+          [{ path: "src/pages/index.astro", content: "<main/>" }],
+          [],
+        ),
+      ).rejects.toThrow(/AIの応答/);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(
+        "private-image-payload",
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("添付のprivate URLや画像データを生成コードへ混入させない", () => {
+    for (const content of [
+      '<img src="data:image/png;base64,AQID">',
+      '<img src="/admin/api/ai/jobs/123/images/456">',
+    ]) {
+      expect(() =>
+        parseInferenceResponse(site, {
+          response: {
+            changes: [
+              { content, path: "src/pages/index.astro", reason: "画像を追加" },
+            ],
+            summary: "変更",
+            clarification: "",
+          },
+        }),
+      ).toThrow(/許可された/);
+    }
+  });
+  it("GLM-5.3-Flashへeffortと会話履歴を渡しeditorの変更を許可する", async () => {
     const calls: Array<{ input: any; model: string }> = [];
     const env = {
       AI: {
@@ -54,7 +139,7 @@ describe("Workers AI inference", () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].model).toBe("@cf/zai-org/glm-5.3");
+    expect(calls[0].model).toBe("@cf/zai-org/glm-5.3-flash");
     expect(calls[0].input.reasoning_effort).toBe("high");
     expect(calls[0].input.response_format.type).toBe("json_schema");
     expect(calls[0].input.messages.map((message: any) => message.role)).toEqual(
@@ -151,6 +236,7 @@ describe("Workers AI inference", () => {
 function job(overrides: Partial<Job> = {}): Job {
   const now = new Date().toISOString();
   return {
+    attachments: [],
     assistantMessage: null,
     branchName: "ai/cms-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     changedPaths: [],
