@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 describe("shared client and runner assets", () => {
-  it("会話UIはURL・画像入力なしでroleとeffortを扱う", async () => {
+  it("会話UIはURL入力なしでrole・effort・画像添付を扱う", async () => {
     const source = await readFile(
       new URL("../client/cms-ai-panel.js", import.meta.url),
       "utf8",
@@ -12,7 +12,11 @@ describe("shared client and runner assets", () => {
     expect(source).toMatch(/session\?\.role/);
     expect(source).toMatch(/reasoningEffort/);
     expect(source).toMatch(/\/messages/);
-    expect(source).not.toMatch(/targetUrl|referenceImage|画像入力|対象URL/);
+    expect(source).not.toMatch(/targetUrl|referenceImage|対象URL/);
+    expect(source).toMatch(/type="file"/);
+    expect(source).toMatch(/createObjectURL/);
+    expect(source).toMatch(/revokeObjectURL/);
+    expect(source).toMatch(/clipboardData/);
   });
 
   it("共有runnerはOIDC・path制限・固定検証を使い自動マージしない", async () => {
@@ -44,12 +48,13 @@ describe("shared client and runner assets", () => {
     expect(workflow).toMatch(/timeout-minutes: 45/);
   });
 
-  it("Worker設定はGLM-5.3を使いautomergeをfalseに固定する", async () => {
+  it("Worker設定はGLM-5.3-Flashと非公開R2を使いautomergeをfalseに固定する", async () => {
     const config = await readFile(
       new URL("../wrangler.jsonc", import.meta.url),
       "utf8",
     );
-    expect(config).toMatch(/@cf\/zai-org\/glm-5\.3/);
+    expect(config).toMatch(/@cf\/zai-org\/glm-5\.3-flash/);
+    expect(config).toMatch(/CMS_AI_IMAGES/);
     expect(config).toMatch(/CMS_AI_AUTOMERGE_ENABLED.*false/);
   });
 });

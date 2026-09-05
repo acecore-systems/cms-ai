@@ -16,6 +16,13 @@ import {
   requiredText,
 } from "./http.ts";
 import { canEdit, parseReasoningEffort, type Job } from "./models.ts";
+import {
+  boundedRequest,
+  deleteImages,
+  imageResponse,
+  storeImages,
+  validateImages,
+} from "./images.ts";
 
 const PREFIX = "/admin/api/ai/";
 const PENDING_STATUSES = new Set(["queued", "running", "validating"]);
@@ -26,6 +33,19 @@ export async function handleUserRequest(request: Request, env: AppEnv) {
   if (!route) return json({ message: "CMS AIのURLを確認してください。" }, 404);
 
   const identity = await authenticateSiteRequest(request, env);
+
+  if (route.kind === "image") {
+    if (request.method !== "GET") return methodNotAllowed(["GET"]);
+    const job = await getJob(env, route.jobId);
+    if (
+      !job ||
+      job.siteId !== identity.site.id ||
+      job.requestedBy !== identity.email
+    ) {
+      throw new HttpError(404, "画像が見つかりません。");
+    }
+    return await imageResponse(env, job, route.imageId);
+  }
 
   if (route.kind === "session") {
     if (request.method !== "GET") return methodNotAllowed(["GET"]);
@@ -68,13 +88,7 @@ async function startConversation(
 ) {
   assertSameOrigin(request);
   const input = await readMessageInput(request);
-  const job = await createJob(env, {
-    instruction: input.instruction,
-    reasoningEffort: input.reasoningEffort,
-    requestedBy: identity.email,
-    requestedRole: identity.membership.role,
-    siteId: identity.site.id,
-  });
+  const job = await createMessageJob(env, identity, input);
 
   await dispatchOrFail(env, identity, job);
   return json({ job: serializeJob(job) }, 202);
@@ -112,14 +126,7 @@ async function continueConversation(
   }
 
   const input = await readMessageInput(request);
-  const job = await createJob(env, {
-    conversationId,
-    instruction: input.instruction,
-    reasoningEffort: input.reasoningEffort,
-    requestedBy: identity.email,
-    requestedRole: identity.membership.role,
-    siteId: identity.site.id,
-  });
+  const job = await createMessageJob(env, identity, input, conversationId);
 
   await dispatchOrFail(env, identity, job);
   const conversation = await getConversation(
@@ -144,6 +151,31 @@ async function dispatchOrFail(env: AppEnv, identity: SiteIdentity, job: Job) {
       status: "failed",
       summary: "CMS AIの実行を開始できませんでした。",
     });
+    throw error;
+  }
+}
+
+async function createMessageJob(
+  env: AppEnv,
+  identity: SiteIdentity,
+  input: Awaited<ReturnType<typeof readMessageInput>>,
+  conversationId?: string,
+) {
+  const id = crypto.randomUUID();
+  await storeImages(env, id, input.images);
+  try {
+    return await createJob(env, {
+      id,
+      attachments: input.images.map((image) => image.attachment),
+      conversationId,
+      instruction: input.instruction,
+      reasoningEffort: input.reasoningEffort,
+      requestedBy: identity.email,
+      requestedRole: identity.membership.role,
+      siteId: identity.site.id,
+    });
+  } catch (error) {
+    await deleteImages(env, id, input.images);
     throw error;
   }
 }
@@ -220,6 +252,10 @@ function sessionResponse(request: Request, identity: SiteIdentity) {
 
 function serializeJob(job: Job) {
   return {
+    attachments: job.attachments.map((attachment) => ({
+      ...attachment,
+      url: `${PREFIX}jobs/${job.id}/images/${attachment.id}`,
+    })),
     assistantMessage: job.assistantMessage,
     changedPaths: job.changedPaths,
     clarification: job.clarification,
@@ -262,8 +298,10 @@ function serializeConversationSummary(jobs: Job[]) {
   };
 }
 
-async function readMessageInput(request: Request) {
+export async function readMessageInput(request: Request) {
   const contentType = request.headers.get("Content-Type") || "";
+  const bounded = await boundedRequest(request);
+  const files: File[] = [];
   let instruction: unknown;
   let reasoningEffort: unknown;
 
@@ -271,13 +309,19 @@ async function readMessageInput(request: Request) {
     contentType.includes("multipart/form-data") ||
     contentType.includes("application/x-www-form-urlencoded")
   ) {
-    const form = await request.formData();
+    const form = await bounded.formData().catch(() => {
+      throw new HttpError(400, "入力形式を確認してください。");
+    });
 
-    for (const [, value] of form) {
+    for (const [key, value] of form) {
       if (typeof value !== "string") {
+        if (key !== "images")
+          throw new HttpError(400, "添付形式を確認してください。");
+        files.push(value);
+      } else if (key === "images") {
         throw new HttpError(
           400,
-          "CMS AIは画像やファイル入力に対応していません。",
+          "画像はファイルで添付してください。URL指定はできません。",
         );
       }
     }
@@ -285,7 +329,7 @@ async function readMessageInput(request: Request) {
     instruction = form.get("instruction");
     reasoningEffort = form.get("reasoningEffort");
   } else if (contentType.includes("application/json")) {
-    const body: unknown = await request.json().catch(() => null);
+    const body: unknown = await bounded.json().catch(() => null);
 
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new HttpError(400, "入力形式を確認してください。");
@@ -293,12 +337,20 @@ async function readMessageInput(request: Request) {
 
     instruction = (body as Record<string, unknown>).instruction;
     reasoningEffort = (body as Record<string, unknown>).reasoningEffort;
+    if ("images" in body || "attachments" in body)
+      throw new HttpError(400, "画像はファイルで添付してください。");
   } else {
     throw new HttpError(415, "入力形式を確認してください。");
   }
 
+  const images = await validateImages(files);
   return {
-    instruction: requiredText(instruction, 4_000),
+    images,
+    instruction:
+      images.length &&
+      (instruction === null || instruction === undefined || instruction === "")
+        ? "添付画像について説明してください。"
+        : requiredText(instruction, 4_000),
     reasoningEffort: parseReasoningEffort(reasoningEffort),
   };
 }
@@ -320,6 +372,10 @@ function safeRedirect(value: string) {
 function parseRoute(pathname: string) {
   if (!pathname.startsWith(PREFIX)) return null;
   const parts = pathname.slice(PREFIX.length).split("/").filter(Boolean);
+
+  if (parts.length === 4 && parts[0] === "jobs" && parts[2] === "images") {
+    return { kind: "image" as const, jobId: parts[1], imageId: parts[3] };
+  }
 
   if (parts.length === 1 && parts[0] === "session") {
     return { kind: "session" as const };

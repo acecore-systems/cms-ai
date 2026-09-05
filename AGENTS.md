@@ -11,7 +11,7 @@
 - `editor`と`admin`でも自動マージせず、変更はbranchとPRへ限定する。
 - CMS保存用GitHub AppやOAuth tokenをCMS AIへ流用しない。CMS AI Appはworkflow起動だけに使う。
 - secret、Access JWT、メールallowlist、GitHub tokenをログへ出さない。
-- 画像入力と画像生成を追加しない。
+- 参考画像の入力を許可する。添付は非公開R2に保存し、サイト・会話所有者の認可を強制する。画像生成は追加しない。
 
 ## Cloudflare
 

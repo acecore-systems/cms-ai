@@ -4,10 +4,12 @@ AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤で�
 
 ## 方針
 
-- モデルはCloudflare Workers AIの`@cf/zai-org/glm-5.3`を使います。
+- モデルはCloudflare Workers AIの`@cf/zai-org/glm-5.3-flash`（Vision対応）を使います。
 - 推論深度はメッセージごとに`low`、`medium`、`high`から選べます。
 - 質問、相談、修正依頼は同じ会話で扱い、対象URLの入力は求めません。
-- 画像入力と画像生成は扱いません。
+- 会話にPNG・JPEG・WebPを1回4枚、各2MiBまで添付・貼り付けできます。画像のみの送信も可能です。画像生成は行いません。
+- 添付は非公開R2へ保存し、Access・サイト権限・会話所有者の検証後にだけ配信します。GitHub Actionsや公開リポジトリへ画像データを渡しません。
+- 画像履歴は直近12ターン（文章24,000文字）の範囲内で、現在の添付を優先して合計16MiBまでモデルへ渡します。上限で省略された画像は再添付してください。画像は会話とともに保存され、自動削除はありません。
 - 権限は`chat`、`editor`、`admin`の3段階です。
 - AIはPRを作成しますが、自動マージしません。
 - 各サイトのCMS保存認証と、CMS AIの認証・runner認証を分離します。
@@ -36,6 +38,8 @@ Workers AIの実推論はremote bindingが必要です。通常の単体テス�
 共有runnerはGitHub-hosted Linux runnerのDockerを利用します。依存関係の取得時だけsandboxのnetworkを有効にし、その後の検証コマンドはnetworkなしで実行します。
 
 ## 本番設定
+
+初回画像対応の反映順序は、非公開R2 bucket `cms-ai-images`作成、D1 migration `0002_image_attachments.sql`適用、Worker deploy、各サイトの`client/`配布です。R2の公開URL・custom domain・CORSは有効にしません。schema変更は既存会話に空配列を追加する後方互換変更です。
 
 次の値はrepositoryへ保存せず、Cloudflareのsecretとして設定します。
 

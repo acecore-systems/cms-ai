@@ -1,1 +1,1 @@
-変更前に`AGENTS.md`を確認してください。CMS AIではAccess認証、D1 RBAC、GitHub Actions OIDCを分離し、`chat`権限の変更生成禁止、自動マージ無効、画像機能なしを維持します。サイト固有値は`src/sites.ts`へ集約し、Cloudflare bindingの型は`wrangler types`で生成します。
+変更前に`AGENTS.md`を確認してください。CMS AIではAccess認証、D1 RBAC、GitHub Actions OIDCを分離し、`chat`権限の変更生成禁止、自動マージ無効、画像生成なしを維持します。参考画像入力は非公開保存・所有者認可・サイズ制限を必須とします。サイト固有値は`src/sites.ts`へ集約し、Cloudflare bindingの型は`wrangler types`で生成します。
