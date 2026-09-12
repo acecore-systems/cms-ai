@@ -1,7 +1,10 @@
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import { authenticateSiteRequest } from "../src/auth.ts";
+import {
+  authenticateAdminRequest,
+  authenticateSiteRequest,
+} from "../src/auth.ts";
 import type { AppEnv } from "../src/env.ts";
 import { authenticateRunner } from "../src/oidc.ts";
 
@@ -39,6 +42,43 @@ beforeAll(async () => {
 });
 
 describe("authentication boundaries", () => {
+  it("管理画面はAcecoreID subject必須とし、旧IdP・別audienceを拒否する", async () => {
+    const adminAudience = "a".repeat(64);
+    const env = { ...createEnv(), CMS_AI_ADMIN_ACCESS_AUD: adminAudience };
+    const request = (token: string) =>
+      new Request("https://cms-ai.acecore.net/admin/api/session", {
+        headers: { "Cf-Access-Jwt-Assertion": token },
+      });
+    await expect(
+      authenticateAdminRequest(
+        request(await signAccessToken(adminAudience)),
+        env,
+      ),
+    ).rejects.toThrow(/AcecoreID/);
+    const custom = {
+      "https://acecore.net/claims/subject":
+        "11111111-1111-4111-8111-111111111111",
+    };
+    expect(
+      await authenticateAdminRequest(
+        request(await signAccessToken(adminAudience, custom)),
+        env,
+      ),
+    ).toEqual({ email: "member@example.com" });
+    await expect(
+      authenticateAdminRequest(
+        request(await signAccessToken(accessAudience, custom)),
+        env,
+      ),
+    ).rejects.toThrow(/認証を確認できません/);
+    await expect(
+      authenticateAdminRequest(
+        request(await signAccessToken(adminAudience, custom, "org")),
+        env,
+      ),
+    ).rejects.toThrow(/AcecoreID/);
+  });
+
   it("Access JWTとD1のsite membershipを両方確認する", async () => {
     const token = await signAccessToken(accessAudience);
     const identity = await authenticateSiteRequest(
@@ -123,11 +163,16 @@ function createEnv() {
   } as unknown as AppEnv;
 }
 
-function signAccessToken(audience: string) {
-  return new SignJWT({ email: "member@example.com" })
+function signAccessToken(
+  audience: string,
+  custom: Record<string, string> = {},
+  type = "app",
+) {
+  return new SignJWT({ email: "member@example.com", custom, type })
     .setProtectedHeader({ alg: "RS256", kid: "access-key" })
     .setIssuer(accessIssuer)
     .setAudience(audience)
+    .setSubject("access-subject")
     .setIssuedAt()
     .setExpirationTime("5m")
     .sign(accessPrivateKey);
