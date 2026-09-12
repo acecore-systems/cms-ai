@@ -71,7 +71,7 @@ export async function authenticateAdminRequest(
   }
 
   return {
-    email: await verifyAccessIdentity(request, env, [audience]),
+    email: await verifyAccessIdentity(request, env, [audience], true),
   };
 }
 
@@ -79,6 +79,7 @@ async function verifyAccessIdentity(
   request: Request,
   env: AppEnv,
   audiences: string[],
+  requireAcecore = false,
 ) {
   const token = request.headers.get(ACCESS_HEADER) || "";
 
@@ -94,10 +95,33 @@ async function verifyAccessIdentity(
       algorithms: ["RS256"],
       audience: audiences,
       issuer,
+      ...(requireAcecore ? { requiredClaims: ["exp", "iat", "sub"] } : {}),
     });
     payload = verified.payload;
   } catch {
     throw new HttpError(401, "Cloudflare Accessの認証を確認できません。");
+  }
+
+  if (requireAcecore) {
+    const custom = payload.custom;
+    const subject =
+      custom && typeof custom === "object" && !Array.isArray(custom)
+        ? (custom as Record<string, unknown>)[
+            "https://acecore.net/claims/subject"
+          ]
+        : null;
+    if (
+      payload.type !== "app" ||
+      typeof subject !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        subject,
+      )
+    ) {
+      throw new HttpError(
+        403,
+        "CMS AI管理画面にはAcecoreIDでログインしてください。",
+      );
+    }
   }
 
   const email = String(payload.email || "")
