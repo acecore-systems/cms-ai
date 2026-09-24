@@ -14,6 +14,13 @@
   "ai": {
     "binding": "AI",
   },
+  "secrets_store_secrets": [
+    {
+      "binding": "OPENAI_API_KEY_STORE",
+      "store_id": "f59c889c0fcc405794a34401fb09240c",
+      "secret_name": "cms-ai-production-openai-api-key",
+    },
+  ],
   "r2_buckets": [
     { "binding": "CMS_AI_IMAGES", "bucket_name": "cms-ai-images" },
   ],

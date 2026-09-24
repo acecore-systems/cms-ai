@@ -100,14 +100,15 @@ export async function runInference(
     },
   };
   const model = getModel(env);
-  if (model === "gpt-6-luna" && !env.OPENAI_API_KEY?.trim()) {
+  if (model === "gpt-6-luna" && !env.OPENAI_API_KEY_STORE) {
     throw new HttpError(503, "OpenAI APIの設定がありません。");
   }
   let response: unknown;
 
   try {
     response = await runTextModel(env, model, request);
-  } catch {
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
     if (model === "gpt-6-luna") {
       throw new HttpError(
         502,
@@ -454,10 +455,17 @@ async function runTextModel(
   const { response_format: responseFormat, ...commonRequest } = request;
   const schema = (responseFormat as { json_schema?: unknown } | undefined)
     ?.json_schema;
+  let apiKey: string;
+  try {
+    apiKey = (await env.OPENAI_API_KEY_STORE?.get())?.trim() || "";
+  } catch {
+    throw new HttpError(503, "OpenAI APIの設定がありません。");
+  }
+  if (!apiKey) throw new HttpError(503, "OpenAI APIの設定がありません。");
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.OPENAI_API_KEY!.trim()}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

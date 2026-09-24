@@ -6,5 +6,5 @@ export type SecretName =
 
 export type AppEnv = Cloudflare.Env &
   Record<SecretName, string> & {
-    OPENAI_API_KEY?: string;
+    OPENAI_API_KEY_STORE?: { get(): Promise<string> };
   };
