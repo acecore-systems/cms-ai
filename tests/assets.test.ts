@@ -48,12 +48,12 @@ describe("shared client and runner assets", () => {
     expect(workflow).toMatch(/timeout-minutes: 45/);
   });
 
-  it("Worker設定はGLM-5.3-Flashと非公開R2を使いautomergeをfalseに固定する", async () => {
+  it("Worker設定はGPT-6 Lunaと非公開R2を使いautomergeをfalseに固定する", async () => {
     const config = await readFile(
       new URL("../wrangler.jsonc", import.meta.url),
       "utf8",
     );
-    expect(config).toMatch(/@cf\/zai-org\/glm-5\.3-flash/);
+    expect(config).toMatch(/openai\/gpt-6-luna/);
     expect(config).toMatch(/CMS_AI_IMAGES/);
     expect(config).toMatch(/CMS_AI_AUTOMERGE_ENABLED.*false/);
   });

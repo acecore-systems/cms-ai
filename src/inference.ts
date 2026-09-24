@@ -97,13 +97,14 @@ export async function runInference(
       },
       type: "json_schema",
     },
-    temperature: 0.1,
   };
   const model = getModel(env);
   let response: unknown;
 
   try {
-    response = await env.AI.run(model, request);
+    response = await env.AI.run(model, request, {
+      gateway: { id: "default", collectLog: false },
+    });
   } catch (error) {
     const { response_format: _responseFormat, ...fallbackRequest } = request;
 
@@ -116,7 +117,9 @@ export async function runInference(
       }),
     );
     try {
-      response = await env.AI.run(model, fallbackRequest);
+      response = await env.AI.run(model, fallbackRequest, {
+        gateway: { id: "default", collectLog: false },
+      });
     } catch {
       throw new HttpError(
         502,
@@ -425,7 +428,7 @@ function parseJson(value: string): unknown {
 function getModel(env: AppEnv) {
   const configured = String(env.CMS_AI_MODEL || "").trim();
 
-  return configured || "@cf/zai-org/glm-5.3-flash";
+  return configured || "openai/gpt-6-luna";
 }
 
 function limitedText(value: unknown, maxLength: number) {
