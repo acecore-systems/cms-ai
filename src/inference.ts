@@ -54,6 +54,7 @@ export async function runInference(
   );
   const request = {
     max_completion_tokens: 12_000,
+    store: false,
     messages: [
       {
         content: buildSystemPrompt(site, job),
@@ -90,21 +91,30 @@ export async function runInference(
             type: "array",
           },
           clarification: { type: "string" },
-          summary: { minLength: 1, type: "string" },
+          summary: { type: "string" },
         },
         required: ["summary", "clarification", "changes"],
         type: "object",
       },
       type: "json_schema",
     },
-    temperature: 0.1,
   };
   const model = getModel(env);
+  if (model === "gpt-6-luna" && !env.OPENAI_API_KEY_STORE) {
+    throw new HttpError(503, "OpenAI APIの設定がありません。");
+  }
   let response: unknown;
 
   try {
-    response = await env.AI.run(model, request);
+    response = await runTextModel(env, model, request);
   } catch (error) {
+    if (error instanceof HttpError) throw error;
+    if (model === "gpt-6-luna") {
+      throw new HttpError(
+        502,
+        "AIの応答を取得できませんでした。時間をおいて再試行してください。",
+      );
+    }
     const { response_format: _responseFormat, ...fallbackRequest } = request;
 
     console.warn(
@@ -116,7 +126,7 @@ export async function runInference(
       }),
     );
     try {
-      response = await env.AI.run(model, fallbackRequest);
+      response = await runTextModel(env, model, fallbackRequest);
     } catch {
       throw new HttpError(
         502,
@@ -424,8 +434,62 @@ function parseJson(value: string): unknown {
 
 function getModel(env: AppEnv) {
   const configured = String(env.CMS_AI_MODEL || "").trim();
+  const model = configured || "@cf/zai-org/glm-5.3-flash";
+  if (model !== "gpt-6-luna" && model !== "@cf/zai-org/glm-5.3-flash") {
+    throw new HttpError(503, "AIモデルの設定が無効です。");
+  }
+  return model;
+}
 
-  return configured || "@cf/zai-org/glm-5.3-flash";
+async function runTextModel(
+  env: AppEnv,
+  model: "gpt-6-luna" | "@cf/zai-org/glm-5.3-flash",
+  request: Record<string, unknown>,
+): Promise<unknown> {
+  if (model === "@cf/zai-org/glm-5.3-flash") {
+    return (env.AI.run as (model: string, input: unknown) => Promise<unknown>)(
+      model,
+      request,
+    );
+  }
+  const { response_format: responseFormat, ...commonRequest } = request;
+  const schema = (responseFormat as { json_schema?: unknown } | undefined)
+    ?.json_schema;
+  let apiKey: string;
+  try {
+    apiKey = (await env.OPENAI_API_KEY_STORE?.get())?.trim() || "";
+  } catch {
+    throw new HttpError(503, "OpenAI APIの設定がありません。");
+  }
+  if (!apiKey) throw new HttpError(503, "OpenAI APIの設定がありません。");
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      ...commonRequest,
+      model,
+      store: false,
+      ...(schema
+        ? {
+            response_format: {
+              type: "json_schema",
+              json_schema: { name: "cms_ai_changes", schema, strict: true },
+            },
+          }
+        : {}),
+    }),
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error("openai_request_failed");
+  }
+  const body = await response.text();
+  if (body.length > 2_000_000) throw new Error("openai_response_too_large");
+  return JSON.parse(body);
 }
 
 function limitedText(value: unknown, maxLength: number) {

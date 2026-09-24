@@ -97,12 +97,12 @@ describe("Workers AI inference", () => {
       ).toThrow(/許可された/);
     }
   });
-  it("GLM-5.3-Flashへeffortと会話履歴を渡しeditorの変更を許可する", async () => {
-    const calls: Array<{ input: any; model: string }> = [];
+  it("GLMへ画像入力・effortと会話履歴を渡す", async () => {
+    const calls: Array<{ input: any; model: string; options: any }> = [];
     const env = {
       AI: {
-        async run(model: string, input: unknown) {
-          calls.push({ input, model });
+        async run(model: string, input: unknown, options: any) {
+          calls.push({ input, model, options });
           return {
             response: {
               changes: [
@@ -140,6 +140,7 @@ describe("Workers AI inference", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0].model).toBe("@cf/zai-org/glm-5.3-flash");
+    expect(calls[0].options).toBe(undefined);
     expect(calls[0].input.reasoning_effort).toBe("high");
     expect(calls[0].input.response_format.type).toBe("json_schema");
     expect(calls[0].input.messages.map((message: any) => message.role)).toEqual(

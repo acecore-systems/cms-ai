@@ -4,7 +4,7 @@ AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤で�
 
 ## 方針
 
-- モデルはCloudflare Workers AIの`@cf/zai-org/glm-5.3-flash`（Vision対応）を使います。
+- `CMS_AI_MODEL` は `gpt-6-luna`（OpenAI API直結、Worker secret `OPENAI_API_KEY` が必要）または `@cf/zai-org/glm-5.3-flash`（Workers AI binding）から選びます。キー不足や障害時の自動切替はしません。テキストと画像入力を扱います。
 - 推論深度はメッセージごとに`low`、`medium`、`high`から選べます。
 - 質問、相談、修正依頼は同じ会話で扱い、対象URLの入力は求めません。
 - 会話にPNG・JPEG・WebPを1回4枚、各2MiBまで添付・貼り付けできます。画像のみの送信も可能です。画像生成は行いません。
