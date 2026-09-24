@@ -4,7 +4,7 @@ AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤で�
 
 ## 方針
 
-- `CMS_AI_MODEL` は `gpt-6-luna`（OpenAI API直結、Worker secret `OPENAI_API_KEY` が必要）または `@cf/zai-org/glm-5.3-flash`（Workers AI binding）から選びます。キー不足や障害時の自動切替はしません。テキストと画像入力を扱います。
+- `CMS_AI_MODEL` は `gpt-6-luna`（OpenAI API直結、Secrets Store binding `OPENAI_API_KEY_STORE` が必要）または `@cf/zai-org/glm-5.3-flash`（Workers AI binding）から選びます。キー不足や障害時の自動切替はしません。テキストと画像入力を扱います。
 - 推論深度はメッセージごとに`low`、`medium`、`high`から選べます。
 - 質問、相談、修正依頼は同じ会話で扱い、対象URLの入力は求めません。
 - 会話にPNG・JPEG・WebPを1回4枚、各2MiBまで添付・貼り付けできます。画像のみの送信も可能です。画像生成は行いません。
@@ -33,7 +33,7 @@ npm run format:check
 npm run deploy:dry-run
 ```
 
-Workers AIの実推論はremote bindingが必要です。通常の単体テストではfixtureを使い、実モデル確認は本番反映前の明示的な検証で行います。
+実モデル確認にはremote bindingとOpenAI側の課金設定が必要です。通常の単体テストではfixtureを使います。Cloudflare上のGPT-6 Luna設定は2026-09-25に本番配置済みですが、実モデル呼び出しは未確認です。
 
 共有runnerはGitHub-hosted Linux runnerのDockerを利用します。依存関係の取得時だけsandboxのnetworkを有効にし、その後の検証コマンドはnetworkなしで実行します。
 
