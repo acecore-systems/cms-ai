@@ -53,7 +53,7 @@ describe("shared client and runner assets", () => {
       new URL("../wrangler.jsonc", import.meta.url),
       "utf8",
     );
-    expect(config).toMatch(/openai\/gpt-6-luna/);
+    expect(config).toMatch(/"CMS_AI_MODEL":\s*"gpt-6-luna"/);
     expect(config).toMatch(/CMS_AI_IMAGES/);
     expect(config).toMatch(/CMS_AI_AUTOMERGE_ENABLED.*false/);
   });
