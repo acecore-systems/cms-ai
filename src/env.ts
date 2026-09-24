@@ -4,4 +4,7 @@ export type SecretName =
   | "CMS_AI_GITHUB_APP_INSTALLATION_ID"
   | "CMS_AI_GITHUB_APP_PRIVATE_KEY";
 
-export type AppEnv = Cloudflare.Env & Record<SecretName, string>;
+export type AppEnv = Cloudflare.Env &
+  Record<SecretName, string> & {
+    OPENAI_API_KEY?: string;
+  };

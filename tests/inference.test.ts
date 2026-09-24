@@ -97,7 +97,7 @@ describe("Workers AI inference", () => {
       ).toThrow(/許可された/);
     }
   });
-  it("GPT-6 Lunaへ画像入力・effortと会話履歴を渡しGatewayログを無効にする", async () => {
+  it("GLMへ画像入力・effortと会話履歴を渡す", async () => {
     const calls: Array<{ input: any; model: string; options: any }> = [];
     const env = {
       AI: {
@@ -139,11 +139,8 @@ describe("Workers AI inference", () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].model).toBe("openai/gpt-6-luna");
-    expect(calls[0].options.gateway).toEqual({
-      id: "default",
-      collectLog: false,
-    });
+    expect(calls[0].model).toBe("@cf/zai-org/glm-5.3-flash");
+    expect(calls[0].options).toBe(undefined);
     expect(calls[0].input.reasoning_effort).toBe("high");
     expect(calls[0].input.response_format.type).toBe("json_schema");
     expect(calls[0].input.messages.map((message: any) => message.role)).toEqual(
