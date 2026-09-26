@@ -30,7 +30,11 @@ describe("Workers AI inference", () => {
     const get = vi
       .fn()
       .mockResolvedValue({ size: 3, arrayBuffer: async () => bytes.buffer });
-    const env = { AI: { run }, CMS_AI_IMAGES: { get } } as unknown as AppEnv;
+    const env = {
+      AI: { run },
+      CMS_AI_IMAGES: { get },
+      CMS_AI_MODEL: "@cf/zai-org/glm-5.3-flash",
+    } as unknown as AppEnv;
     const previous = job({
       id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       attachments: [attachment],
@@ -64,7 +68,10 @@ describe("Workers AI inference", () => {
       const run = vi.fn().mockRejectedValue(new Error("private-image-payload"));
       await expect(
         runInference(
-          { AI: { run } } as unknown as AppEnv,
+          {
+            AI: { run },
+            CMS_AI_MODEL: "@cf/zai-org/glm-5.3-flash",
+          } as unknown as AppEnv,
           site,
           job(),
           [{ path: "src/pages/index.astro", content: "<main/>" }],
@@ -100,6 +107,7 @@ describe("Workers AI inference", () => {
   it("GLMへ画像入力・effortと会話履歴を渡す", async () => {
     const calls: Array<{ input: any; model: string; options: any }> = [];
     const env = {
+      CMS_AI_MODEL: "@cf/zai-org/glm-5.3-flash",
       AI: {
         async run(model: string, input: unknown, options: any) {
           calls.push({ input, model, options });
@@ -151,6 +159,7 @@ describe("Workers AI inference", () => {
 
   it("chat権限ではモデルが変更を返してもサーバー側で変更を空にする", async () => {
     const env = {
+      CMS_AI_MODEL: "@cf/zai-org/glm-5.3-flash",
       AI: {
         async run() {
           return {
