@@ -33,7 +33,7 @@ describe("Workers AI inference", () => {
     const env = {
       AI: { run },
       CMS_AI_IMAGES: { get },
-      CMS_AI_MODEL: "@cf/zai-org/glm-5.3-flash",
+      CMS_AI_MODEL: "@cf/example/chat-model",
     } as unknown as AppEnv;
     const previous = job({
       id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -70,7 +70,7 @@ describe("Workers AI inference", () => {
         runInference(
           {
             AI: { run },
-            CMS_AI_MODEL: "@cf/zai-org/glm-5.3-flash",
+            CMS_AI_MODEL: "@cf/example/chat-model",
           } as unknown as AppEnv,
           site,
           job(),
@@ -104,10 +104,10 @@ describe("Workers AI inference", () => {
       ).toThrow(/許可された/);
     }
   });
-  it("GLMへ画像入力・effortと会話履歴を渡す", async () => {
+  it("Workers AIへ画像入力・effortと会話履歴を渡す", async () => {
     const calls: Array<{ input: any; model: string; options: any }> = [];
     const env = {
-      CMS_AI_MODEL: "@cf/zai-org/glm-5.3-flash",
+      CMS_AI_MODEL: "@cf/example/chat-model",
       AI: {
         async run(model: string, input: unknown, options: any) {
           calls.push({ input, model, options });
@@ -147,7 +147,7 @@ describe("Workers AI inference", () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].model).toBe("@cf/zai-org/glm-5.3-flash");
+    expect(calls[0].model).toBe("@cf/example/chat-model");
     expect(calls[0].options).toBe(undefined);
     expect(calls[0].input.reasoning_effort).toBe("high");
     expect(calls[0].input.response_format.type).toBe("json_schema");
@@ -159,7 +159,7 @@ describe("Workers AI inference", () => {
 
   it("chat権限ではモデルが変更を返してもサーバー側で変更を空にする", async () => {
     const env = {
-      CMS_AI_MODEL: "@cf/zai-org/glm-5.3-flash",
+      CMS_AI_MODEL: "@cf/example/chat-model",
       AI: {
         async run() {
           return {

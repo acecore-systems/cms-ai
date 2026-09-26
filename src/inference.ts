@@ -435,7 +435,7 @@ function parseJson(value: string): unknown {
 function getModel(env: AppEnv) {
   const configured = String(env.CMS_AI_MODEL || "").trim();
   const model = configured;
-  if (model !== "gpt-6-luna" && model !== "@cf/zai-org/glm-5.3-flash") {
+  if (model !== "gpt-6-luna" && !isWorkersAiTextModel(model)) {
     throw new HttpError(503, "AIモデルの設定が無効です。");
   }
   return model;
@@ -443,10 +443,10 @@ function getModel(env: AppEnv) {
 
 async function runTextModel(
   env: AppEnv,
-  model: "gpt-6-luna" | "@cf/zai-org/glm-5.3-flash",
+  model: string,
   request: Record<string, unknown>,
 ): Promise<unknown> {
-  if (model === "@cf/zai-org/glm-5.3-flash") {
+  if (isWorkersAiTextModel(model)) {
     return (env.AI.run as (model: string, input: unknown) => Promise<unknown>)(
       model,
       request,
@@ -490,6 +490,14 @@ async function runTextModel(
   const body = await response.text();
   if (body.length > 2_000_000) throw new Error("openai_response_too_large");
   return JSON.parse(body);
+}
+
+function isWorkersAiTextModel(model: string): boolean {
+  return (
+    model.startsWith("@cf/") &&
+    model.length > 4 &&
+    !model.toLowerCase().includes("/glm")
+  );
 }
 
 function limitedText(value: unknown, maxLength: number) {
