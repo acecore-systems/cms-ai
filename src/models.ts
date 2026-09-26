@@ -1,7 +1,7 @@
 import { HttpError } from "./http.ts";
 
 export const ROLES = ["chat", "editor", "admin"] as const;
-export const REASONING_EFFORTS = ["low", "medium", "high"] as const;
+export const REASONING_EFFORTS = ["low", "medium", "high", "max"] as const;
 export const JOB_STATUSES = [
   "queued",
   "running",
