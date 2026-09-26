@@ -490,7 +490,9 @@
       : "処理結果を確認できません。";
   }
   function effortLabel(value) {
-    return { high: "高", low: "低", max: "最大", medium: "標準" }[value] || "標準";
+    return (
+      { high: "高", low: "低", max: "最大", medium: "標準" }[value] || "標準"
+    );
   }
   function readError(error, fallback) {
     return error instanceof Error && error.message ? error.message : fallback;
