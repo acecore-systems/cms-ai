@@ -434,7 +434,7 @@ function parseJson(value: string): unknown {
 
 function getModel(env: AppEnv) {
   const configured = String(env.CMS_AI_MODEL || "").trim();
-  const model = configured || "@cf/zai-org/glm-5.3-flash";
+  const model = configured;
   if (model !== "gpt-6-luna" && model !== "@cf/zai-org/glm-5.3-flash") {
     throw new HttpError(503, "AIモデルの設定が無効です。");
   }
