@@ -35,7 +35,7 @@ npm run format:check
 npm run deploy:dry-run
 ```
 
-実モデル確認にはremote bindingとOpenAI側の課金設定が必要です。通常の単体テストではfixtureを使います。Cloudflare上のGPT-6 Luna設定は2026-09-25に本番配置済みですが、実モデル呼び出しは未確認です。
+実モデル確認にはremote bindingとOpenAI側の課金設定が必要です。通常の単体テストではfixtureを使います。編集意図の架空評価例は`tests/fixtures/edit-intent.json`です。判定だけでなく相談・編集・`chat`権限での文章生成連携も確認し、本番Workerの更新後にはCMSからファイル変更のない依頼で疎通を確認します。API仕様は[OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions)を参照してください。
 
 共有runnerはGitHub-hosted Linux runnerのDockerを利用します。依存関係の取得時だけsandboxのnetworkを有効にし、その後の検証コマンドはnetworkなしで実行します。
 

@@ -10,6 +10,7 @@ import type { Job, Role } from "../src/models.ts";
 import { classifyEditIntent, type EditIntent } from "../src/edit-intent.ts";
 import { selectConversationJobs } from "../src/conversation.ts";
 import { getSiteById } from "../src/sites.ts";
+import intentFixtures from "./fixtures/edit-intent.json";
 
 const site = getSiteById("homepage-hatt")!;
 const intentEnv = {
@@ -268,6 +269,39 @@ describe("Workers AI inference", () => {
 });
 
 describe("CMS edit intent boundary", () => {
+  it("実モデル用評価例に不正な履歴を含めない", () => {
+    expect(intentFixtures.cases).toHaveLength(23);
+    for (const fixture of intentFixtures.cases) {
+      expect(typeof fixture.instruction).toBe("string");
+      expect(Array.isArray(fixture.history)).toBe(true);
+      for (const turn of fixture.history) {
+        expect(turn).not.toBeNull();
+        expect(typeof turn.user).toBe("string");
+        expect(typeof turn.assistant).toBe("string");
+      }
+    }
+  });
+
+  it("失敗した過去ジョブの検証ログを意図判定へ含めない", async () => {
+    await classifyEditIntent(
+      intentEnv as unknown as AppEnv,
+      job({ turnNumber: 2, instruction: "もう一度実施して" }),
+      [
+        job({
+          turnNumber: 1,
+          status: "failed",
+          instruction: "見出しを短くして",
+          errorMessage: "private-validation-history",
+        }),
+      ],
+    );
+    const request = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
+    expect(request.input).not.toContain("private-validation-history");
+    expect(JSON.parse(request.input).history).toEqual([
+      { user: "見出しを短くして", assistant: "前回の処理は完了していません。" },
+    ]);
+  });
+
   it.each(["discussion_only", "unclear"] as const)(
     "%sでは生成モデルが変更を返しても採用・変更完了表示をしない",
     async (intent) => {

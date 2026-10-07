@@ -40,7 +40,10 @@ export async function classifyEditIntent(
     currentRequest: job.instruction,
     history: selectConversationJobs(job, conversationJobs).map((previous) => ({
       user: previous.instruction,
-      assistant: buildPreviousAssistantMessage(previous),
+      assistant:
+        previous.status === "failed"
+          ? "前回の処理は完了していません。"
+          : buildPreviousAssistantMessage(previous),
     })),
   });
 
