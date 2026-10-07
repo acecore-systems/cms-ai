@@ -241,6 +241,62 @@ describe("Workers AI inference", () => {
       summary: "Cherry CMS AI canary OK",
     });
   });
+
+  it("summaryに入った会話回答を既存のOpenAI呼び出し一回で受け取る", async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  changes: [],
+                  clarification: "",
+                  summary: "CMS inference canary OK",
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    try {
+      const result = await runInference(
+        {
+          CMS_AI_MODEL: "gpt-6-luna",
+          OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
+        } as unknown as AppEnv,
+        site,
+        job(),
+        [{ content: "<main>before</main>", path: "src/pages/index.astro" }],
+        [],
+      );
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fetch.mock.calls[0][0]).toBe(
+        "https://api.openai.com/v1/chat/completions",
+      );
+      expect(result).toEqual({
+        changes: [],
+        clarification: "CMS inference canary OK",
+        summary: "CMS inference canary OK",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(["", " \n\t"])(
+    "回答と変更案が両方空の場合は空文字%sでもエラーにする",
+    (text) => {
+      expect(() =>
+        parseInferenceResponse(site, {
+          response: { changes: [], clarification: text, summary: text },
+        }),
+      ).toThrow(/AIから回答または変更案/);
+    },
+  );
 });
 
 function job(overrides: Partial<Job> = {}): Job {
