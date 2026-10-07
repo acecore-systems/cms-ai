@@ -7,8 +7,6 @@ AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤で�
 - `CMS_AI_MODEL` は現在 `gpt-6-luna`（OpenAI API直結、Secrets Store binding `OPENAI_API_KEY_STORE` が必要）です。将来は検証済みのGLM以外の`@cf/`文章モデルを明示設定してWorkers AI bindingへ切り替えられます。キー不足や障害時の自動切替はしません。テキストと画像入力を扱います。
 - 推論深度はメッセージごとに`low`、`medium`、`high`から選べます。
 - 質問、相談、修正依頼は同じ会話で扱い、対象URLの入力は求めません。
-- `editor`・`admin`の依頼は、文章・コード生成前にDecisions APIで`edit_requested`・`discussion_only`・`unclear`へ分類します。明示された編集依頼だけが変更案を返せます。相談・不明の場合はサーバー側でも変更を空にし、判定の障害・拒否・不正応答では編集へ進みません。`chat`権限は判定APIを呼ばず、従来どおり変更禁止です。
-- 意図判定の設定は`CMS_AI_DECISIONS_MODEL=gpt-6-luna`です。文章モデルをWorkers AIへ変更する場合も、意図判定には`OPENAI_API_KEY_STORE`が必要です。判定へ渡すのは現在の依頼と同一所有者・サイト・会話の限定履歴だけで、ソース本文・画像・検証ログは含めません。文章・コード生成APIと既存の権限・許可パス・PR承認は維持します。
 - 会話にPNG・JPEG・WebPを1回4枚、各2MiBまで添付・貼り付けできます。画像のみの送信も可能です。画像生成は行いません。
 - 添付は非公開R2へ保存し、Access・サイト権限・会話所有者の検証後にだけ配信します。GitHub Actionsや公開リポジトリへ画像データを渡しません。
 - 画像履歴は直近12ターン（文章24,000文字）の範囲内で、現在の添付を優先して合計16MiBまでモデルへ渡します。上限で省略された画像は再添付してください。画像は会話とともに保存され、自動削除はありません。
@@ -35,7 +33,7 @@ npm run format:check
 npm run deploy:dry-run
 ```
 
-実モデル確認にはremote bindingとOpenAI側の課金設定が必要です。通常の単体テストではfixtureを使います。編集意図の架空評価例は`tests/fixtures/edit-intent.json`です。判定だけでなく相談・編集・`chat`権限での文章生成連携も確認し、本番Workerの更新後にはCMSからファイル変更のない依頼で疎通を確認します。API仕様は[OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions)を参照してください。
+実モデル確認にはremote bindingとOpenAI側の課金設定が必要です。通常の単体テストではfixtureを使います。文章・変更内容は既存の生成APIが一度の推論で返し、権限・許可パス・PR承認はアプリケーションで検証します。
 
 共有runnerはGitHub-hosted Linux runnerのDockerを利用します。依存関係の取得時だけsandboxのnetworkを有効にし、その後の検証コマンドはnetworkなしで実行します。
 
