@@ -213,8 +213,10 @@ export function parseInferenceResponse(
   }
 
   const modelSummary = limitedText(parsed.summary, 2_000);
-  const clarification = limitedText(parsed.clarification, 2_000);
   const changes = parseChanges(site, parsed.changes);
+  const clarification =
+    limitedText(parsed.clarification, 2_000) ||
+    (changes.length === 0 ? modelSummary : null);
 
   if (changes.length === 0 && !clarification) {
     throw new HttpError(502, "AIから回答または変更案を受け取れませんでした。");
