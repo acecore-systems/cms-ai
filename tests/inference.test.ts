@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AppEnv } from "../src/env.ts";
 import {
@@ -7,9 +7,28 @@ import {
   validateSourceFiles,
 } from "../src/inference.ts";
 import type { Job, Role } from "../src/models.ts";
+import { classifyEditIntent, type EditIntent } from "../src/edit-intent.ts";
+import { selectConversationJobs } from "../src/conversation.ts";
 import { getSiteById } from "../src/sites.ts";
 
 const site = getSiteById("homepage-hatt")!;
+const intentEnv = {
+  CMS_AI_DECISIONS_MODEL: "gpt-6-luna",
+  OPENAI_API_KEY_STORE: { get: async () => "test-api-key" },
+};
+
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => decisionResponse("edit_requested")),
+  );
+  vi.spyOn(console, "log").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("Workers AI inference", () => {
   it("現在と過去の画像を元のuser turnに付けて渡す", async () => {
@@ -31,6 +50,7 @@ describe("Workers AI inference", () => {
       .fn()
       .mockResolvedValue({ size: 3, arrayBuffer: async () => bytes.buffer });
     const env = {
+      ...intentEnv,
       AI: { run },
       CMS_AI_IMAGES: { get },
       CMS_AI_MODEL: "@cf/example/chat-model",
@@ -69,6 +89,7 @@ describe("Workers AI inference", () => {
       await expect(
         runInference(
           {
+            ...intentEnv,
             AI: { run },
             CMS_AI_MODEL: "@cf/example/chat-model",
           } as unknown as AppEnv,
@@ -107,6 +128,7 @@ describe("Workers AI inference", () => {
   it("Workers AIへ画像入力・effortと会話履歴を渡す", async () => {
     const calls: Array<{ input: any; model: string; options: any }> = [];
     const env = {
+      ...intentEnv,
       CMS_AI_MODEL: "@cf/example/chat-model",
       AI: {
         async run(model: string, input: unknown, options: any) {
@@ -159,6 +181,7 @@ describe("Workers AI inference", () => {
 
   it("chat権限ではモデルが変更を返してもサーバー側で変更を空にする", async () => {
     const env = {
+      ...intentEnv,
       CMS_AI_MODEL: "@cf/example/chat-model",
       AI: {
         async run() {
@@ -187,7 +210,8 @@ describe("Workers AI inference", () => {
     );
 
     expect(result.changes).toEqual([]);
-    expect(result.clarification).toBe("変更案を説明します。");
+    expect(result.clarification).toContain("ファイル変更は行っていません");
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("許可範囲外のモデル変更とsourceを拒否する", () => {
@@ -243,6 +267,323 @@ describe("Workers AI inference", () => {
   });
 });
 
+describe("CMS edit intent boundary", () => {
+  it.each(["discussion_only", "unclear"] as const)(
+    "%sでは生成モデルが変更を返しても採用・変更完了表示をしない",
+    async (intent) => {
+      vi.mocked(fetch).mockImplementation(async () => decisionResponse(intent));
+      const run = vi.fn(async () => ({
+        response: {
+          changes: [
+            {
+              path: "src/pages/index.astro",
+              content: "<main>unexpected edit</main>",
+              reason: "変更しました",
+            },
+          ],
+          clarification: "変更しました",
+          summary: "見出しを変更しました",
+        },
+      }));
+      const result = await runInference(
+        {
+          ...intentEnv,
+          AI: { run },
+          CMS_AI_MODEL: "@cf/example/chat-model",
+        } as unknown as AppEnv,
+        site,
+        job({ instruction: "候補を3つ出して。反映はしないで" }),
+        [{ content: "<main>before</main>", path: "src/pages/index.astro" }],
+        [],
+      );
+      expect(result.changes).toEqual([]);
+      expect(result.summary).toBe("ファイル変更は行っていません。");
+      expect(result.clarification).toContain("ファイル変更は行っていません");
+      expect(
+        run.mock.calls[0][1].response_format.json_schema.properties.changes
+          .maxItems,
+      ).toBe(0);
+    },
+  );
+
+  it("相談への回答は保持し、ソースと検証ログを意図判定へ送らない", async () => {
+    vi.mocked(fetch).mockImplementation(async () =>
+      decisionResponse("discussion_only"),
+    );
+    const run = vi.fn(async () => ({
+      response: {
+        changes: [],
+        clarification: "見出しの候補を説明します。",
+        summary: "候補を説明しました。",
+      },
+    }));
+    const result = await runInference(
+      {
+        ...intentEnv,
+        AI: { run },
+        CMS_AI_MODEL: "@cf/example/chat-model",
+      } as unknown as AppEnv,
+      site,
+      job({ instruction: "見出しの候補を3つ出して" }),
+      [{ content: "private-source-text", path: "src/pages/index.astro" }],
+      [],
+      "private-validation-log",
+    );
+    expect(result.clarification).toBe("見出しの候補を説明します。");
+    const decisionInput = String(vi.mocked(fetch).mock.calls[0][1]?.body);
+    expect(decisionInput).not.toContain("private-source-text");
+    expect(decisionInput).not.toContain("private-validation-log");
+    expect(decisionInput).not.toContain("member@example.com");
+    expect(decisionInput).not.toContain("test-api-key");
+    expect(JSON.stringify(vi.mocked(console.log).mock.calls)).not.toContain(
+      "見出しの候補",
+    );
+  });
+
+  it("OpenAIでは明示編集の判定後に既存の生成APIを呼ぶ", async () => {
+    vi.mocked(fetch).mockImplementation(async (url) =>
+      String(url).endsWith("/decisions")
+        ? decisionResponse("edit_requested")
+        : Response.json({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    changes: [
+                      {
+                        content: "<main>after</main>",
+                        path: "src/pages/index.astro",
+                        reason: "依頼された更新",
+                      },
+                    ],
+                    clarification: "",
+                    summary: "変更案を作成しました。",
+                  }),
+                },
+              },
+            ],
+          }),
+    );
+    const result = await runInference(
+      { ...intentEnv, CMS_AI_MODEL: "gpt-6-luna" } as unknown as AppEnv,
+      site,
+      job(),
+      [{ content: "<main>before</main>", path: "src/pages/index.astro" }],
+      [],
+    );
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      "https://api.openai.com/v1/decisions",
+      "https://api.openai.com/v1/chat/completions",
+    ]);
+    expect(result.changes[0].content).toBe("<main>after</main>");
+    const generatedRequest = JSON.parse(
+      String(vi.mocked(fetch).mock.calls[1][1]?.body),
+    );
+    expect(generatedRequest.store).toBe(false);
+    expect(generatedRequest.reasoning_effort).toBe("medium");
+    expect(
+      generatedRequest.response_format.json_schema.schema.properties.changes
+        .maxItems,
+    ).toBe(20);
+  });
+
+  it.each([
+    {},
+    { answers: [] },
+    {
+      answers: [
+        {
+          name: "edit_intent",
+          type: "refusal",
+          refusal: "private-provider-detail",
+        },
+      ],
+    },
+    {
+      answers: [
+        { name: "other_question", type: "choice", choice: "edit_requested" },
+      ],
+    },
+    {
+      answers: [
+        { name: "edit_intent", type: "choice", choice: "unexpected_value" },
+      ],
+    },
+    { answers: [{ name: "edit_intent", type: "predicate", probability: 1 }] },
+    {
+      answers: [
+        { name: "edit_intent", type: "choice", choice: "edit_requested" },
+        { name: "edit_intent", type: "choice", choice: "edit_requested" },
+      ],
+    },
+  ])("拒否や不正な判定応答では文章生成を開始しない: %j", async (body) => {
+    vi.mocked(fetch).mockImplementation(async () => Response.json(body));
+    const run = vi.fn();
+    await expect(
+      runInference(
+        {
+          ...intentEnv,
+          AI: { run },
+          CMS_AI_MODEL: "@cf/example/chat-model",
+        } as unknown as AppEnv,
+        site,
+        job(),
+        [{ content: "<main>before</main>", path: "src/pages/index.astro" }],
+        [],
+      ),
+    ).rejects.toThrow("編集依頼かどうかを確認できませんでした");
+    expect(run).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(console.log).not.toHaveBeenCalled();
+  });
+
+  it.each(["http", "network", "invalid_json", "oversized"])(
+    "判定APIの%s障害を別APIへのフォールバックや詳細漏えいにしない",
+    async (failure) => {
+      vi.mocked(fetch).mockImplementation(async () => {
+        if (failure === "network") throw new Error("private-provider-detail");
+        if (failure === "http")
+          return new Response("private-provider-detail", { status: 503 });
+        if (failure === "oversized") return new Response("x".repeat(64_001));
+        return new Response("private-provider-detail");
+      });
+      let error: unknown;
+      try {
+        await classifyEditIntent(intentEnv as unknown as AppEnv, job(), []);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(String(error)).toContain("編集依頼かどうかを確認できませんでした");
+      expect(String(error)).not.toContain("private-provider-detail");
+      expect(fetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("chat権限は意図判定の設定やAPIに依存せず会話だけ返せる", async () => {
+    const run = vi.fn(async () => ({
+      response: {
+        changes: [],
+        clarification: "説明します。",
+        summary: "回答しました。",
+      },
+    }));
+    const result = await runInference(
+      {
+        AI: { run },
+        CMS_AI_MODEL: "@cf/example/chat-model",
+      } as unknown as AppEnv,
+      site,
+      job({ requestedRole: "chat", instruction: "トップページを編集して" }),
+      [{ content: "<main>before</main>", path: "src/pages/index.astro" }],
+      [],
+    );
+    expect(result.changes).toEqual([]);
+    expect(result.clarification).toBe("説明します。");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("同じ会話・所有者・サイトの過去ターンだけを判定と生成で共有する", async () => {
+    const current = job({ turnNumber: 3, instruction: "A案で進めて" });
+    const previous = job({
+      turnNumber: 2,
+      instruction: "見出しの改善案を出して",
+      assistantMessage: "A案は見出しを短くする変更です。",
+      changedPaths: ["src/pages/index.astro"],
+    });
+    const other = [
+      job({
+        requestedBy: "other@example.com",
+        turnNumber: 1,
+        instruction: "other-owner",
+      }),
+      job({ siteId: "other-site", turnNumber: 1, instruction: "other-site" }),
+      job({
+        conversationId: "other-conversation",
+        turnNumber: 1,
+        instruction: "other-conversation",
+      }),
+      job({ turnNumber: 4, instruction: "future-turn" }),
+      current,
+    ];
+    const history = [...other, previous];
+    await classifyEditIntent(intentEnv as unknown as AppEnv, current, history);
+    const request = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
+    expect(JSON.parse(request.input)).toEqual({
+      currentRequest: "A案で進めて",
+      history: [
+        {
+          user: previous.instruction,
+          assistant:
+            previous.assistantMessage + "\n変更ファイル: src/pages/index.astro",
+        },
+      ],
+    });
+    expect(selectConversationJobs(current, history)).toEqual([previous]);
+  });
+
+  it("履歴を直近12ターンと文字予算へ限定する", () => {
+    const current = job({ turnNumber: 20 });
+    const history = Array.from({ length: 19 }, (_, index) =>
+      job({
+        turnNumber: index + 1,
+        instruction: "短い依頼",
+        assistantMessage: "短い回答",
+      }),
+    );
+    expect(
+      selectConversationJobs(current, history).map((turn) => turn.turnNumber),
+    ).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+    expect(
+      selectConversationJobs(
+        current,
+        history.map((turn) => ({
+          ...turn,
+          instruction: "x".repeat(4_000),
+          assistantMessage: "x".repeat(4_000),
+        })),
+      ).map((turn) => turn.turnNumber),
+    ).toEqual([17, 18, 19]);
+  });
+
+  it.each(["", "@cf/example/chat-model", "gpt-6-astra"])(
+    "不正な判定モデル%sはAPI呼出し前に拒否する",
+    async (model) => {
+      await expect(
+        classifyEditIntent(
+          { ...intentEnv, CMS_AI_DECISIONS_MODEL: model } as unknown as AppEnv,
+          job(),
+          [],
+        ),
+      ).rejects.toThrow("モデル設定");
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("Secrets Storeの詳細をエラーへ含めない", async () => {
+    await expect(
+      classifyEditIntent(
+        {
+          ...intentEnv,
+          OPENAI_API_KEY_STORE: {
+            get: async () => {
+              throw new Error("private-secret-store-detail");
+            },
+          },
+        } as unknown as AppEnv,
+        job(),
+        [],
+      ),
+    ).rejects.toThrow("OpenAI APIの設定がありません");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+function decisionResponse(choice: EditIntent) {
+  return Response.json({
+    answers: [{ name: "edit_intent", type: "choice", choice }],
+  });
+}
+
 function job(overrides: Partial<Job> = {}): Job {
   const now = new Date().toISOString();
   return {
@@ -255,7 +596,7 @@ function job(overrides: Partial<Job> = {}): Job {
     createdAt: now,
     errorMessage: null,
     id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-    instruction: "現在のページについて教えて",
+    instruction: "トップページの見出しを短くして",
     prUrl: null,
     reasoningEffort: "medium",
     requestedBy: "member@example.com",
