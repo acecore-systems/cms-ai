@@ -1,7 +1,13 @@
 import type { AppEnv } from "./env.ts";
+import {
+  buildPreviousAssistantMessage,
+  selectConversationJobs,
+} from "./conversation.ts";
+import { classifyEditIntent, type EditIntent } from "./edit-intent.ts";
 import { imageContent, type MessageContent } from "./images.ts";
 import { HttpError } from "./http.ts";
 import { canEdit, type Job } from "./models.ts";
+import { getOpenAiApiKey } from "./openai.ts";
 import {
   isSiteSourcePath,
   isSiteWritablePath,
@@ -15,8 +21,6 @@ const MAX_SOURCE_BYTES = 768 * 1024;
 const MAX_CHANGE_FILES = 20;
 const MAX_CHANGE_FILE_BYTES = 256 * 1024;
 const MAX_CHANGE_BYTES = 512 * 1024;
-const MAX_HISTORY_TURNS = 12;
-const MAX_HISTORY_CHARACTERS = 24_000;
 
 export type SourceFile = {
   content: string;
@@ -44,6 +48,20 @@ export async function runInference(
   validationFeedback?: string,
 ): Promise<InferenceResult> {
   const files = validateSourceFiles(site, sourceFiles);
+  const model = getModel(env);
+  const editIntent = canEdit(job.requestedRole)
+    ? await classifyEditIntent(env, job, conversationJobs)
+    : null;
+  const changesAllowed =
+    canEdit(job.requestedRole) && editIntent === "edit_requested";
+  console.log(
+    JSON.stringify({
+      event: "cms_ai_edit_intent",
+      intent: editIntent,
+      changesAllowed,
+      role: job.requestedRole,
+    }),
+  );
   // Bound all image data per inference and prioritize the current turn.
   const imageBudget = { remaining: 16 * 1024 * 1024 };
   const currentContent = await imageContent(
@@ -57,7 +75,7 @@ export async function runInference(
     store: false,
     messages: [
       {
-        content: buildSystemPrompt(site, job),
+        content: buildSystemPrompt(site, job, editIntent),
         role: "system",
       },
       ...(await buildConversationMessages(
@@ -87,7 +105,7 @@ export async function runInference(
               required: ["path", "content", "reason"],
               type: "object",
             },
-            maxItems: MAX_CHANGE_FILES,
+            maxItems: changesAllowed ? MAX_CHANGE_FILES : 0,
             type: "array",
           },
           clarification: { type: "string" },
@@ -99,7 +117,6 @@ export async function runInference(
       type: "json_schema",
     },
   };
-  const model = getModel(env);
   if (model === "gpt-6-luna" && !env.OPENAI_API_KEY_STORE) {
     throw new HttpError(503, "OpenAI APIの設定がありません。");
   }
@@ -137,7 +154,15 @@ export async function runInference(
 
   const parsed = parseInferenceResponse(site, response);
 
-  if (!canEdit(job.requestedRole)) {
+  if (!changesAllowed) {
+    if (parsed.changes.length > 0) {
+      return {
+        changes: [],
+        clarification:
+          "この依頼ではファイル変更は行っていません。変更を実施したい場合は、内容を明示してください。",
+        summary: "ファイル変更は行っていません。",
+      };
+    }
     return {
       changes: [],
       clarification:
@@ -232,33 +257,14 @@ async function buildConversationMessages(
   conversationJobs: Job[],
   imageBudget: { remaining: number },
 ) {
-  const previousJobs = conversationJobs
-    .filter(
-      (job) =>
-        job.conversationId === currentJob.conversationId &&
-        job.siteId === currentJob.siteId &&
-        job.requestedBy === currentJob.requestedBy &&
-        job.turnNumber < currentJob.turnNumber,
-    )
-    .sort((left, right) => left.turnNumber - right.turnNumber)
-    .slice(-MAX_HISTORY_TURNS);
+  const previousJobs = selectConversationJobs(currentJob, conversationJobs);
   const selected: Array<{
     content: MessageContent;
     role: "assistant" | "user";
   }> = [];
-  let characters = 0;
-
-  for (const previousJob of previousJobs.reverse()) {
+  // Allocate the remaining image budget to the newest previous turns first.
+  for (const previousJob of previousJobs.toReversed()) {
     const assistant = buildPreviousAssistantMessage(previousJob);
-    const turnCharacters = previousJob.instruction.length + assistant.length;
-
-    if (
-      selected.length > 0 &&
-      characters + turnCharacters > MAX_HISTORY_CHARACTERS
-    ) {
-      break;
-    }
-
     selected.unshift({ content: assistant, role: "assistant" });
     selected.unshift({
       content: await imageContent(
@@ -269,31 +275,20 @@ async function buildConversationMessages(
       ),
       role: "user",
     });
-    characters += turnCharacters;
   }
 
   return selected;
 }
 
-function buildPreviousAssistantMessage(job: Job) {
-  const message =
-    (job.status === "failed" ? job.errorMessage : null) ||
-    job.assistantMessage ||
-    job.clarification ||
-    job.summary ||
-    job.errorMessage ||
-    "前回の処理結果はありません。";
-  const changedPaths = job.changedPaths.length
-    ? "\n変更ファイル: " + job.changedPaths.join(", ")
-    : "";
-
-  return message + changedPaths;
-}
-
-function buildSystemPrompt(site: SiteConfig, job: Job) {
-  const roleRule = canEdit(job.requestedRole)
-    ? "The user may request edits. Only return changes when the conversation clearly asks you to implement them."
-    : "This user has chat-only permission. Always return an empty changes array and answer naturally in Japanese using clarification.";
+function buildSystemPrompt(
+  site: SiteConfig,
+  job: Job,
+  editIntent: EditIntent | null,
+) {
+  const roleRule =
+    canEdit(job.requestedRole) && editIntent === "edit_requested"
+      ? "The user may request edits. Only return changes when the conversation clearly asks you to implement them."
+      : "File changes are not allowed for this turn. Always return an empty changes array and answer naturally in Japanese using clarification. Ask a concise question if the editing request is unclear; do not claim that files were modified.";
 
   return [
     `You are a conversational CMS assistant and implementation engine for the ${site.displayName} site.`,
@@ -455,13 +450,7 @@ async function runTextModel(
   const { response_format: responseFormat, ...commonRequest } = request;
   const schema = (responseFormat as { json_schema?: unknown } | undefined)
     ?.json_schema;
-  let apiKey: string;
-  try {
-    apiKey = (await env.OPENAI_API_KEY_STORE?.get())?.trim() || "";
-  } catch {
-    throw new HttpError(503, "OpenAI APIの設定がありません。");
-  }
-  if (!apiKey) throw new HttpError(503, "OpenAI APIの設定がありません。");
+  const apiKey = await getOpenAiApiKey(env);
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
