@@ -277,26 +277,45 @@ describe("SEO action runtime", () => {
         ? { status: "unresolved" }
         : normal(operation, body),
     );
-    expect(await runner.executeJob()).toEqual({ status: "unresolved" });
+    expect(await runner.executeJob()).toEqual({
+      status: "unresolved",
+      diagnostic: { stage: "propose", code: "seo_generation" },
+    });
     expect(request.mock.calls.at(-1)?.[0]).toBe("unresolved");
     expect(
       request.mock.calls.some(([operation]) => operation === "publish"),
     ).toBe(false);
     expect(pushed).toBe(false);
   });
-  it("does not push or create a PR on target validation failure", async () => {
-    const normal = execute.getMockImplementation()!;
-    execute.mockImplementation(async (command, args, options) => {
-      if (command === "npm" && args.includes("build"))
-        throw new Error("private build output");
-      return normal(command, args, options);
-    });
-    expect(await runner.executeJob()).toEqual({ status: "unresolved" });
-    expect(pushed).toBe(false);
-    expect(github.mock.calls.some(([, method]) => method === "POST")).toBe(
-      false,
-    );
-  });
+  it.each([
+    ["validate:content", "validate_content"],
+    ["build", "build"],
+  ])(
+    "reports only a fixed stage/code on %s failure and never publishes",
+    async (script, stage) => {
+      const normal = execute.getMockImplementation()!;
+      execute.mockImplementation(async (command, args, options) => {
+        if (command === "npm" && args.includes(script))
+          throw Object.assign(new Error("private source and fixture-token"), {
+            stdout: "private article content",
+            stderr: "fixture-oidc",
+          });
+        return normal(command, args, options);
+      });
+      expect(await runner.executeJob()).toEqual({
+        status: "unresolved",
+        diagnostic: { stage, code: "seo_command_failed" },
+      });
+      expect(request.mock.calls.at(-1)).toEqual(["unresolved", {}, true]);
+      expect(
+        request.mock.calls.some(([operation]) => operation === "publish"),
+      ).toBe(false);
+      expect(pushed).toBe(false);
+      expect(github.mock.calls.some(([, method]) => method === "POST")).toBe(
+        false,
+      );
+    },
+  );
   it("stops when latest main changes", async () => {
     let reads = 0;
     const normal = execute.getMockImplementation()!;
@@ -310,7 +329,10 @@ describe("SEO action runtime", () => {
         return { stdout: "b".repeat(40) };
       return normal(command, args, options);
     });
-    expect(await runner.executeJob()).toEqual({ status: "unresolved" });
+    expect(await runner.executeJob()).toMatchObject({
+      status: "unresolved",
+      diagnostic: { code: "seo_main_changed" },
+    });
     expect(pushed).toBe(false);
   });
   it("does not replay PR creation after a lost GitHub response", async () => {
@@ -319,12 +341,33 @@ describe("SEO action runtime", () => {
       if (method === "POST") throw new Error("lost response");
       return normal(path, method, body);
     });
-    expect(await runner.executeJob()).toEqual({ status: "unresolved" });
+    expect(await runner.executeJob()).toEqual({
+      status: "unresolved",
+      diagnostic: { stage: "draft_pr", code: "unexpected_error" },
+    });
     expect(pushed).toBe(true);
     expect(
       github.mock.calls.filter(([, method]) => method === "POST"),
     ).toHaveLength(1);
     expect(request.mock.calls.at(-1)?.[0]).toBe("unresolved");
+  });
+  it("redacts unknown errors/stages and preserves the first failure across a lost callback", async () => {
+    vi.spyOn(runner, "run").mockImplementation(async () => {
+      runner.active = true;
+      runner.stage = "private dynamic stage";
+      throw new Error("seo_command_failed:private source or token");
+    });
+    request.mockImplementation(async () => {
+      runner.stage = "finish";
+      throw new Error("seo_completion_unknown");
+    });
+    expect(await runner.executeJob()).toEqual({
+      status: "unresolved",
+      diagnostic: { stage: "unknown", code: "unexpected_error" },
+    });
+    expect(request.mock.calls).toEqual([["unresolved", {}, true]]);
+    expect(execute).not.toHaveBeenCalled();
+    expect(github).not.toHaveBeenCalled();
   });
   it("blocks traversal and junctions before reading or replacing source", async () => {
     await expect(runner.read("../outside.md")).rejects.toThrow("seo_path");

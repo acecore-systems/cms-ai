@@ -74,6 +74,16 @@ CMS Appは既存の`actions:write`だけを使う。サイトsourceのread、PR�
 
 通常CMSのサイト別validation（format/content/CMS/Functions/build、Wikiはcheck/test/build）を再利用する。Portal/Systemsではi18n、Corporate/SystemsではSEO検証も行う。Corporateのblog freshnessはlocal commitの実SHAをbase/headへ指定して実行する。全差分は許可記事・locale・必要なSystems stateだけに限定し、validation後にmain SHAとopen PR overlapを再確認する。検証・全locale・差分制約が通るまでpush/PRへ進まない。
 
+## 対象localeの検証とrunner診断
+
+翻訳callには、担当localeの通常語（title・description・見出し・本文・リンク説明）へ日本語の断片を残さないこと、正当な中国語の漢字と区別することを明示する。コード・コマンド・URL・製品名・固有名・引用は検証を通すために削除・改変しない。見出しレベル・リンクの役割・コードtokenとlocale別内部リンクを既存サイト契約に合わせ、保護対象との両立や根拠に問題がある場合はclarificationで停止できる。既存の受入検査とサイトvalidatorは維持する。
+
+2026-10-19のPortal第5回canaryでは、保存済み9成果を実行時のmainへ適用して再現したところ、韓国語本文の通常の案内語に日本語が残り、`npm run validate:content`内のi18n検査で停止した。固有名や引用ではなく翻訳漏れだった。保存原本を変えず、その語だけを韓国語にした派生成果は、正確なbaseのlockfileでformat/content/i18n、i18n/alpha/CMS tests、Functions型検査とbuildに合格した。これはローカル保存成果の検証であり、実ActionsのDraft PR完成やクラウド全工程の成功を示さない。
+
+runnerの失敗結果は`{status:"unresolved",diagnostic:{stage,code}}`をActionsへ出力する。`stage`は検査・生成・整形・commit・push・Draft PR等の固定allowlist、`code`も固定allowlistとし、未知の値は`unknown`／`unexpected_error`へ置換する。コマンド失敗は例外全文・stdout/stderr・実引数を含めず`seo_command_failed`とする。例えばcontent検査失敗は`validate_content / seo_command_failed`であり、具体的な本文原因は保存成果を別途照合する。callback失敗でも最初の診断を維持し、既存のunresolved通知・予約保持・再送禁止は変更しない。
+
+この診断はrunner実体の変更を含むため、CMS配置に加え、対象6siteの`seo-runner`参照をこの修正のcommit SHAへ更新する必要がある。診断追加前の実行へ後からActions診断を付与したとは扱わない。R2原本・派生成果・ローカル再現receiptは非公開で区別して保持し、本文や生ログをPRへ添付しない。
+
 ## 予算・期限・永続state
 
 全モデル呼び出しは既存`generateSeo`と`SeoBudget`を使い、同一予算run ID・canonical article path・親の絶対deadlineを共有する。初回API呼び出しから30分に設定し直さない。1回1 USD、JST暦月5 USD、1記事、候補3件の範囲を超えない。全9言語が予算へ収まることは保証せず、上限到達時は部分翻訳PRを作らない。
