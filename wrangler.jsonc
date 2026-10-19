@@ -32,7 +32,15 @@
       "migrations_dir": "migrations",
     },
   ],
+  "services": [
+    {
+      "binding": "SEO_COORDINATOR",
+      "service": "acecore-seo-ops",
+      "entrypoint": "SeoCoordinator",
+    },
+  ],
   "vars": {
+    "SEO_EDITORIAL_ENABLED": "true",
     "SEO_GENERATION_ENABLED": "true",
     "CMS_AI_ACCESS_TEAM_DOMAIN": "https://acecore.cloudflareaccess.com",
     "CMS_AI_AUTOMERGE_ENABLED": "false",

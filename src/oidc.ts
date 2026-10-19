@@ -2,7 +2,12 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 
 import type { AppEnv } from "./env.ts";
 import { HttpError } from "./http.ts";
-import { getSiteByRepository, type SiteConfig } from "./sites.ts";
+import {
+  getSiteByRepository,
+  SEO_WORKFLOW_PATH,
+  SEO_RUNNER_AUDIENCE,
+  type SiteConfig,
+} from "./sites.ts";
 
 const DEFAULT_ISSUER = "https://token.actions.githubusercontent.com";
 const jwksByIssuer = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
@@ -11,11 +16,13 @@ export type RunnerIdentity = {
   repository: string;
   runId: string | null;
   site: SiteConfig;
+  workflowSha?: string;
 };
 
 export async function authenticateRunner(
   request: Request,
   env: AppEnv,
+  seo = false,
 ): Promise<RunnerIdentity> {
   const authorization = request.headers.get("Authorization") || "";
   const token = authorization.replace(/^Bearer\s+/i, "");
@@ -25,7 +32,9 @@ export async function authenticateRunner(
   }
 
   const issuer = getIssuer(env);
-  const audience = String(env.CMS_AI_RUNNER_AUDIENCE || "").trim();
+  const audience = seo
+    ? SEO_RUNNER_AUDIENCE
+    : String(env.CMS_AI_RUNNER_AUDIENCE || "").trim();
 
   if (!audience) {
     throw new HttpError(503, "CMS AI runnerのaudienceが未設定です。");
@@ -54,12 +63,16 @@ export async function authenticateRunner(
     );
   }
 
-  const expectedWorkflowRef = `${site.repository}/${site.workflowPath}@refs/heads/${site.branch}`;
+  const expectedWorkflowRef = `${site.repository}/${seo ? SEO_WORKFLOW_PATH : site.workflowPath}@refs/heads/${site.branch}`;
 
   if (
     payload.event_name !== "workflow_dispatch" ||
     payload.ref !== `refs/heads/${site.branch}` ||
-    payload.workflow_ref !== expectedWorkflowRef
+    payload.workflow_ref !== expectedWorkflowRef ||
+    (seo &&
+      (String(payload.run_attempt) !== "1" ||
+        !/^\d+$/.test(String(payload.run_id)) ||
+        !/^[a-f0-9]{40}$/.test(String(payload.workflow_sha))))
   ) {
     throw new HttpError(403, "このGitHub Actions実行は許可されていません。");
   }
@@ -73,6 +86,7 @@ export async function authenticateRunner(
           ? String(payload.run_id)
           : null,
     site,
+    ...(seo ? { workflowSha: String(payload.workflow_sha) } : {}),
   };
 }
 

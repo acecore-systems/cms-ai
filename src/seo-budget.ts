@@ -1,4 +1,5 @@
 import type { AppEnv } from "./env.ts";
+export { sha256 } from "./seo-hash.ts";
 
 // User-approved ceiling, in millionths of USD. Failed/unknown calls retain their reservation.
 export const SEO_BUDGET = {
@@ -36,15 +37,6 @@ export function upperCost(
 export function jstMonth(now: number) {
   return new Date(now + 9 * 3600_000).toISOString().slice(0, 7);
 }
-export async function sha256(text: string) {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text),
-  );
-  return Array.from(new Uint8Array(digest), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
-}
 export class SeoBudget {
   constructor(private db: AppEnv["CMS_AI_DB"]) {}
   async reserve(
@@ -54,6 +46,7 @@ export class SeoBudget {
     hash: string,
     amount: number,
     now = Date.now(),
+    deadline = now + 30 * 60_000,
   ) {
     if (
       !/^seo-[0-9a-f-]{36}$/.test(runId) ||
@@ -61,7 +54,10 @@ export class SeoBudget {
       !/^[0-9a-f]{64}$/.test(hash) ||
       !Number.isSafeInteger(amount) ||
       amount < 1 ||
-      amount > SEO_BUDGET.runMicros
+      amount > SEO_BUDGET.runMicros ||
+      !Number.isSafeInteger(deadline) ||
+      deadline <= now ||
+      deadline > now + 30 * 60_000
     )
       throw new Error("seo_invalid_budget_request");
     // One transaction: a conflicting article, expired run, duplicate call or cap cannot charge/run again.
@@ -70,7 +66,7 @@ export class SeoBudget {
         .prepare(
           "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline) VALUES(?,?,?,?) ON CONFLICT(id) DO NOTHING",
         )
-        .bind(runId, article, now, now + 30 * 60_000),
+        .bind(runId, article, now, deadline),
       this.db
         .prepare(
           "INSERT INTO seo_budget_calls(id,run_id,month_jst,request_sha256,reserved_micros,created_at) SELECT ?,id,?,?,?,? FROM seo_budget_runs WHERE id=? AND article_key=? AND deadline>? AND created_at<=? ON CONFLICT(id) DO NOTHING",

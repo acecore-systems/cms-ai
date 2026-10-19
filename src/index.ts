@@ -4,6 +4,7 @@ import type { AppEnv } from "./env.ts";
 import { json, toErrorResponse } from "./http.ts";
 import { handleRunnerRequest } from "./runner.ts";
 import { handleUserRequest } from "./user.ts";
+import { handleSeoRunnerRequest } from "./seo-editorial.ts";
 
 export default {
   async fetch(request: Request, env: AppEnv): Promise<Response> {
@@ -16,6 +17,10 @@ export default {
 
       if (pathname.startsWith("/runner/")) {
         return await handleRunnerRequest(request, env);
+      }
+
+      if (pathname.startsWith("/seo-runner/")) {
+        return await handleSeoRunnerRequest(request, env);
       }
 
       if (pathname.startsWith("/admin/api/ai/")) {
@@ -47,4 +52,4 @@ export default {
   },
 } satisfies ExportedHandler<AppEnv>;
 
-export { SeoConnection, SeoGeneration } from "./seo.ts";
+export { SeoConnection, SeoGeneration, SeoEditorial } from "./seo.ts";

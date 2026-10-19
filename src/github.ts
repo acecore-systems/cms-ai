@@ -4,6 +4,7 @@ import type { AppEnv } from "./env.ts";
 import { HttpError } from "./http.ts";
 import type { Job } from "./models.ts";
 import type { SiteConfig } from "./sites.ts";
+import { SEO_WORKFLOW_PATH } from "./sites.ts";
 
 const GITHUB_API = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
@@ -39,7 +40,11 @@ export async function dispatchCmsAiJob(
   }
 }
 
-async function createInstallationToken(env: AppEnv, site: SiteConfig) {
+async function createInstallationToken(
+  env: AppEnv,
+  site: SiteConfig,
+  deadline?: number,
+) {
   const appJwt = await createAppJwt(env);
   const installationId = String(
     env.CMS_AI_GITHUB_APP_INSTALLATION_ID || "",
@@ -59,6 +64,13 @@ async function createInstallationToken(env: AppEnv, site: SiteConfig) {
       }),
       headers: githubHeaders(appJwt),
       method: "POST",
+      ...(deadline === undefined
+        ? {}
+        : {
+            signal: AbortSignal.timeout(
+              Math.max(1, Math.min(30_000, deadline - Date.now())),
+            ),
+          }),
     },
   );
   const body: unknown = await response.json().catch(() => null);
@@ -77,6 +89,33 @@ async function createInstallationToken(env: AppEnv, site: SiteConfig) {
   }
 
   return (body as { token: string }).token;
+}
+
+// Same actions-only installation token; no repository contents are read here.
+export async function dispatchSeoEditorialJob(
+  env: AppEnv,
+  site: SiteConfig,
+  runId: string,
+  jobId: string,
+  deadline: number,
+) {
+  const token = await createInstallationToken(env, site, deadline);
+  if (Date.now() >= deadline) throw new Error("seo_deadline");
+  const response = await fetch(
+    `${GITHUB_API}/repos/${site.repository}/actions/workflows/${encodeURIComponent(SEO_WORKFLOW_PATH)}/dispatches`,
+    {
+      method: "POST",
+      headers: githubHeaders(token),
+      body: JSON.stringify({
+        ref: site.branch,
+        inputs: { run_id: runId, job_id: jobId },
+      }),
+      signal: AbortSignal.timeout(
+        Math.max(1, Math.min(30_000, deadline - Date.now())),
+      ),
+    },
+  );
+  if (response.status !== 204) throw new Error("seo_dispatch_failed");
 }
 
 async function createAppJwt(env: AppEnv) {

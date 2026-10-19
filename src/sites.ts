@@ -171,6 +171,143 @@ export function getSiteById(siteId: string): SiteConfig | null {
   return SITES.find((site) => site.id === siteId) || null;
 }
 
+// SEO collection/locale contracts mirror seo-content-ops/seo_ops/model.py.
+// These are separate from the interactive CMS writable prefixes.
+export const SEO_WORKFLOW_PATH = ".github/workflows/seo-content.yml";
+export const SEO_RUNNER_AUDIENCE = "https://cms-ai.acecore.net/seo-runner";
+export const SEO_LOCALES = [
+  "en",
+  "zh-cn",
+  "es",
+  "pt",
+  "fr",
+  "ko",
+  "de",
+  "ru",
+] as const;
+export const SEO_SITES = {
+  hatt: {
+    cmsId: "homepage-hatt",
+    collections: { "blog/article": "src/content/blog" },
+    locales: [],
+    slugField: "slug",
+    statePath: null,
+    translationHash: "none",
+    updateField: "lastUpdated",
+    editableFields: ["title", "description"],
+    guidance: [],
+  },
+  cherry: {
+    cmsId: "homepage-cherry",
+    collections: {
+      blog: "src/content/blog",
+      news: "src/content/news",
+      events: "src/content/events",
+      faq: "src/content/faq",
+    },
+    locales: [],
+    slugField: null,
+    statePath: null,
+    translationHash: "none",
+    updateField: "updatedAt",
+    editableFields: ["title", "description", "updatedAt", "answer"],
+    guidance: [],
+  },
+  corporate: {
+    cmsId: "acecore-net",
+    collections: { blog: "src/content/blog" },
+    locales: SEO_LOCALES,
+    slugField: null,
+    statePath: null,
+    translationHash: "none",
+    updateField: "lastUpdated",
+    editableFields: ["title", "description", "lastUpdated", "imageAlt"],
+    guidance: [],
+  },
+  systems: {
+    cmsId: "acecore-systems",
+    collections: { insights: "src/content/insights" },
+    locales: SEO_LOCALES,
+    slugField: null,
+    statePath: "src/i18n/translation-state.json",
+    translationHash: "state",
+    updateField: "lastUpdated",
+    editableFields: ["title", "description", "lastUpdated", "imageAlt"],
+    guidance: ["docs/04_運用設計/03_技術記事の執筆・参考リンク・公開方針.md"],
+  },
+  portal: {
+    cmsId: "aceserver-portal",
+    collections: { stories: "src/content/stories" },
+    locales: SEO_LOCALES,
+    slugField: null,
+    statePath: null,
+    translationHash: "frontmatter",
+    updateField: "lastUpdated",
+    editableFields: ["title", "description", "lastUpdated", "imageAlt"],
+    guidance: [
+      "docs/04_運用設計/05_読みものの執筆・参考リンク・公開方針.md",
+      "docs/04_運用設計/02_多言語コンテンツ運用.md",
+    ],
+  },
+  wiki: {
+    cmsId: "aceserver-wiki",
+    collections: { article: "poc/astro-sveltia/src/content/wiki" },
+    locales: [],
+    slugField: null,
+    statePath: null,
+    translationHash: "none",
+    updateField: null,
+    editableFields: ["title", "description", "seoTitle"],
+    guidance: [],
+  },
+} as const;
+export type SeoSiteId = keyof typeof SEO_SITES;
+export function seoSite(id: string) {
+  const entry = Object.entries(SEO_SITES).find(
+    ([key, spec]) => key === id || spec.cmsId === id,
+  );
+  if (!entry) return null;
+  const [key, spec] = entry;
+  return { key: key as SeoSiteId, ...spec, site: getSiteById(spec.cmsId)! };
+}
+export function seoArticleUrl(siteId: string, value: string) {
+  const spec = seoSite(siteId);
+  if (!spec) return null;
+  try {
+    const url = new URL(value);
+    if (
+      url.origin !== new URL(spec.site.canonicalUrl).origin ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      /[\\\s]/u.test(value)
+    )
+      return null;
+    let path = decodeURIComponent(url.pathname)
+      .replace(/^\//, "")
+      .replace(/\/$/, "");
+    const locale = path.split("/")[0];
+    if ((spec.locales as readonly string[]).includes(locale))
+      path = path.slice(locale.length + 1);
+    for (const [route, directory] of Object.entries(spec.collections)) {
+      if (!path.startsWith(route + "/")) continue;
+      const slug = path.slice(route.length + 1);
+      if (
+        slug.length > 200 ||
+        slug !== slug.normalize("NFC") ||
+        !/^[\p{L}\p{N}][\p{L}\p{N}-]*$/u.test(slug) ||
+        (spec.key !== "wiki" && !/^[a-z0-9][a-z0-9-]*$/.test(slug))
+      )
+        return null;
+      return { spec, slug, directory, route };
+    }
+  } catch {
+    /* Untrusted candidate URL. */
+  }
+  return null;
+}
+
 export function getSiteByRepository(repository: string): SiteConfig | null {
   return SITES.find((site) => site.repository === repository) || null;
 }

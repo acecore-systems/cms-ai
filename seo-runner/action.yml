@@ -1,0 +1,29 @@
+name: Acecore SEO Editorial runner
+description: SEO記事の改訂・翻訳を検証し、Draft PRだけを作成します。
+inputs:
+  run-id:
+    description: SEO coordinator run ID
+    required: true
+  job-id:
+    description: CMS SEO editorial job ID
+    required: true
+  runner-url:
+    description: SEO runner endpoint
+    default: https://cms-ai.acecore.net/seo-runner
+  runner-audience:
+    description: SEO GitHub Actions OIDC audience
+    default: https://cms-ai.acecore.net/seo-runner
+runs:
+  using: composite
+  steps:
+    - name: SEO actionの依存関係を再現
+      shell: bash
+      run: npm ci --prefix "$GITHUB_ACTION_PATH/.." --omit=dev --ignore-scripts --no-audit --no-fund
+    - name: SEO Draft PRジョブを実行
+      shell: bash
+      env:
+        SEO_RUN_ID: ${{ inputs.run-id }}
+        SEO_JOB_ID: ${{ inputs.job-id }}
+        SEO_RUNNER_URL: ${{ inputs.runner-url }}
+        SEO_RUNNER_AUDIENCE: ${{ inputs.runner-audience }}
+      run: node --experimental-strip-types "$GITHUB_ACTION_PATH/index.mjs"
