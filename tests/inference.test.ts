@@ -12,6 +12,64 @@ import { getSiteById } from "../src/sites.ts";
 const site = getSiteById("homepage-hatt")!;
 
 describe("Workers AI inference", () => {
+  it("SEOの予算確保が失敗した場合はAPI呼出しとfallbackを行わない", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      await expect(
+        runInference(
+          {
+            CMS_AI_MODEL: "gpt-6-luna",
+            OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
+          } as unknown as AppEnv,
+          site,
+          job(),
+          [{ path: "src/pages/index.astro", content: "test" }],
+          [],
+          undefined,
+          async () => {
+            throw new Error("budget");
+          },
+        ),
+      ).rejects.toThrow();
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("SEOの送信前guardに確定payloadを渡し、結果不明でも再試行しない", async () => {
+    const order: string[] = [];
+    const fetcher = vi.fn(async () => {
+      order.push("request");
+      throw new Error("unknown");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      await expect(
+        runInference(
+          {
+            CMS_AI_MODEL: "gpt-6-luna",
+            OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
+          } as unknown as AppEnv,
+          site,
+          job(),
+          [{ path: "src/pages/index.astro", content: "test" }],
+          [],
+          undefined,
+          async (model, request) => {
+            expect(model).toBe("gpt-6-luna");
+            expect(request.service_tier).toBe("default");
+            expect(request.max_completion_tokens).toBe(12000);
+            order.push("reserved");
+          },
+        ),
+      ).rejects.toThrow();
+      expect(order).toEqual(["reserved", "request"]);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it("現在と過去の画像を元のuser turnに付けて渡す", async () => {
     const bytes = new Uint8Array([1, 2, 3]);
     const attachment = {

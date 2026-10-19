@@ -42,6 +42,10 @@ export async function runInference(
   sourceFiles: unknown,
   conversationJobs: Job[],
   validationFeedback?: string,
+  beforeRequest?: (
+    model: string,
+    request: Record<string, unknown>,
+  ) => Promise<void>,
 ): Promise<InferenceResult> {
   const files = validateSourceFiles(site, sourceFiles);
   // Bound all image data per inference and prioritize the current turn.
@@ -106,10 +110,10 @@ export async function runInference(
   let response: unknown;
 
   try {
-    response = await runTextModel(env, model, request);
+    response = await runTextModel(env, model, request, beforeRequest);
   } catch (error) {
     if (error instanceof HttpError) throw error;
-    if (model === "gpt-6-luna") {
+    if (model === "gpt-6-luna" || beforeRequest) {
       throw new HttpError(
         502,
         "AIの応答を取得できませんでした。時間をおいて再試行してください。",
@@ -447,8 +451,13 @@ async function runTextModel(
   env: AppEnv,
   model: string,
   request: Record<string, unknown>,
+  beforeRequest?: (
+    model: string,
+    request: Record<string, unknown>,
+  ) => Promise<void>,
 ): Promise<unknown> {
   if (isWorkersAiTextModel(model)) {
+    if (beforeRequest) throw new Error("seo_model_not_allowed");
     return (env.AI.run as (model: string, input: unknown) => Promise<unknown>)(
       model,
       request,
@@ -464,25 +473,28 @@ async function runTextModel(
     throw new HttpError(503, "OpenAI APIの設定がありません。");
   }
   if (!apiKey) throw new HttpError(503, "OpenAI APIの設定がありません。");
+  const payload = {
+    ...commonRequest,
+    model,
+    store: false,
+    ...(beforeRequest ? { service_tier: "default" } : {}),
+    ...(schema
+      ? {
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "cms_ai_changes", schema, strict: true },
+          },
+        }
+      : {}),
+  };
+  if (beforeRequest) await beforeRequest(model, payload);
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      ...commonRequest,
-      model,
-      store: false,
-      ...(schema
-        ? {
-            response_format: {
-              type: "json_schema",
-              json_schema: { name: "cms_ai_changes", schema, strict: true },
-            },
-          }
-        : {}),
-    }),
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(120_000),
   });
   if (!response.ok) {
