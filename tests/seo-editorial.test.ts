@@ -478,6 +478,30 @@ describe("SEO durable editorial boundary", () => {
       expect(instruction).toContain(
         "判断材料が不足ならchangesを空にしてclarificationを返す",
       );
+      if (step > 0) {
+        expect(instruction).toContain(
+          "title・description・見出し・本文・リンク説明の通常語を担当言語へ訳し、日本語の断片を残さない",
+        );
+        expect(instruction).toContain(
+          "韓国語の文中に日本語の『入口』などを混在させず",
+        );
+        expect(instruction).toContain(
+          "zh-cnの正当な漢字表現は日本語残存と混同しない",
+        );
+        expect(instruction).toContain(
+          "コード・コマンド・URL・製品名・固有名・引用を削除や改変しない",
+        );
+        expect(instruction).toContain(
+          "保護対象と検証要件が両立しない場合はclarificationを返す",
+        );
+        expect(instruction).toContain(
+          "見出しレベル・リンクの役割・コードtokenを対応させ",
+        );
+      } else {
+        expect(instruction).not.toContain(
+          "対象localeの既存content/i18n検証要件",
+        );
+      }
       const formatted = await format(response.file.content, portalFormat);
       finalFiles.push({ ...response.file, content: formatted });
       if (step === 0) {

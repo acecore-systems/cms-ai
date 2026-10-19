@@ -16,6 +16,57 @@ const exec = promisify(execFile);
 const uuid =
   /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
+const validationStages = Object.freeze({
+  "format:check": "validate_format",
+  "validate:content": "validate_content",
+  "validate:i18n": "validate_i18n",
+  "validate:seo": "validate_seo",
+  "test:cms": "test_cms",
+  "typecheck:functions": "typecheck_functions",
+  "validate:blog-freshness": "validate_freshness",
+  build: "build",
+  check: "check",
+});
+const diagnosticStages = new Set([
+  "setup",
+  "inspect",
+  "claim",
+  "propose",
+  "format_japanese",
+  "format_all",
+  "final_assertion",
+  "translation_state",
+  "validation",
+  "diff",
+  "commit",
+  "publish",
+  "push",
+  "draft_pr",
+  "finish",
+  ...Object.values(validationStages),
+]);
+const diagnosticCodes = new Set([
+  "seo_command_failed",
+  "seo_deadline",
+  "seo_rpc",
+  "seo_generation",
+  "seo_main_changed",
+  "seo_translation_hash",
+  "seo_immutable_metadata",
+  "seo_update_date",
+  "seo_no_copy_change",
+  "seo_locale_missing",
+  "seo_unexpected_diff",
+  "seo_pull_request_overlap",
+  "seo_validation_changed_source",
+  "seo_publish",
+  "seo_draft_confirmation",
+  "seo_completion_unknown",
+  "seo_github_response",
+  "seo_path",
+  "seo_symlink",
+]);
+
 // Dependencies are injectable for runtime tests; the action always uses the real
 // filesystem, signed OIDC and GitHub API, with no model credentials on the runner.
 export class SeoRunner {
@@ -34,6 +85,7 @@ export class SeoRunner {
     this.active = false;
     this.packageDirectory = null;
     this.validationCommands = [];
+    this.stage = "setup";
   }
   remaining(report = false) {
     const remaining =
@@ -120,7 +172,7 @@ export class SeoRunner {
       return String(result.stdout || "");
     } catch {
       // Never include command output: build/provider/git errors may contain source or tokens.
-      throw new Error("seo_command_failed:" + command + ":" + (args[0] || ""));
+      throw new Error("seo_command_failed");
     }
   }
   async github(path, method = "GET", body) {
@@ -319,6 +371,9 @@ export class SeoRunner {
     if (spec.key === "corporate" || spec.key === "systems")
       commands.push({ command: "npm", args: ["run", "validate:seo"] });
     for (const command of commands) {
+      this.stage = Object.hasOwn(validationStages, command.args[1])
+        ? validationStages[command.args[1]]
+        : "validation";
       await this.command(command.command, command.args, {
         cwd: resolve(this.workspace, spec.site.packageDirectory),
       });
@@ -326,6 +381,7 @@ export class SeoRunner {
         [command.command, ...command.args].join(" "),
       );
     }
+    this.stage = "diff";
     await this.command("git", ["diff", "--check"]);
     this.validationCommands.push("git diff --check");
   }
@@ -345,6 +401,7 @@ export class SeoRunner {
     );
   }
   async run() {
+    this.stage = "setup";
     if (
       !uuid.test(this.jobId) ||
       !/^(?:(?:editorial|manual)-[a-f0-9-]{36}|weekly-\d{4}-\d{2}-\d{2})$/.test(
@@ -372,6 +429,7 @@ export class SeoRunner {
     this.active = true;
     this.deadline = job.deadline;
     this.remaining();
+    this.stage = "inspect";
     if ((await this.command("git", ["status", "--porcelain"])).trim())
       throw new Error("seo_dirty_checkout");
     const baseSha = await this.latestMain();
@@ -404,6 +462,7 @@ export class SeoRunner {
     ]);
     if (branches.trim()) throw new Error("seo_branch_exists");
     await this.latestMain(baseSha);
+    this.stage = "claim";
     const claim = await this.request("claim", { baseSha, files: originals });
     if (claim.status === "skipped") return { status: "skipped" };
     if (
@@ -413,6 +472,7 @@ export class SeoRunner {
     )
       throw new Error("seo_claim");
     for (let step = 0; step < paths.length; step++) {
+      this.stage = "propose";
       const result = await this.request("propose", {
         step,
         ...(step === 1
@@ -426,15 +486,22 @@ export class SeoRunner {
       )
         throw new Error("seo_generation");
       await this.write(result.file, paths);
-      if (step === 0) await this.format([paths[0]], spec);
+      if (step === 0) {
+        this.stage = "format_japanese";
+        await this.format([paths[0]], spec);
+      }
     }
+    this.stage = "format_all";
     await this.format(paths, spec);
     const finalFiles = [];
     for (const path of paths) finalFiles.push(await this.read(path));
+    this.stage = "final_assertion";
     await assertEditorialFiles(identity, originals, finalFiles);
+    this.stage = "translation_state";
     await this.updateState(spec);
     if (spec.statePath) await this.format([spec.statePath], spec);
     await this.validation(spec);
+    this.stage = "diff";
     const changed = (await this.command("git", ["diff", "--name-only", "-z"]))
       .split("\0")
       .filter(Boolean);
@@ -458,6 +525,7 @@ export class SeoRunner {
     await this.latestMain(baseSha);
     if (await this.overlapping(allowed))
       throw new Error("seo_pull_request_overlap");
+    this.stage = "commit";
     await this.command("git", ["switch", "-c", branch]);
     await this.command("git", ["add", "--", ...changed]);
     await this.command("git", [
@@ -483,9 +551,11 @@ export class SeoRunner {
         "--head",
         commitSha,
       ];
+      this.stage = "validate_freshness";
       await this.command("npm", args);
       this.validationCommands.push("npm " + args.join(" "));
     }
+    this.stage = "publish";
     if ((await this.command("git", ["status", "--porcelain"])).trim())
       throw new Error("seo_validation_changed_source");
     await this.latestMain(baseSha);
@@ -493,6 +563,7 @@ export class SeoRunner {
       throw new Error("seo_pull_request_overlap");
     const permission = await this.request("publish", {});
     if (permission.status !== "publishing") throw new Error("seo_publish");
+    this.stage = "push";
     await this.command("git", ["push", "origin", "HEAD:refs/heads/" + branch]);
     await this.latestMain(baseSha);
     if (await this.overlapping(allowed))
@@ -536,6 +607,7 @@ export class SeoRunner {
           ]),
       "SEO予算は全言語共通で1回1 USD・月5 USD以内です。自動マージは行いません。",
     ].join("\n");
+    this.stage = "draft_pr";
     const pr = await this.github("/pulls", "POST", {
       base: "main",
       head: branch,
@@ -553,6 +625,7 @@ export class SeoRunner {
         "https://github.com/" + this.repository + "/pull/" + pr.number
     )
       throw new Error("seo_draft_confirmation");
+    this.stage = "finish";
     const complete = await this.request("finish", { prUrl: pr.html_url }, true);
     if (complete.status !== "draft_pr")
       throw new Error("seo_completion_unknown");
@@ -565,7 +638,16 @@ export class SeoRunner {
   async executeJob() {
     try {
       return await this.run();
-    } catch {
+    } catch (error) {
+      // Only exact allowlisted values may reach Actions output. Snapshot before
+      // the callback so a reporting failure cannot replace the original stage.
+      const diagnostic = {
+        stage: diagnosticStages.has(this.stage) ? this.stage : "unknown",
+        code:
+          error instanceof Error && diagnosticCodes.has(error.message)
+            ? error.message
+            : "unexpected_error",
+      };
       if (this.active) {
         try {
           await this.request("unresolved", {}, true);
@@ -573,7 +655,7 @@ export class SeoRunner {
           /* Coordinator timeout retains its lock. */
         }
       }
-      return { status: "unresolved" };
+      return { status: "unresolved", diagnostic };
     }
   }
 }
