@@ -95,7 +95,9 @@ export async function generateSeo(env: AppEnv, input: unknown) {
         "\n" +
         instruction,
       prUrl: null,
-      reasoningEffort: "max",
+      // The production Chat Completions endpoint rejected max (400 unsupported_value).
+      // Pin high for SEO; do not retry or silently switch effort after an API call.
+      reasoningEffort: "high",
       requestedBy: "seo-service",
       requestedRole: "editor",
       siteId: site.id,
