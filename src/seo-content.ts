@@ -222,6 +222,20 @@ export async function acceptEditorialChange(
     editable.add("sourceHash");
   const normalized = proposalMarkdown(proposed.content, before.data, editable);
   const after = normalized.parsed;
+  const dateField = identity.target.spec.updateField;
+  // The model does not own the site's update timestamp. Restore its original
+  // value before metadata/copy checks, then derive the accepted timestamp below
+  // from the controller clock or accepted Japanese source. Never trust a model
+  // timezone conversion; all other immutable fields still compare unchanged.
+  if (dateField) {
+    if (before.data[dateField] === undefined) {
+      after.document.delete(dateField);
+      delete after.data[dateField];
+    } else {
+      after.document.set(dateField, before.data[dateField]);
+      after.data[dateField] = before.data[dateField];
+    }
+  }
   for (const key of new Set([
     ...Object.keys(before.data),
     ...Object.keys(after.data),
@@ -249,7 +263,6 @@ export async function acceptEditorialChange(
     // Systems uses a separate translation-state contract instead of per-file hashes.
     else throw new Error("seo_translation_hash_missing");
   }
-  const dateField = identity.target.spec.updateField;
   if (dateField) {
     const previous =
       before.data[dateField] === undefined

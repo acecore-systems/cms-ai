@@ -58,6 +58,8 @@ CMS Appは既存の`actions:write`だけを使う。サイトsourceのread、PR�
 
 対応する更新日時fieldが未設定でも、初回改訂で付与する。Wikiはfieldを捏造せず、PRへunsupportedを明記する。公開日・著者・画像・識別子・既存metadataを保護し、コード、外部URL、raw HTMLの追加・改変を拒否する。本文だけでなく翻訳のcopy変更を確認し、hashだけの更新を拒否する。
 
+サイト契約の更新日時fieldはcontrollerが管理する。モデルがそのfieldを書き換えた場合は、metadata・copy検査前に元値（未設定なら未設定）へ戻し、検査後に日本語はcontrollerの現在時刻、翻訳は受入済み日本語の日時を設定する。モデルの日時やタイムゾーン変換を採用しない。公開日やそれ以外のimmutable fieldは従来どおり一致必須で、更新日時だけの変更もcopy改訂とは認めない。2026-10-19のPortal初回英語翻訳ではモデルが旧`lastUpdated`の`+09:00`を時刻を変えずに`Z`へ置換し、controllerの日時設定より前のimmutable検査で停止したため、この受入順序を明確にした。
+
 共通執筆guideは2026-10-19に確認した`seo-content-ops/docs/01-writing-guide.md`の方針を`src/seo-editorial-guide.ts`へ反映した。対象checkoutのAGENTSと、指定するrepository内執筆guideを読み、執筆guideを生成contextに含める。共通・サイトguideに変更があれば、この固定policyと対象pathもレビューする。
 
 生成は既存本文に基づく構成・表現の改善に限定する。外部再調査やリンク先の今回確認は実施しない。新しい参考URL、変わりやすい仕様・料金、実測値、実績、非公開運用の推測を追加しない。Draft PR本文へ「外部再調査未実施、既存本文に基づく構成・表現改善」を明記する。

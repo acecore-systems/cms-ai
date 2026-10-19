@@ -655,6 +655,7 @@ async function propose(
         path +
         " 1ファイル全文のみ。frontmatterはタイトル・description等の文言以外を維持。sourceHash/更新日時は後続コードが設定する。判断材料が不足ならchangesを空にしてclarificationを返す。",
       "frontmatterの既存トップレベルfieldは行頭から書き、title/descriptionの先頭へインデントを追加しない。有効なYAMLを返す。",
+      "公開日を含む日時は元ファイルの表記のまま維持し、タイムゾーンの変換や更新日時の手動更新をしない。sourceHashとサイト契約の更新日時はcontrollerが受入後に設定する。翻訳の更新日時は受入済み日本語正本と同期する。",
       locale
         ? "更新済み日本語正本を" +
           locale +
