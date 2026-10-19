@@ -47,6 +47,7 @@ export async function runInference(
     model: string,
     request: Record<string, unknown>,
   ) => Promise<void>,
+  requestDeadline?: number,
 ): Promise<InferenceResult> {
   const files = validateSourceFiles(site, sourceFiles);
   // Bound all image data per inference and prioritize the current turn.
@@ -111,7 +112,13 @@ export async function runInference(
   let response: unknown;
 
   try {
-    response = await runTextModel(env, model, request, beforeRequest);
+    response = await runTextModel(
+      env,
+      model,
+      request,
+      beforeRequest,
+      requestDeadline,
+    );
   } catch (error) {
     if (error instanceof HttpError) throw error;
     if (model === "gpt-6-luna" || beforeRequest) {
@@ -456,6 +463,7 @@ async function runTextModel(
     model: string,
     request: Record<string, unknown>,
   ) => Promise<void>,
+  requestDeadline?: number,
 ): Promise<unknown> {
   if (isWorkersAiTextModel(model)) {
     if (beforeRequest) throw new Error("seo_model_not_allowed");
@@ -489,6 +497,8 @@ async function runTextModel(
       : {}),
   };
   if (beforeRequest) await beforeRequest(model, payload);
+  if (requestDeadline !== undefined && Date.now() >= requestDeadline)
+    throw new Error("seo_deadline");
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -496,7 +506,17 @@ async function runTextModel(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(
+      Math.max(
+        1,
+        Math.min(
+          120_000,
+          requestDeadline === undefined
+            ? 120_000
+            : requestDeadline - Date.now(),
+        ),
+      ),
+    ),
   });
   if (!response.ok) {
     throw await providerFailure(response);

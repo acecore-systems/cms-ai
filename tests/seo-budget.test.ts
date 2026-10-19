@@ -54,6 +54,35 @@ beforeEach(() => {
 });
 afterEach(() => sql.close());
 describe("SEO persistent budget", () => {
+  it("uses the supplied absolute deadline and cannot extend it across API calls", async () => {
+    await budget.reserve(id(1), id(11), "a", hash, 100, now, now + 60_000);
+    await budget.reserve(
+      id(1),
+      id(12),
+      "a",
+      hash,
+      100,
+      now + 30_000,
+      now + 120_000,
+    );
+    expect(
+      sql.prepare("SELECT deadline FROM seo_budget_runs").get()?.deadline,
+    ).toBe(now + 60_000);
+    await expect(
+      budget.reserve(
+        id(1),
+        id(13),
+        "a",
+        hash,
+        100,
+        now + 60_000,
+        now + 120_000,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      budget.reserve(id(2), id(14), "a", hash, 100, now, now + 31 * 60_000),
+    ).rejects.toThrow();
+  });
   it("blocks concurrent requests past $1/run and keeps unknown reservations", async () => {
     const results = await Promise.allSettled([
       budget.reserve(id(1), id(11), "a", hash, 600_000, now),

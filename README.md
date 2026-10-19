@@ -52,6 +52,8 @@ npm run deploy:dry-run
 
 ## SEO定期処理との接続
 
-SEO処理からは、Service Bindingで名前付きentrypoint `SeoConnection` の `readiness()` を呼ぶ。既存のAccess認証・CMSユーザー権限・GitHub AppをSEO Workerへ渡さない。HTTPの公開入口は追加しない。
+SEO処理からは、Service Bindingで名前付きentrypoint `SeoConnection` の `readiness()` を呼ぶ。既存のAccess認証・CMSユーザー権限・GitHub AppをSEO Workerへ渡さない。このentrypointのHTTP fetchは404とする。
 
-現時点は6サイトの対応関係と候補3件・改訂1記事・Draft PRまでの契約を照合する接続のみ。`generationEnabled=false`、`dispatchEnabled=false`を返す。AI推論・D1変更・GitHub workflow起動は行わない。利用者が既存共用CMS AIの再利用を選択した後も、費用上限とSEO専用の実行adapter・対象repoの検証を設定するまでは生成を開始しない。接続成功と記事Draft PRの作成成功を区別する。
+`SeoConnection`は6サイトの対応関係と候補3件・改訂1記事・Draft PRまでの契約を照合する接続のみで、従来どおり`generationEnabled=false`、`dispatchEnabled=false`を返す。このcapabilityではAI推論・D1変更・GitHub workflow起動は行わない。
+
+承認済みの別capabilityとして、`SeoGeneration`は1回1 USD・月5 USDの永続予算で改訂案を作り、`SeoEditorial`は候補の順次検査・中央記事lock・改訂・翻訳・サイト検証・Draft PRを扱う。[クラウドSEOの導入・workflow・安全境界](docs/seo-editorial.md)を参照する。通常CMSとSEOのOIDC routeは分離し、自動startやSEOのCronはCMS側に設けない。接続成功、ローカル検証、実際のActions・生成・Draft PR成功を区別する。

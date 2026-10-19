@@ -43,10 +43,18 @@ export async function generateSeo(env: AppEnv, input: unknown) {
       "files",
     ];
     if (
-      Object.keys(value).length !== keys.length ||
+      Object.keys(value).some((k) => !keys.includes(k) && k !== "deadline") ||
       !keys.every((k) => k in value)
     )
       throw new Error("invalid");
+    const deadline = value.deadline;
+    if (
+      deadline !== undefined &&
+      (!Number.isSafeInteger(deadline) ||
+        (deadline as number) <= Date.now() ||
+        (deadline as number) > Date.now() + 30 * 60_000)
+    )
+      throw new Error("deadline");
     const { runId, siteId, articlePath, instruction } = value;
     callId = typeof value.callId === "string" ? value.callId : "";
     const site = SITES.find((s) => s.id === siteId);
@@ -70,7 +78,7 @@ export async function generateSeo(env: AppEnv, input: unknown) {
       paths.length < 1 ||
       paths.length > 20 ||
       new Set(paths).size !== paths.length ||
-      !paths.includes(articlePath) ||
+      !files.some((f) => f.path === articlePath) ||
       !paths.every(
         (p) =>
           typeof p === "string" &&
@@ -121,10 +129,13 @@ export async function generateSeo(env: AppEnv, input: unknown) {
           site.id + ":" + articlePath,
           await sha256(JSON.stringify(request)),
           upperCost(model, request),
+          Date.now(),
+          deadline as number | undefined,
         );
         reserved = true;
         stage = "generation";
       },
+      deadline as number | undefined,
     );
     stage = "result_validation";
     if (!result.changes.every((c) => paths.includes(c.path)))
