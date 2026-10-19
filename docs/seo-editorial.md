@@ -74,6 +74,24 @@ CMS Appは既存の`actions:write`だけを使う。サイトsourceのread、PR�
 
 `0005_seo_editorial.sql`が外部run・内部予算ID・候補順・job・GitHub run・claim・段階・callback結果をD1へ保存する。source snapshotと段階別受入結果は既存の非公開R2に保存し、public read endpointを設けない。期限到達はstatus照会でも永続`unresolved`へ移し、中央記事lockの保持を依頼する。unknownを理由にrun・予約・branchを削除しない。
 
+## 生成後の構文検査と管理照合
+
+2026-10-19のPortal canaryは、日本語提案の`description:`行に余分な半角スペースが1文字入り、直前の`title`と合わせてYAML mappingとして解析できず停止した。生成そのものは完了し、未受入の原提案はR2に保存されている。再生成せずその1文字だけを除くと既存の内容検査を通過した。
+
+修復は元のYAMLが不正な場合だけ行う。既存の文字列fieldがそれぞれ独立した1行scalarとして解析でき、編集可能なfieldの前に余分な半角スペースが1文字あり、その前後がトップレベルfieldである場合（最後のfieldも可）に限定する。複数箇所、複数スペース、block scalarや複雑な構造の推測修復はしない。修復後も重複key、immutable metadata、URL・コード・数値・HTMLなど全検査を行う。正常なYAML、本文、保存済み原提案を書き換えない。
+
+OIDC操作中の最初の例外は非公開R2の`seo-editorial/{jobId}/failure.json`へ`operation`、`step`、固定allowlistの`code`だけを保存する。未知の例外は`unexpected_error`に置換し、生の例外・本文・provider応答を保存・返却しない。診断保存失敗時も`unresolved`への遷移とcallbackを続行する。この診断追加前のrunについて、後から当時の診断を捏造しない。
+
+今回の照合（2026-10-19 11:15 UTC時点）:
+
+- run `editorial-c515d160-89b5-406a-b215-59aeba75a95c`、job `81312cc5-bf8f-4e8a-8bfe-9e66996e62dc`、[Actions run](https://github.com/acecore-systems/aceserver-portal/actions/runs/39240781522)は終了済み。
+- D1は`unresolved`、`next_step=0`、claim/callback記録済み。該当予算runの呼出しは1件、`complete`、予約額58,678 micro USD（実請求額とは別）。期限は2026-10-19 11:23:51.845 UTCで変更していない。
+- 原本SHA256は`22e7daa49d737d74089286ebf1a965d34c3ce62833a3a18b8ff4476d65a27414`でD1と一致。D1のcall IDから取得した原提案のSHA256は`482d71da1583660ca66616afce6807c89690e07d239304d9d0e20c255e2cbe1e`、1変更のpathは正本と一致。保存source snapshot全体のSHA256は`f9685fc6985fe13e77f4741b3c5713a616f154c4ef8d0e535ab4a79c108f8e14`。
+- 固定時刻（当該予算callのcreated_at）で原提案をローカル再検査した結果は受入可能。新しい生成APIは呼ばず、クラウドへ書き戻していない。8言語は未生成であり、全工程の再開・完了を意味しない。
+- publishには全9段階の完了が必要で、単調増加する`next_step=0`はpublish到達条件を満たしていない。対応branch `codex/seo-81312cc5-bf8f-4e8a-8bfe-9e66996e62dc`のref検索と同headの全状態PR検索はいずれも0件だった。これはコード上の到達条件と現在のGitHub存在照合であり、過去の全操作イベントを監査したという意味ではない。
+
+管理復旧の提案は、この証拠と最新状態を再照合して「既知の生成検証失敗・GitHub未書込み」と確定し、旧run/job・原提案・予算予約・記事lockを監査保持したまま、別途承認した管理操作で中央のactive blockだけを解除すること。旧runの期限延長、予算の付替え、終端状態の巻戻し、workflow再実行は行わない。新試行の可否は記事lockを含め親側で判定し、解除と生成を一つの操作にしない。この修正は解除・再開機能を追加せず、台帳やクラウド状態も変更しない。
+
 ## 導入と未検証範囲
 
 1. 親SEOの`SeoCoordinator`と中央D1 schemaを先に用意し、親のeditorial flagは無効でdeployする。
