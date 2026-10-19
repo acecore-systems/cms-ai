@@ -33,6 +33,7 @@
     },
   ],
   "vars": {
+    "SEO_GENERATION_ENABLED": "true",
     "CMS_AI_ACCESS_TEAM_DOMAIN": "https://acecore.cloudflareaccess.com",
     "CMS_AI_AUTOMERGE_ENABLED": "false",
     "CMS_AI_GITHUB_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
