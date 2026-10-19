@@ -634,6 +634,19 @@ async function propose(
     allowedPaths: [path],
     files: context,
     instruction: [
+      "実行分担: この呼び出しはcontrollerが管理する記事改訂・翻訳工程の1段階であり、1 call = 1 file。今回の担当は第" +
+        (job.next_step + 1) +
+        "/" +
+        paths.length +
+        "段階、locale=" +
+        (locale || "ja") +
+        "、出力先=" +
+        path +
+        "のみ。ほかのpathの変更を出力しない。",
+      "controllerは日本語正本の改訂・整形後、既存" +
+        article.translations.length +
+        " localeを1言語ずつ後続callへ割り当て、同一予算run ID・同一絶対deadlineで処理する。正本と全対象localeの実改訂・検証が揃うまでPRは作らず、揃った結果を同一Draft PRへまとめる。予算・期限を超える場合や検証に失敗した場合は停止する。",
+      "共通・対象サイトguideの全locale反映・同一PR要件はcontrollerが工程全体で満たす。このcallで全localeを変更する必要はない。他localeが今回の許可pathに含まれないこと自体は承認不足や要件矛盾ではなく、担当ファイルだけを処理する。根拠不足や担当内容の不明点など正当な理由があれば、changesを空にしてclarificationを返す。",
       SEO_WRITING_GUIDE,
       "提供された公開記事の事実だけを使い、読者の疑問に答えるSEO改訂を行う。改訂理由: " +
         candidate.reason,

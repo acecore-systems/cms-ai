@@ -443,6 +443,30 @@ describe("SEO durable editorial boundary", () => {
         ...(step === 1 ? { japanese } : {}),
       });
       expect(response.status).toBe("proposal_created");
+      const instruction = mocks.infer.mock.calls.at(-1)![2].instruction;
+      expect(instruction).toContain("1 call = 1 file");
+      expect(instruction).toContain(
+        "第" +
+          (step + 1) +
+          "/9段階、locale=" +
+          (step === 0 ? "ja" : SEO_LOCALES[step - 1]) +
+          "、出力先=" +
+          response.file.path +
+          "のみ",
+      );
+      expect(instruction).toContain(
+        "既存8 localeを1言語ずつ後続callへ割り当て",
+      );
+      expect(instruction).toContain("同一予算run ID・同一絶対deadline");
+      expect(instruction).toContain(
+        "全対象localeの実改訂・検証が揃うまでPRは作らず",
+      );
+      expect(instruction).toContain(
+        "全locale反映・同一PR要件はcontrollerが工程全体で満たす",
+      );
+      expect(instruction).toContain(
+        "判断材料が不足ならchangesを空にしてclarificationを返す",
+      );
       const formatted = await format(response.file.content, portalFormat);
       finalFiles.push({ ...response.file, content: formatted });
       if (step === 0) {
@@ -500,6 +524,42 @@ describe("SEO durable editorial boundary", () => {
     });
     await editorialStatus(env, { runId });
     expect(complete).toHaveBeenCalledTimes(1);
+  });
+  it("preserves a legitimate clarification without forcing generation or starting translations", async () => {
+    const jobId = await claimed();
+    const infer = mocks.infer.getMockImplementation()!;
+    const clarification = "本文の根拠だけでは担当箇所の説明を判断できません。";
+    mocks.infer.mockImplementationOnce(async (...args) => {
+      await infer(...args);
+      return { changes: [], summary: "根拠不足で停止", clarification };
+    });
+    expect(await request(jobId, "propose", { step: 0 })).toEqual({
+      status: "unresolved",
+    });
+    expect(mocks.infer).toHaveBeenCalledTimes(1);
+    expect(
+      sql.prepare("SELECT next_step,status FROM seo_editorial_jobs").get(),
+    ).toMatchObject({ next_step: 0, status: "unresolved" });
+    const calls = sql
+      .prepare("SELECT status,reserved_micros FROM seo_budget_calls")
+      .all();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].status).toBe("complete");
+    expect(calls[0].reserved_micros).toBeGreaterThan(0);
+    const proposal = [...objects.entries()].find(([key]) =>
+      key.startsWith("seo-proposals/"),
+    )![1];
+    expect(JSON.parse(proposal)).toMatchObject({ changes: [], clarification });
+    expect(objects.has("seo-editorial/" + jobId + "/step-0.json")).toBe(false);
+    expect(complete).toHaveBeenCalledWith({
+      runId,
+      articleKey: "portal:" + sourcePath,
+      status: "unresolved",
+    });
+    expect(await request(jobId, "publish", {})).toEqual({
+      status: "unresolved",
+    });
+    expect(mocks.infer).toHaveBeenCalledTimes(1);
   });
   it("rejects altered formatted copy before any translation call and retains step 0 and its reservation", async () => {
     files = files.map((file) => ({
