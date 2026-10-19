@@ -23,7 +23,8 @@ describe("SEO generation gate", () => {
       clarification: "",
       summary: "proposal",
     };
-    const fetcher = vi.fn(async () => {
+    const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(String(init.body)).reasoning_effort).toBe("high");
       order.push("inference");
       return Response.json({
         choices: [{ message: { content: JSON.stringify(result) } }],
