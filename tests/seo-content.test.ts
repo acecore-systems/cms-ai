@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { format } from "prettier";
+import { articleBody, portalFormat } from "./fixtures/seo-format.ts";
 import {
   acceptEditorialChange,
   assertEditorialFiles,
+  assertFormattedSource,
   markdown,
   sourceIdentity,
 } from "../src/seo-content.ts";
@@ -12,6 +15,48 @@ const base =
   "---\ntitle: Original\ndescription: Original description\ndate: 2026-08-08T10:00:00+09:00\nauthor: gui\nimage: /uploads/original.webp\n---\n\nOriginal body [source](https://example.org/guide).\n";
 
 describe("SEO source, locale and copy contracts", () => {
+  it("accepts real Prettier GFM table formatting while retaining metadata and content", async () => {
+    const original = base + articleBody;
+    const formatted = await format(original, portalFormat);
+    expect(markdown(original).body.replace(/\s/g, "")).not.toBe(
+      markdown(formatted).body.replace(/\s/g, ""),
+    );
+    expect(() => assertFormattedSource(original, formatted)).not.toThrow();
+    expect(() =>
+      assertFormattedSource(original, formatted.replaceAll("\n", "\r\n")),
+    ).not.toThrow();
+  });
+  it.each([
+    ["table text", "接続方法", "接続先"],
+    ["alignment", "| :--- | ---: |", "| ---: | ---: |"],
+    ["link", "https://example.org/guide", "https://example.org/other"],
+    ["image", "/uploads/story.webp", "/uploads/other.webp"],
+    ["metadata", "author: gui", "author: other"],
+    ["heading", "## Original", "### Original"],
+    ["numbered list start", "1. Original", "3. Original"],
+    ["hard break", "確認します。  \n", "確認します。\n"],
+    ["paragraph space", "Original 接続環境", "Original接続環境"],
+    [
+      "paragraph break",
+      "First paragraph.\n\nSecond paragraph.",
+      "First paragraph.\nSecond paragraph.",
+    ],
+    ["code whitespace", "server address", "server  address"],
+    ["inline code whitespace", "inline code", "inline  code"],
+    ["code language", "```text", "```sh"],
+    ["HTML", "<!-- note -->", "<!-- other -->"],
+    ["task checkbox", "- [ ] Original", "- [x] Original"],
+  ])("rejects semantic edits to %s during formatting", (_name, from, to) => {
+    const original =
+      base +
+      articleBody +
+      "\n<!-- note -->\n\n- [ ] Original\n\nFirst paragraph.\n\nSecond paragraph.\n";
+    const changed = original.replace(from, to);
+    expect(changed).not.toBe(original);
+    expect(() => assertFormattedSource(original, changed)).toThrow(
+      "format_source_changed",
+    );
+  });
   it("repairs one stray space before a scalar copy field without changing its text", async () => {
     const original = { path: "src/content/blog/example.md", content: base };
     const identity = sourceIdentity(

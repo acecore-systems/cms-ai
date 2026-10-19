@@ -1,4 +1,7 @@
 import { parseDocument } from "yaml";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmFromMarkdown } from "mdast-util-gfm";
+import { gfm } from "micromark-extension-gfm";
 import { seoArticleUrl } from "./sites.ts";
 import { sha256 } from "./seo-hash.ts";
 
@@ -24,6 +27,28 @@ export function markdown(text: string) {
     data: data as Record<string, unknown>,
     body: normalized.slice(match[0].length),
   };
+}
+
+// Formatting can change GFM table delimiters, escapes and emphasis markers.
+// Compare parsed content, dropping only source coordinates: text whitespace,
+// hard breaks, table alignment, URLs, HTML and code values remain significant.
+// Unrecognised dialect syntax is retained as text and fails closed if changed.
+export function assertFormattedSource(original: string, formatted: string) {
+  const before = markdown(original),
+    after = markdown(formatted);
+  const tree = (body: string) =>
+    JSON.stringify(
+      fromMarkdown(body, {
+        extensions: [gfm()],
+        mdastExtensions: [gfmFromMarkdown()],
+      }),
+      (key, value) => (key === "position" ? undefined : value),
+    );
+  if (
+    JSON.stringify(before.data) !== JSON.stringify(after.data) ||
+    tree(before.body) !== tree(after.body)
+  )
+    throw new Error("format_source_changed");
 }
 
 export function sourceIdentity(

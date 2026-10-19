@@ -9,6 +9,9 @@ import {
   handleSeoRunnerRequest,
 } from "../src/seo-editorial.ts";
 import { sha256 } from "../src/seo-hash.ts";
+import { assertEditorialFiles, sourceIdentity } from "../src/seo-content.ts";
+import { format } from "prettier";
+import { articleBody, portalFormat } from "./fixtures/seo-format.ts";
 
 const mocks = vi.hoisted(() => ({
   dispatch: vi.fn(),
@@ -420,7 +423,12 @@ describe("SEO durable editorial boundary", () => {
     });
     expect(mocks.dispatch).toHaveBeenCalledTimes(1);
   });
-  it("runs all nine copy changes under one absolute budget deadline and only reports a Draft PR", async () => {
+  it("formats Japanese tables, hands off all eight locales and passes final assertions under one deadline", async () => {
+    files = files.map((file) => ({
+      ...file,
+      content: file.content + articleBody,
+    }));
+    const identity = sourceIdentity("portal", candidate.url, files, now)!;
     const jobId = await claimed();
     expect(claim).toHaveBeenCalledWith({
       runId,
@@ -428,18 +436,39 @@ describe("SEO durable editorial boundary", () => {
       sourceSha256: await sha256(files[0].content),
     });
     let japanese = "";
+    const finalFiles = [];
     for (let step = 0; step < 9; step++) {
       const response = await request(jobId, "propose", {
         step,
         ...(step === 1 ? { japanese } : {}),
       });
       expect(response.status).toBe("proposal_created");
-      if (step === 0) japanese = response.file.content;
-      else
+      const formatted = await format(response.file.content, portalFormat);
+      finalFiles.push({ ...response.file, content: formatted });
+      if (step === 0) {
+        japanese = formatted;
+        expect(response.file.content.replace(/\s/g, "")).not.toBe(
+          japanese.replace(/\s/g, ""),
+        );
+      } else {
         expect(response.file.content).toContain(
           "sha256:" + (await sha256(japanese)),
         );
+        // Step 1 and later snapshots must pass the exact formatted source to AI.
+        expect(
+          mocks.infer.mock.calls
+            .at(-1)![3]
+            .find((file: { path: string }) => file.path === sourcePath).content,
+        ).toBe(japanese);
+      }
     }
+    expect(
+      JSON.parse(objects.get("seo-editorial/" + jobId + "/formatted-ja.json")!)
+        .content,
+    ).toBe(japanese);
+    await expect(
+      assertEditorialFiles(identity, files, finalFiles),
+    ).resolves.toBeUndefined();
     expect(
       sql.prepare("SELECT COUNT(*) AS n FROM seo_budget_runs").get()?.n,
     ).toBe(1);
@@ -471,6 +500,35 @@ describe("SEO durable editorial boundary", () => {
     });
     await editorialStatus(env, { runId });
     expect(complete).toHaveBeenCalledTimes(1);
+  });
+  it("rejects altered formatted copy before any translation call and retains step 0 and its reservation", async () => {
+    files = files.map((file) => ({
+      ...file,
+      content: file.content + articleBody,
+    }));
+    const jobId = await claimed();
+    const accepted = await request(jobId, "propose", { step: 0 });
+    const before = sql.prepare("SELECT * FROM seo_budget_calls").all();
+    const japanese = (
+      await format(accepted.file.content, portalFormat)
+    ).replace("接続方法", "変更された文言");
+    expect(await request(jobId, "propose", { step: 1, japanese })).toEqual({
+      status: "unresolved",
+    });
+    expect(mocks.infer).toHaveBeenCalledTimes(1);
+    expect(sql.prepare("SELECT * FROM seo_budget_calls").all()).toEqual(before);
+    expect(
+      sql.prepare("SELECT next_step,status FROM seo_editorial_jobs").get(),
+    ).toMatchObject({ next_step: 1, status: "unresolved" });
+    expect(
+      JSON.parse(objects.get("seo-editorial/" + jobId + "/step-0.json")!),
+    ).toEqual(accepted.file);
+    expect(objects.has("seo-editorial/" + jobId + "/formatted-ja.json")).toBe(
+      false,
+    );
+    expect(
+      JSON.parse(objects.get("seo-editorial/" + jobId + "/failure.json")!),
+    ).toEqual({ operation: "propose", step: 1, code: "format_source_changed" });
   });
   it("retains budget reservations on an unknown API outcome and retries only the idempotent callback", async () => {
     const jobId = await claimed();

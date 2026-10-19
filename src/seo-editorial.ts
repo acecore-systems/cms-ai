@@ -8,7 +8,7 @@ import { authenticateRunner, type RunnerIdentity } from "./oidc.ts";
 import { seoArticleUrl, seoSite } from "./sites.ts";
 import {
   acceptEditorialChange,
-  markdown,
+  assertFormattedSource,
   normalizeLf,
   sourceIdentity,
   type EditorialFile,
@@ -592,19 +592,12 @@ async function propose(
   const path = paths[job.next_step];
   if (!path) throw new Error("state");
   const files = await snapshot(env, job);
-  // Prettier is target-repository-specific. Accept its formatted Japanese source,
-  // only after comparing every metadata value and the non-whitespace copy.
+  // Accept target-repository formatting only if metadata and the GFM AST match.
   if (job.next_step === 1) {
     if (typeof body.japanese !== "string")
       throw new Error("format_source_missing");
     const source = files.find((file) => file.path === job.article_path)!;
-    const before = markdown(source.content),
-      after = markdown(body.japanese);
-    if (
-      JSON.stringify(before.data) !== JSON.stringify(after.data) ||
-      before.body.replace(/\s/g, "") !== after.body.replace(/\s/g, "")
-    )
-      throw new Error("format_source_changed");
+    assertFormattedSource(source.content, body.japanese);
     source.content = normalizeLf(body.japanese);
   } else if (body.japanese !== undefined)
     throw new Error("format_source_unexpected");

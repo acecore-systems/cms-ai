@@ -64,6 +64,12 @@ CMS Appは既存の`actions:write`だけを使う。サイトsourceのread、PR�
 
 日本語を改訂・対象repoのformatterで整形してから、既存8言語を1言語ずつ翻訳する。Portalは整形後の日本語全文からhashを決定する。Systemsはpending記事を除外し、全8言語の実改訂後だけ既存hash関数でstateを更新し、他記事・他領域のpending状態を維持する。
 
+整形後の日本語をCMSへ渡す際は、YAML値とGFM ASTの一致を検査する。ASTから除くのは入力位置（`position`）のみで、本文の空白や改行を一括除去しない。表の区切り行のハイフン数・paddingは構文表現として扱い、セルの内容・列揃え・リンク・画像・コード・HTML・ハード改行などは保持する。未知のMarkdown拡張を推測変換しない。解析上同一でも本文中のsoft改行やlistのspreadなどが異なる場合は保守的に停止する。この検査は最初の翻訳callの予約前に行い、不一致時は受入済みstep・予約を保持して`unresolved`とする。モデル提案の内容検査と最終`assertEditorialFiles`は変更しない。
+
+2026-10-19の2回目のPortal canaryは、受入済み日本語のGFM表をPrettierが列幅に合わせて整形した際、区切り行のハイフン数が増え、従来の「空白だけ除去した文字列比較」が`propose / step=1 / format_source_changed`で停止した。保存source／step-0を読み取り、Prettier 3.9.6で再現し、metadataとGFM ASTの一致を確認した。既存runner `12924a64d956dcac89de02f0c22aefc78f6bf60e`の実体と修正CMSを組み合わせ、実記事形状・実formatter・ローカルSQLite/R2 fixture・翻訳応答fixtureで全9段階と旧runnerの最終assertionまで検証した。これは新しい翻訳の生成や実GitHub書込み、本番runの再開成功を示すものではない。
+
+この修正はCMSの整形比較だけに新helperを使い、既存runnerが利用するexportの挙動とHTTP protocolを変えない。6siteのrunner pin更新は不要。診断に用いた非公開の原文・提案はリポジトリへ含めず、CIには同じ表・リスト・画像・コード構造の合成fixtureと改変拒否テストを置く。原因の根拠となる[GFM AST仕様](https://github.com/syntax-tree/mdast-util-gfm)と[Markdown parser](https://github.com/syntax-tree/mdast-util-from-markdown)の公開契約を使用する。
+
 通常CMSのサイト別validation（format/content/CMS/Functions/build、Wikiはcheck/test/build）を再利用する。Portal/Systemsではi18n、Corporate/SystemsではSEO検証も行う。Corporateのblog freshnessはlocal commitの実SHAをbase/headへ指定して実行する。全差分は許可記事・locale・必要なSystems stateだけに限定し、validation後にmain SHAとopen PR overlapを再確認する。検証・全locale・差分制約が通るまでpush/PRへ進まない。
 
 ## 予算・期限・永続state
