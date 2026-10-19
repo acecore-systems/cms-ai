@@ -215,6 +215,101 @@ async function claimed() {
 }
 
 describe("SEO durable editorial boundary", () => {
+  it("accepts the canary indentation defect after one paid call and preserves the original proposal", async () => {
+    const jobId = await claimed();
+    const infer = mocks.infer.getMockImplementation()!;
+    mocks.infer.mockImplementationOnce(async (...args) => {
+      const result = await infer(...args);
+      result.changes[0].content = result.changes[0].content.replace(
+        "\ndescription:",
+        "\n description:",
+      );
+      return result;
+    });
+    const result = await request(jobId, "propose", { step: 0 });
+    expect(result.status).toBe("proposal_created");
+    expect(result.file.content).toContain("\ndescription: Revised description");
+    expect(mocks.infer).toHaveBeenCalledTimes(1);
+    expect(
+      sql.prepare("SELECT status FROM seo_budget_calls").get()?.status,
+    ).toBe("complete");
+    expect(
+      sql.prepare("SELECT next_step FROM seo_editorial_jobs").get()?.next_step,
+    ).toBe(1);
+    const raw = [...objects.entries()].find(([key]) =>
+      key.startsWith("seo-proposals/"),
+    )![1];
+    expect(JSON.parse(raw).changes[0].content).toContain("\n description:");
+    expect(objects.has("seo-editorial/" + jobId + "/step-0.json")).toBe(true);
+    expect(complete).not.toHaveBeenCalled();
+  });
+  it("records safe content rejection evidence without retrying or releasing the completed reservation", async () => {
+    const jobId = await claimed();
+    const infer = mocks.infer.getMockImplementation()!;
+    mocks.infer.mockImplementationOnce(async (...args) => {
+      const result = await infer(...args);
+      result.changes[0].content = result.changes[0].content.replace(
+        "author: Gui",
+        "author: Changed",
+      );
+      return result;
+    });
+    expect(await request(jobId, "propose", { step: 0 })).toEqual({
+      status: "unresolved",
+    });
+    const key = "seo-editorial/" + jobId + "/failure.json";
+    const failure = {
+      operation: "propose",
+      step: 0,
+      code: "seo_immutable_metadata",
+    };
+    expect(JSON.parse(objects.get(key)!)).toEqual(failure);
+    expect(
+      sql.prepare("SELECT status FROM seo_budget_calls").get()?.status,
+    ).toBe("complete");
+    expect(
+      sql.prepare("SELECT next_step FROM seo_editorial_jobs").get()?.next_step,
+    ).toBe(0);
+    expect(objects.has("seo-editorial/" + jobId + "/step-0.json")).toBe(false);
+    expect(complete).toHaveBeenCalledWith({
+      runId,
+      articleKey: "portal:" + sourcePath,
+      status: "unresolved",
+    });
+    await request(jobId, "propose", { step: 0 });
+    expect(JSON.parse(objects.get(key)!)).toEqual(failure);
+    expect(mocks.infer).toHaveBeenCalledTimes(1);
+    expect(
+      sql.prepare("SELECT COUNT(*) AS n FROM seo_budget_calls").get()?.n,
+    ).toBe(1);
+  });
+  it("never persists raw exceptions and still terminates if diagnostic storage fails", async () => {
+    const jobId = await claimed();
+    env.CMS_AI_IMAGES.get = vi.fn(async () => {
+      throw new Error("private upstream diagnostic sentinel");
+    });
+    expect(await request(jobId, "propose", { step: 0 })).toEqual({
+      status: "unresolved",
+    });
+    const key = "seo-editorial/" + jobId + "/failure.json";
+    expect(JSON.parse(objects.get(key)!)).toEqual({
+      operation: "propose",
+      step: 0,
+      code: "unexpected_error",
+    });
+    expect([...objects.values()].join()).not.toContain(
+      "private upstream diagnostic sentinel",
+    );
+    env.CMS_AI_IMAGES.put = vi.fn(async () => {
+      throw new Error("private storage diagnostic sentinel");
+    });
+    expect(await request(jobId, "propose", { step: 0 })).toEqual({
+      status: "unresolved",
+    });
+    expect(row().status).toBe("unresolved");
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(mocks.infer).not.toHaveBeenCalled();
+  });
   it("has no HTTP start route and cannot create jobs from an OIDC URL", async () => {
     for (const path of [
       "/seo-runner/start",

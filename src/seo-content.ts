@@ -128,6 +128,57 @@ function BufferlessBytes(text: string) {
   return new TextEncoder().encode(text).length;
 }
 
+// Repair only an invalid mapping caused by one extra space before a copy field.
+// Each adjacent line must independently be a complete, existing string field;
+// block/flow values, nested structures, aliases and valid YAML are never repaired.
+function proposalMarkdown(
+  content: string,
+  original: Record<string, unknown>,
+  editable: Set<string>,
+) {
+  try {
+    return { content, parsed: markdown(content) };
+  } catch {
+    const match = /^(---\n)([\s\S]*?)(\n---(?:\n|$))([\s\S]*)$/.exec(
+      normalizeLf(content),
+    );
+    if (!match) throw new Error("seo_frontmatter");
+    const lines = match[2].split("\n");
+    const scalar = (line: string) => {
+      const field = /^([A-Za-z][A-Za-z0-9]*): [^\s|>!&*[{]/.exec(line)?.[1];
+      if (!field || typeof original[field] !== "string") return null;
+      try {
+        const document = parseDocument(line, { uniqueKeys: true });
+        if (document.errors.length) return null;
+        const value = document.toJS({ maxAliasCount: 0 });
+        return Object.keys(value).length === 1 &&
+          typeof value[field] === "string"
+          ? field
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const repairs: number[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      if (!/^ [A-Za-z][A-Za-z0-9]*: /.test(lines[i])) continue;
+      const field = scalar(lines[i].slice(1));
+      if (
+        field &&
+        editable.has(field) &&
+        scalar(lines[i - 1]) &&
+        (i === lines.length - 1 || /^[A-Za-z][A-Za-z0-9]*:/.test(lines[i + 1]))
+      )
+        repairs.push(i);
+    }
+    // Multiple ambiguous errors need review, not a best-effort YAML rewrite.
+    if (repairs.length !== 1) throw new Error("seo_frontmatter");
+    lines[repairs[0]] = lines[repairs[0]].slice(1);
+    const repaired = match[1] + lines.join("\n") + match[3] + match[4];
+    return { content: repaired, parsed: markdown(repaired) };
+  }
+}
+
 // Model text can edit copy only. Immutable metadata and sourceHash are controlled here.
 export async function acceptEditorialChange(
   identity: ArticleIdentity,
@@ -139,12 +190,13 @@ export async function acceptEditorialChange(
   if (original.path !== proposed.path || !proposed.content.trim())
     throw new Error("seo_change_path");
   const before = markdown(original.content);
-  const after = markdown(proposed.content);
   const editable = new Set<string>(identity.target.spec.editableFields);
   editable.delete("lastUpdated");
   editable.delete("updatedAt");
   if (japanese && identity.target.spec.translationHash === "frontmatter")
     editable.add("sourceHash");
+  const normalized = proposalMarkdown(proposed.content, before.data, editable);
+  const after = normalized.parsed;
   for (const key of new Set([
     ...Object.keys(before.data),
     ...Object.keys(after.data),
@@ -164,7 +216,7 @@ export async function acceptEditorialChange(
     before.body.trim() === after.body.trim()
   )
     throw new Error("seo_no_copy_change");
-  assertContent(original.content, proposed.content);
+  assertContent(original.content, normalized.content);
   if (japanese && identity.target.spec.translationHash === "frontmatter") {
     const expected = "sha256:" + (await sha256(normalizeLf(japanese)));
     if (before.data.sourceHash !== undefined)

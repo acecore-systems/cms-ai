@@ -12,6 +12,87 @@ const base =
   "---\ntitle: Original\ndescription: Original description\ndate: 2026-08-08T10:00:00+09:00\nauthor: gui\nimage: /uploads/original.webp\n---\n\nOriginal body [source](https://example.org/guide).\n";
 
 describe("SEO source, locale and copy contracts", () => {
+  it("repairs one stray space before a scalar copy field without changing its text", async () => {
+    const original = { path: "src/content/blog/example.md", content: base };
+    const identity = sourceIdentity(
+      "cherry",
+      "https://cherry.acecore.net/blog/example/",
+      [original],
+      now,
+    )!;
+    const valid = base.replaceAll("Original", "Revised");
+    const malformed = valid.replace("\ndescription:", "\n description:");
+    expect(() => markdown(malformed)).toThrow("seo_frontmatter");
+    const accepted = await acceptEditorialChange(
+      identity,
+      original,
+      { ...original, content: malformed },
+      null,
+      now,
+    );
+    const expected = await acceptEditorialChange(
+      identity,
+      original,
+      { ...original, content: valid },
+      null,
+      now,
+    );
+    expect(accepted).toBe(expected);
+    expect(markdown(accepted).body).toBe(markdown(valid).body);
+  });
+  it("does not repair ambiguous YAML, immutable fields, duplicate keys or bypass content checks", async () => {
+    const original = { path: "src/content/blog/example.md", content: base };
+    const identity = sourceIdentity(
+      "cherry",
+      "https://cherry.acecore.net/blog/example/",
+      [original],
+      now,
+    )!;
+    const revised = base.replaceAll("Original", "Revised");
+    for (const content of [
+      revised.replace("\ndescription:", "\n  description:"),
+      revised.replace("\nauthor:", "\n author:"),
+      revised
+        .replace("\ndescription:", "\n description:")
+        .replace("\ndate:", "\ndescription: Duplicate\ndate:"),
+      revised
+        .replace("title: Revised", "title: |\n  Revised")
+        .replace("\ndescription:", "\n description:"),
+      revised
+        .replace("\ndescription:", "\n description:")
+        .replace("\nimage:", "\n image:"),
+      revised
+        .replace("\ndescription:", "\n description:")
+        .replace("https://example.org/guide", "https://invented.test/docs"),
+      revised
+        .replace("\ndescription:", "\n description:")
+        .replace("author: gui", "author: changed"),
+    ]) {
+      await expect(
+        acceptEditorialChange(
+          identity,
+          original,
+          { ...original, content },
+          null,
+          now,
+        ),
+      ).rejects.toThrow();
+    }
+    const block = revised.replace(
+      "description: Revised description",
+      "description: |\n  Revised description\n  description: literal body text",
+    );
+    const accepted = await acceptEditorialChange(
+      identity,
+      original,
+      { ...original, content: block },
+      null,
+      now,
+    );
+    expect(markdown(accepted).data.description).toBe(
+      markdown(block).data.description,
+    );
+  });
   it("rejects non-article, forged host, query, encoded traversal and non-canonical routes", () => {
     for (const url of [
       "https://asv.acecore.net/en/",

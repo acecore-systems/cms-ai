@@ -59,6 +59,55 @@ const jobRow = (env: AppEnv, jobId: string) =>
     .bind(jobId)
     .first<EditorialJob>();
 const baseKey = (job: EditorialJob) => "seo-editorial/" + job.id;
+const diagnosticCodes = new Set([
+  "seo_frontmatter",
+  "seo_article_id",
+  "seo_content_unsafe",
+  "seo_unverified_reference",
+  "seo_code_changed",
+  "seo_number_added",
+  "seo_html_changed",
+  "seo_change_path",
+  "seo_immutable_metadata",
+  "seo_no_copy_change",
+  "seo_translation_hash_missing",
+  "seo_update_date",
+  "seo_deadline_or_terminal",
+  "source_commit",
+  "snapshot",
+  "state",
+  "identity",
+  "format_source_missing",
+  "format_source_changed",
+  "format_source_unexpected",
+  "generation",
+  "generation_incomplete",
+]);
+async function recordFailure(
+  env: AppEnv,
+  job: EditorialJob,
+  operation: string,
+  error: unknown,
+) {
+  try {
+    // Keep only the first failure and fixed codes; never serialize error objects,
+    // messages outside this allowlist, source, upstream responses or credentials.
+    await env.CMS_AI_IMAGES.put(
+      baseKey(job) + "/failure.json",
+      JSON.stringify({
+        operation,
+        step: job.next_step,
+        code:
+          error instanceof Error && diagnosticCodes.has(error.message)
+            ? error.message
+            : "unexpected_error",
+      }),
+      { onlyIf: { etagDoesNotMatch: "*" } },
+    );
+  } catch {
+    // Diagnostic storage cannot prevent the authoritative unresolved transition.
+  }
+}
 const enabled = (env: AppEnv) =>
   String(env.SEO_EDITORIAL_ENABLED) === "true" &&
   String(env.SEO_GENERATION_ENABLED) === "true" &&
@@ -414,7 +463,8 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
       return json(await editorialStatus(env, { runId: run.run_id }));
     }
     throw new Error("state");
-  } catch {
+  } catch (error) {
+    await recordFailure(env, job, operation, error);
     await markUnresolved(env, job.id);
     return json({ status: "unresolved" });
   }
@@ -598,6 +648,7 @@ async function propose(
       "変更は " +
         path +
         " 1ファイル全文のみ。frontmatterはタイトル・description等の文言以外を維持。sourceHash/更新日時は後続コードが設定する。判断材料が不足ならchangesを空にしてclarificationを返す。",
+      "frontmatterの既存トップレベルfieldは行頭から書き、title/descriptionの先頭へインデントを追加しない。有効なYAMLを返す。",
       locale
         ? "更新済み日本語正本を" +
           locale +
