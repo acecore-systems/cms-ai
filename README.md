@@ -49,3 +49,9 @@ npm run deploy:dry-run
 - `CMS_AI_ADMIN_ACCESS_AUD`
 
 サイト別Access audienceは機密値ではありませんが、Access application作成後に`CMS_AI_SITE_AUDIENCES`へJSONで設定します。D1、custom domain、Access application、Pages Service Bindingは本番変更前に対象と影響を確認してから設定します。
+
+## SEO定期処理との接続
+
+SEO処理からは、Service Bindingで名前付きentrypoint `SeoConnection` の `readiness()` を呼ぶ。既存のAccess認証・CMSユーザー権限・GitHub AppをSEO Workerへ渡さない。HTTPの公開入口は追加しない。
+
+現時点は6サイトの対応関係と候補3件・改訂1記事・Draft PRまでの契約を照合する接続のみ。`generationEnabled=false`、`dispatchEnabled=false`を返す。AI推論・D1変更・GitHub workflow起動は行わない。利用者が既存共用CMS AIの再利用を選択した後も、費用上限とSEO専用の実行adapter・対象repoの検証を設定するまでは生成を開始しない。接続成功と記事Draft PRの作成成功を区別する。

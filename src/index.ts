@@ -46,3 +46,5 @@ export default {
     }
   },
 } satisfies ExportedHandler<AppEnv>;
+
+export { SeoConnection } from "./seo.ts";
