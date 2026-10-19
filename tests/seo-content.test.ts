@@ -232,7 +232,9 @@ describe("SEO source, locale and copy contracts", () => {
         original,
         {
           ...original,
-          content: original.content.replaceAll("Original", "Revised"),
+          content: original.content
+            .replaceAll("Original", "Revised")
+            .replace("\n---\n", "\n" + field + ": 2099-01-01T00:00:00Z\n---\n"),
         },
         null,
         now,
@@ -261,6 +263,125 @@ describe("SEO source, locale and copy contracts", () => {
     );
     expect(identity.target.spec.updateField).toBeNull();
     expect(markdown(result).data).not.toHaveProperty("lastUpdated");
+    await expect(
+      acceptEditorialChange(
+        identity,
+        file,
+        {
+          ...file,
+          content: file.content
+            .replaceAll("Original", "Revised")
+            .replace("\n---\n", "\nlastUpdated: 2099-01-01T00:00:00Z\n---\n"),
+        },
+        null,
+        now,
+      ),
+    ).rejects.toThrow("seo_immutable_metadata");
+  });
+  it("derives translation timestamps from Japanese, never from a model's timezone conversion", async () => {
+    const content = base.replace(
+      "\n---\n",
+      "\nlastUpdated: 2026-10-09T15:00:00+09:00\n---\n",
+    );
+    const files = [
+      { path: "src/content/stories/example.md", content },
+      ...SEO_LOCALES.map((locale) => ({
+        path: "src/content/stories/" + locale + "/example.md",
+        content: content.replace(
+          "description:",
+          "translationOf: example\nsourceHash: sha256:" +
+            "a".repeat(64) +
+            "\ndescription:",
+        ),
+      })),
+    ];
+    const identity = sourceIdentity(
+      "portal",
+      "https://asv.acecore.net/en/stories/example/",
+      files,
+      now,
+    )!;
+    const japanese = await acceptEditorialChange(
+      identity,
+      files[0],
+      { ...files[0], content: content.replaceAll("Original", "Revised") },
+      null,
+      now,
+    );
+    const original = files[1];
+    const revised = original.content.replaceAll("Original", "Translated");
+    for (const value of [
+      "2026-10-09T15:00:00Z",
+      "2099-01-01T00:00:00Z",
+      "invalid",
+    ]) {
+      const proposed = {
+        ...original,
+        content: revised.replace("2026-10-09T15:00:00+09:00", value),
+      };
+      const accepted = markdown(
+        await acceptEditorialChange(
+          identity,
+          original,
+          proposed,
+          japanese,
+          now,
+        ),
+      );
+      expect(accepted.data.lastUpdated).toBe(
+        markdown(japanese).data.lastUpdated,
+      );
+      expect(accepted.data.sourceHash).toBe(
+        "sha256:" + (await sha256(japanese)),
+      );
+      expect(accepted.data.date).toBe(markdown(original.content).data.date);
+      expect(accepted.body).toBe(markdown(proposed.content).body);
+    }
+    // Timestamp-only edits cannot masquerade as copy improvements.
+    await expect(
+      acceptEditorialChange(
+        identity,
+        original,
+        {
+          ...original,
+          content: original.content.replace(
+            "2026-10-09T15:00:00+09:00",
+            "2026-10-09T15:00:00Z",
+          ),
+        },
+        japanese,
+        now,
+      ),
+    ).rejects.toThrow("seo_no_copy_change");
+    for (const [from, to] of [
+      ["2026-08-08T10:00:00+09:00", "2026-08-08T10:00:00Z"],
+      ["author: gui", "author: other"],
+      ["translationOf: example", "translationOf: other"],
+    ]) {
+      await expect(
+        acceptEditorialChange(
+          identity,
+          original,
+          { ...original, content: revised.replace(from, to) },
+          japanese,
+          now,
+        ),
+      ).rejects.toThrow("seo_immutable_metadata");
+    }
+    for (const trustedSource of [
+      japanese.replace("2026-10-19T00:00:00Z", "2099-01-01T00:00:00Z"),
+      japanese.replace("2026-10-19T00:00:00Z", "2026-01-01T00:00:00Z"),
+    ]) {
+      await expect(
+        acceptEditorialChange(
+          identity,
+          original,
+          { ...original, content: revised },
+          trustedSource,
+          now,
+        ),
+      ).rejects.toThrow("seo_update_date");
+    }
   });
   it("rejects protected facts, code, invented references, hash-only or unsafe changes", async () => {
     const original = { path: "src/content/blog/example.md", content: base };

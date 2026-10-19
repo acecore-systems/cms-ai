@@ -424,6 +424,17 @@ describe("SEO durable editorial boundary", () => {
     expect(mocks.dispatch).toHaveBeenCalledTimes(1);
   });
   it("formats Japanese tables, hands off all eight locales and passes final assertions under one deadline", async () => {
+    const infer = mocks.infer.getMockImplementation()!;
+    mocks.infer.mockImplementation(async (...args) => {
+      const result = await infer(...args);
+      // Canary: first translation rewrote the old timestamp's timezone suffix.
+      if (result.changes[0].path !== sourcePath)
+        result.changes[0].content = result.changes[0].content.replace(
+          "lastUpdated: 2026-10-09T15:00:00+09:00",
+          "lastUpdated: 2026-10-09T15:00:00Z",
+        );
+      return result;
+    });
     files = files.map((file) => ({
       ...file,
       content: file.content + articleBody,
