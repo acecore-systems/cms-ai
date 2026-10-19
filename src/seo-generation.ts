@@ -1,6 +1,7 @@
 import type { AppEnv } from "./env.ts";
 import { runInference, validateSourceFiles } from "./inference.ts";
 import type { Job } from "./models.ts";
+import { ProviderFailure } from "./provider-failure.ts";
 import { SITES, isSiteWritablePath } from "./sites.ts";
 import {
   SeoBudget,
@@ -25,6 +26,7 @@ export async function generateSeo(env: AppEnv, input: unknown) {
   if (String(env.SEO_GENERATION_ENABLED) !== "true")
     return { status: "disabled" as const };
   let reserved = false;
+  let stage = "validation";
   let callId = "";
   const budget = new SeoBudget(env.CMS_AI_DB);
   try {
@@ -110,6 +112,7 @@ export async function generateSeo(env: AppEnv, input: unknown) {
       [],
       undefined,
       async (model, request) => {
+        stage = "budget";
         await budget.reserve(
           runId,
           callId,
@@ -118,11 +121,14 @@ export async function generateSeo(env: AppEnv, input: unknown) {
           upperCost(model, request),
         );
         reserved = true;
+        stage = "generation";
       },
     );
+    stage = "result_validation";
     if (!result.changes.every((c) => paths.includes(c.path)))
       throw new Error("unexpected_path");
     // Saving before returning preserves a result when the RPC response is lost. No public read route.
+    stage = "result_storage";
     const saved = await env.CMS_AI_IMAGES.put(
       "seo-proposals/" + callId + ".json",
       JSON.stringify(result),
@@ -132,23 +138,44 @@ export async function generateSeo(env: AppEnv, input: unknown) {
       },
     );
     if (!saved) throw new Error("result_conflict");
+    stage = "completion";
     await budget.finish(callId, "complete");
     return {
       status: "proposal_created" as const,
       result,
       dispatchExecuted: false,
     };
-  } catch {
+  } catch (error) {
+    const diagnostic = {
+      stage,
+      ...(error instanceof ProviderFailure
+        ? {
+            providerStatus: error.providerStatus,
+            providerCode: error.providerCode,
+            providerParam: error.providerParam,
+          }
+        : {}),
+    };
     if (reserved) {
       try {
         await budget.finish(callId, "unresolved");
       } catch {
         /* Keep the reservation. */
       }
+      try {
+        await env.CMS_AI_IMAGES.put(
+          "seo-outcomes/" + callId + ".json",
+          JSON.stringify(diagnostic),
+          { onlyIf: { etagDoesNotMatch: "*" } },
+        );
+      } catch {
+        /* Reservation remains authoritative. */
+      }
     }
     // Never return source, credentials, SQL/provider error text, or a raw upstream response.
     return {
       status: reserved ? ("unresolved" as const) : ("stopped" as const),
+      ...diagnostic,
     };
   }
 }
