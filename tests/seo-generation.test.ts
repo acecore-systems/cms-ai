@@ -82,7 +82,7 @@ describe("SEO generation gate", () => {
         siteId: "unregistered",
         ownerApproved: true,
       }),
-    ).toEqual({ status: "stopped" });
+    ).toMatchObject({ status: "stopped", stage: "validation" });
     expect(fetcher).not.toHaveBeenCalled();
   });
 });

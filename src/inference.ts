@@ -1,4 +1,5 @@
 import type { AppEnv } from "./env.ts";
+import { providerFailure } from "./provider-failure.ts";
 import { imageContent, type MessageContent } from "./images.ts";
 import { HttpError } from "./http.ts";
 import { canEdit, type Job } from "./models.ts";
@@ -498,8 +499,7 @@ async function runTextModel(
     signal: AbortSignal.timeout(120_000),
   });
   if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error("openai_request_failed");
+    throw await providerFailure(response);
   }
   const body = await response.text();
   if (body.length > 2_000_000) throw new Error("openai_response_too_large");
