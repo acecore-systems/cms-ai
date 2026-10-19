@@ -8,9 +8,12 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { format } from "prettier";
+import { articleBody, portalFormat } from "./fixtures/seo-format.ts";
 import { SeoRunner } from "../seo-runner/index.mjs";
 import {
   acceptEditorialChange,
+  assertFormattedSource,
   markdown,
   sourceIdentity,
 } from "../src/seo-content.ts";
@@ -22,7 +25,8 @@ const baseSha = "a".repeat(40),
 const runId = "editorial-00000000-0000-4000-8000-000000000002";
 const sourcePath = "src/content/stories/example.md";
 const source =
-  "---\ntitle: Original\ndescription: Original description\ndate: 2026-08-08T10:00:00+09:00\nlastUpdated: 2026-10-09T15:00:00+09:00\nauthor: gui\nimage: /uploads/story.webp\n---\n\nOriginal body [reference](https://example.org/guide).\n";
+  "---\ntitle: Original\ndescription: Original description\ndate: 2026-08-08T10:00:00+09:00\nlastUpdated: 2026-10-09T15:00:00+09:00\nauthor: gui\nimage: /uploads/story.webp\n---\n\nOriginal body [reference](https://example.org/guide).\n" +
+  articleBody;
 const now = Date.parse("2026-10-19T00:00:00Z");
 const candidate = {
   site: "portal",
@@ -106,8 +110,20 @@ beforeEach(async () => {
       ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture-oidc",
     },
   });
-  vi.spyOn(runner, "format").mockResolvedValue(undefined);
+  vi.spyOn(runner, "format").mockImplementation(async (paths: string[]) => {
+    for (const path of paths) {
+      const file = await runner.read(path);
+      await runner.write(
+        {
+          path,
+          content: await format(file.content, portalFormat),
+        },
+        paths,
+      );
+    }
+  });
   const identity = sourceIdentity("portal", candidate.url, original, now)!;
+  let acceptedJapanese = "";
   request = vi.fn(
     async (
       operation = "",
@@ -131,6 +147,8 @@ beforeEach(async () => {
           articleKey: identity.articleKey,
         };
       if (operation === "propose") {
+        if (body!.step === 1)
+          assertFormattedSource(acceptedJapanese, body!.japanese!);
         const file = original[body!.step!];
         const japanese =
           body!.step === 0 ? null : (await runner.read(sourcePath)).content;
@@ -141,6 +159,7 @@ beforeEach(async () => {
           japanese,
           now,
         );
+        if (body!.step === 0) acceptedJapanese = content;
         return {
           status: "proposal_created",
           file: { path: file.path, content },
