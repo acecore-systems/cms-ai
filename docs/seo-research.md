@@ -1,6 +1,6 @@
 # SEOの新規資料調査とAI校閲
 
-2026年10月20日の利用者指示による追加。通常CMSの会話・生成APIは変更しない。新機能は初期無効で、実API・クラウドE2Eは未確認。テストで用いる検索応答、出典、校閲結果は合成fixtureであり、実資料の取得成功や記事品質の証明ではない。
+2026年10月20日の利用者指示による追加。通常CMSの会話・生成APIは変更しない。新機能は無効を維持。前回の限定実APIはcompleted/insufficient・open1・citation0で生成前停止した。新しい引用形式の実API・クラウドE2Eは未確認。テストで用いる検索応答、出典、校閲結果は合成fixtureであり、実資料の取得成功や記事品質の証明ではない。
 
 ## 実行と根拠
 
@@ -9,7 +9,7 @@
 v2は対象Actionsがsource・open PRを確認して中央claimを取得した後、次の順に進む。
 
 1. `research {}`: 共用Secrets StoreのOpenAI認証をWorker内だけで利用し、`gpt-6-luna`のResponses APIで今回のテーマをキーワード検索する。新providerや追加認証は使わない。
-2. 最大3回のhosted `web_search` callで検索とページ取得を実施する。検索query、検索で発見したURL、完了した`open_page`、`url_citation`、構造化結果の支持判定が揃うことを確認する。最低1つは正本に未掲載のURLでなければ停止する。単なる既存URL再取得、検索結果要約のみ、資料不足・反証・不明は成功扱いしない。
+2. 既存本文の1主張と、その主張を支持する未掲載の一次資料1件に対象を絞る。最大3回のhosted `web_search` callで検索とページ取得を実施する。1回のResponses要求内で、引用付き自然文の根拠説明と末尾の単一JSONコードブロックを返す。検索query、検索で発見したURL、完了した`open_page`、`url_citation`、構造化結果の支持判定が揃うことを確認する。最低1つは正本に未掲載のURLでなければ停止する。単なる既存URL再取得、検索結果要約のみ、資料不足・反証・不明は成功扱いしない。
 3. 既存本文の主張へ資料を対応付ける。新しい数値・企業実績・運用情報を生成する機能ではない。新規リンクは証跡にあるURLだけ許可し、metadata・コード・数値等の既存guardを維持する。URL内の数字だけは確認済みURLについて数値guardの対象から除き、本文の追加数値は拒否する。
 4. 日本語改訂→整形→既存localeの順次生成を行う。全APIは同一budget run・同一絶対deadlineを使う。対象repoの既存検証後、`review {files}`で最終9ファイル（単言語siteは1ファイル）をAI校閲する。
 5. 校閲前に全fileを保存済み成果とMarkdown AST・metadataで比較する。日本語に追加した新規参考リンクが各localeでも存在することを検査する。AIは事実・条件・否定・意味、言語の自然さ、未翻訳断片、リンクの主張支持を確認する。全pathがpassの場合だけ`publish {filesSha256}`を許可し、校閲した最終bytesから変わっていればrunnerも停止する。
@@ -54,8 +54,18 @@ ceil((128000 + B + 8192) * (N + 1) * 0.3 + N * 10000 + 6000)
 2. CMSをGitHub連携で配置し、`SEO_RESEARCH_ENABLED=false`、canary ID空の読戻しを確認する。通常CMS、現行週次Cron・既存観測lock・予算台帳を維持する。
 3. 6対象repo（homepage-hatt、homepage-cherry、acecore-net、acecore-systems、aceserver-portal、aceserver-wiki）の`.github/workflows/seo-content.yml`にある`acecore-systems/cms-ai/seo-runner@<40SHA>`を、このCMS PRのCI成功commitへ更新する。inputは`run_id`/`job_id`のまま。各CI・mainのpin読戻し後に次へ進む。新runnerはv1も実行できる。旧runnerはv2のresearchがないため生成前に停止する。
 4. 未ロック・open PR重複なしの記事と残run/月予算を確認し、新しい1つの`editorial-UUID`だけをcanary IDに設定する。全run flagはfalseのまま。通常のcoordinator `manual_editorial`でそのIDを一度だけ開始し、deadlineは開始から30分、Draftで止める。
-5. 実APIで検索→open_page→citation＋strict JSONの組合せが成立するか、資料が実際の主張を支持するかを確認する。R2/D1、11call（検索1＋最大9生成＋校閲1、単言語は3call）、予算、source/最終hash、9言語本文、repo検証、Draft PR、callback、lockの一致を受入。mock passをこの確認の代用にしない。
+5. 実APIで検索→open_page→自然文の実citation＋末尾JSONの組合せが成立するか、資料が実際の主張を支持するかを確認する。R2/D1、11call（検索1＋最大9生成＋校閲1、単言語は3call）、予算、source/最終hash、9言語本文、repo検証、Draft PR、callback、lockの一致を受入。mock passをこの確認の代用にしない。
 6. 不明・失敗ならcanary IDを取り外し、全run flagはfalseを維持。旧runの終端・予約・lock・成果は保持する。新しいIDや自動再送で失敗を回避しない。
 7. canaryの終端と受入を確認してからcanary IDを撤去し、全run flagをtrueへ変更してGitHub連携配置・読戻しする。既存月曜09:00 JSTとPC予約PAUSEDを維持する。
 
 停止は全run flag=falseとcanary ID空で新規jobをv1へ戻す。作成済みv2 jobはv2のままで、途中でguardを外さない。進行中v2がある間はrunner/CMSを旧版へ戻さず、その終端を照合する。migrationはrollbackしない。統合・公開は定期処理へ追加しない。
+
+## 引用形式の限定修正（実API未確認）
+
+保存済みの前回応答は3主張を挙げたが、実open_pageは1件、url_citationは0、最終verdictはinsufficientだった。既存最大3tool callsでsearch1＋3openは不可能だが、実際は2callsで終了したため上限だけを原因とは断定しない。strict JSONがcitation生成を抑制した可能性も仮説であり、[公式検索仕様](https://developers.openai.com/api/docs/guides/tools-web-search)は通常の引用annotationを説明する一方、この組合せの保証は確認できていない。
+
+今回の修正は1callのまま、1主張・新資料1件を自然文で根拠説明し、実inline引用の後に末尾JSONを返す。検索時のtext.formatをtextへ変更し、CMSでJSONの全キー・型・判定値・最大1sourceを検査する。採用URLは検索discovered・明示open・自然文範囲内のprovider url_citationの全てに一致し、claimは元本文の連続原文、未掲載の安全なHTTPS URLであることを維持する。手書き引用やJSON中のURLだけでは合格しない。reviewは従来のstrict JSONのまま。
+
+最大3tools・出力6000・既存予約式・同一run/月上限・絶対期限・再送禁止を変更しない。費用は修正後のinstructionsを含む実要求bytesで再計算するため、予約額が前回と同額になる保証ではない。根拠不足は引き続き停止する。旧raw応答と同じ構造、引用欠落/JSON内だけのannotation、複数source・余分なキー・不正な末尾を拒否するローカルfixtureは実API成功の代用ではない。
+
+変更はCMSのresearch要求/受入に限定し、既存runnerのresearch応答version1・source hash・sources契約は維持する。今回の変更自体に6repoのrunner pin更新は不要。保存済み旧run・監査・記事lockへ適用せず、新しい親確認済みcanaryだけで実API成立を確認する。生成後全言語校閲・Draft PRの実受入前に全run enableへ進めない。
