@@ -107,7 +107,7 @@ it("rejects oversized v2 generation before reserve/fetch without truncation", as
     allowedPaths: ["src/content/blog/example.md"],
     instruction: "Revise with evidence",
     files: [
-      { path: "src/content/blog/example.md", content: "x".repeat(38000) },
+      { path: "src/content/blog/example.md", content: "x".repeat(40000) },
     ],
     researchBudget: true,
   });

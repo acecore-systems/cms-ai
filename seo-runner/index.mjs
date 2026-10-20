@@ -485,6 +485,38 @@ export class SeoRunner {
       this.stage = "research";
       const result = await this.request("research", {});
       if (
+        result.status === "research_insufficient" &&
+        payload.policy.researchContract === 2
+      ) {
+        if (!/^[a-f0-9]{64}$/.test(result.offerSha256))
+          throw new Error("seo_research");
+        await this.latestMain(baseSha);
+        const refs = await this.command("git", [
+          "ls-remote",
+          "--heads",
+          "origin",
+          "refs/heads/" + branch,
+        ]);
+        const prs = await this.pageAll(
+          "/pulls?state=all&head=" +
+            encodeURIComponent(this.repository.split("/")[0] + ":" + branch),
+        );
+        if (refs.trim() || prs.length) throw new Error("seo_research");
+        const terminal = await this.request("research-reject", {
+          baseSha,
+          offerSha256: result.offerSha256,
+          refs: [],
+          pullRequests: [],
+        });
+        if (terminal.status !== "research_rejected")
+          throw new Error("seo_research");
+        this.active = false;
+        return {
+          status: "research_rejected",
+          receiptSha256: terminal.receiptSha256,
+        };
+      }
+      if (
         result.status !== "researched" ||
         result.evidence?.version !== 1 ||
         result.evidence.sourceSha256 !==

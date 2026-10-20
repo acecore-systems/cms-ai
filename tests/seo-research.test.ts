@@ -101,6 +101,7 @@ beforeEach(async () => {
     "0005_seo_editorial.sql",
     "0006_seo_research.sql",
     "0007_seo_research_plan.sql",
+    "0008_seo_rejection.sql",
   ])
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),
@@ -150,7 +151,10 @@ beforeEach(async () => {
       },
       get: async (k: string) =>
         objects.has(k)
-          ? { json: async () => JSON.parse(objects.get(k)!) }
+          ? {
+              json: async () => JSON.parse(objects.get(k)!),
+              text: async () => objects.get(k)!,
+            }
           : null,
     },
   } as unknown as AppEnv;
@@ -884,7 +888,7 @@ it("stops an insufficient plan before search and preserves its private paid resp
       .responseStored,
   ).toBe(true);
 });
-it("proves 908075 microUSD for every bounded serialized request and rejects one extra byte", () => {
+it("proves 944075 microUSD for every bounded serialized request and rejects one extra byte", () => {
   const make = (search: boolean, bytes: number) => {
     const r = responseRequest("bounded", {}, search ? null : {}, search);
     r.input = "";
@@ -905,7 +909,7 @@ it("proves 908075 microUSD for every bounded serialized request and rejects one 
     );
   }
   total += 9 * (STAGE_INPUT_BYTES.generation + 8192 + 12000 * 2);
-  expect(total).toBe(908075);
+  expect(total).toBe(944075);
   expect(total).toBe(FULL_RESEARCH_RUN_MICROS);
 });
 it("rejects an oversized real planner input before credentials, reservation or fetch instead of truncating", async () => {
@@ -977,7 +981,7 @@ it("does not send or reserve an oversized review request", async () => {
       callId: id(88),
       articleKey: context.budgetArticleKey,
       deadline: context.deadline,
-      request: responseRequest("review", { text: "x".repeat(120000) }, {}),
+      request: responseRequest("review", { text: "x".repeat(180000) }, {}),
       phase: "review",
     }),
   ).rejects.toThrow("seo_stage_input_budget");
@@ -993,4 +997,71 @@ it("blocks re-entry after an uncertain planner response without reserving search
   expect(
     sql.prepare("SELECT phase,status FROM seo_editorial_checks").all(),
   ).toEqual([{ phase: "plan", status: "unresolved" }]);
+});
+
+it("fixes one complete exact factual sentence and retains surrounding proposals as context only", () => {
+  const fact = "サービスは、招待された利用者に限り無料で参加できます。";
+  const proposal = "気軽に遊びたい人におすすめです。";
+  const document = source.content.replace(claim, fact + proposal);
+  const plan = parsePlan(
+    {
+      verdict: "ready",
+      claimId: "claim-1",
+      targetQuote: fact,
+      conditions: [fact],
+      anchors: ["サービス"],
+      queries: ["サービス official invitation documentation"],
+    },
+    document,
+    context.sourceSha256,
+    2,
+  );
+  expect(plan.target).toEqual({ start: 0, end: fact.length, quote: fact });
+  expect(plan.claimMarkdown).toBe(fact + proposal);
+  const response = provider();
+  (response.output[0] as any).action.queries = plan.queries;
+  expect(
+    parseResearch(response, document, context.sourceSha256, now, plan)
+      .sources[0].claim,
+  ).toBe(fact);
+  expect(
+    focusedInput(document, context.sourceSha256, plan).plan.target!.quote,
+  ).toBe(fact);
+  for (const bad of [
+    "無料で参加できます。",
+    "サービスは、無料で参加できます。",
+    fact.slice(0, -1),
+    fact + proposal,
+  ])
+    expect(() =>
+      parsePlan(
+        {
+          verdict: "ready",
+          claimId: "claim-1",
+          targetQuote: bad,
+          conditions: [bad],
+          anchors: ["サービス"],
+          queries: ["サービス official"],
+        },
+        document,
+        context.sourceSha256,
+        2,
+      ),
+    ).toThrow();
+  const neg = "サービスは、招待がない場合は参加できません。";
+  expect(() =>
+    parsePlan(
+      {
+        verdict: "ready",
+        claimId: "claim-1",
+        targetQuote: "参加できます。",
+        conditions: ["参加できます。"],
+        anchors: ["サービス"],
+        queries: ["サービス official"],
+      },
+      source.content.replace(claim, neg),
+      context.sourceSha256,
+      2,
+    ),
+  ).toThrow();
 });

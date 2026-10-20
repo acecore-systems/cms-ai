@@ -53,6 +53,7 @@ beforeEach(async () => {
     "0005_seo_editorial.sql",
     "0006_seo_research.sql",
     "0007_seo_research_plan.sql",
+    "0008_seo_rejection.sql",
   ])
     sql.exec(
       readFileSync(
@@ -115,7 +116,10 @@ beforeEach(async () => {
       },
       get: async (key: string) =>
         objects.has(key)
-          ? { json: async () => JSON.parse(objects.get(key)!) }
+          ? {
+              json: async () => JSON.parse(objects.get(key)!),
+              text: async () => objects.get(key)!,
+            }
           : null,
     },
   } as unknown as AppEnv;
@@ -242,7 +246,12 @@ describe("SEO durable editorial boundary", () => {
         ? {
             verdict: "ready",
             claimId: input.claims[0].id,
-            conditions: [input.claims[0].markdown],
+            targetQuote: input.claims[0].contextParts.find(
+              (p: any) => p.selectable,
+            ).quote,
+            conditions: [
+              input.claims[0].contextParts.find((p: any) => p.selectable).quote,
+            ],
             anchors: ["Original"],
             queries: ["Original article guide"],
           }
@@ -913,3 +922,255 @@ describe("SEO durable editorial boundary", () => {
     });
   });
 });
+
+async function insufficientOffer() {
+  env.SEO_RESEARCH_ENABLED = "true";
+  env.OPENAI_API_KEY_STORE = { get: async () => "fixture" };
+  (env.SEO_COORDINATOR as any).rejectResearch = vi.fn(async () => ({
+    status: "recorded",
+  }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({
+        id: "resp_insufficient",
+        status: "completed",
+        usage: { input_tokens: 100, output_tokens: 100 },
+        output: [
+          {
+            type: "message",
+            status: "completed",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  verdict: "insufficient",
+                  claimId: "",
+                  targetQuote: "",
+                  conditions: [],
+                  anchors: [],
+                  queries: [],
+                }),
+                annotations: [],
+              },
+            ],
+          },
+        ],
+      }),
+    ),
+  );
+  const jobId = await claimed();
+  const offer = await request(jobId, "research", {});
+  expect(offer.status).toBe("research_insufficient");
+  return {
+    jobId,
+    body: {
+      baseSha,
+      offerSha256: offer.offerSha256,
+      refs: [],
+      pullRequests: [],
+    },
+  };
+}
+it("terminalizes only a verified insufficient receipt, preserves paid evidence and replays without AI", async () => {
+  const { jobId, body } = await insufficientOffer();
+  const budget = sql.prepare("SELECT * FROM seo_budget_calls").all();
+  const result = await request(jobId, "research-reject", body);
+  expect(result.status).toBe("research_rejected");
+  expect((await editorialStatus(env, { runId })).status).toBe(
+    "research_rejected",
+  );
+  expect(await request(jobId, "research-reject", body)).toEqual(result);
+  expect(sql.prepare("SELECT * FROM seo_budget_calls").all()).toEqual(budget);
+  expect(mocks.infer).not.toHaveBeenCalled();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(await request(jobId, "propose", { step: 0 })).toEqual({
+    status: "unresolved",
+  });
+  expect((await editorialStatus(env, { runId })).status).toBe(
+    "research_rejected",
+  );
+  const receipt = sql.prepare("SELECT * FROM seo_research_rejections").get()!;
+  for (const query of [
+    "DELETE FROM seo_research_rejections",
+    "DELETE FROM seo_budget_calls",
+    "UPDATE seo_budget_calls SET reserved_micros=1",
+    "DELETE FROM seo_editorial_checks",
+    "UPDATE seo_research_rejections SET receipt_sha256='other'",
+    "UPDATE seo_editorial_jobs SET status='publishing'",
+    "UPDATE seo_editorial_runs SET deadline=deadline+1000",
+    "UPDATE seo_editorial_jobs SET generation_started=1",
+  ])
+    expect(() => sql.exec(query)).toThrow();
+  expect(sql.prepare("SELECT * FROM seo_research_rejections").get()).toEqual(
+    receipt,
+  );
+});
+it.each([
+  "ref",
+  "pr",
+  "hash",
+  "source",
+  "generation",
+  "publishing",
+  "artifact",
+  "unknown",
+  "deadline",
+  "old",
+])("rejects unsafe terminal receipt: %s", async (kind) => {
+  const { jobId, body } = await insufficientOffer();
+  if (kind === "ref") body.refs.push("present" as never);
+  if (kind === "pr") body.pullRequests.push(1 as never);
+  if (kind === "hash") body.offerSha256 = "b".repeat(64);
+  if (kind === "source")
+    sql.exec("UPDATE seo_editorial_jobs SET source_sha256='wrong'");
+  if (kind === "generation")
+    sql.exec("UPDATE seo_editorial_jobs SET generation_started=1");
+  if (kind === "publishing")
+    sql.exec("UPDATE seo_editorial_jobs SET publication_started=1");
+  if (kind === "artifact")
+    objects.set("seo-editorial/" + jobId + "/step-0.json", "{}");
+  if (kind === "unknown")
+    sql.exec("UPDATE seo_budget_calls SET status='unresolved'");
+  if (kind === "deadline") clock.mockReturnValue(now + 30 * 60000);
+  if (kind === "old")
+    sql.exec("UPDATE seo_editorial_jobs SET research_contract=1");
+  expect((await request(jobId, "research-reject", body)).status).toBe(
+    "unresolved",
+  );
+  expect(
+    sql.prepare("SELECT count(*) n FROM seo_research_rejections").get()!.n,
+  ).toBe(0);
+  expect((env.SEO_COORDINATOR as any).rejectResearch).not.toHaveBeenCalled();
+});
+it("keeps terminal receipt if callback is lost and retries only that identical callback", async () => {
+  const { jobId, body } = await insufficientOffer();
+  (env.SEO_COORDINATOR as any).rejectResearch.mockResolvedValueOnce({
+    status: "denied",
+  });
+  expect((await request(jobId, "research-reject", body)).status).toBe(
+    "unresolved",
+  );
+  clock.mockReturnValue(now + 30 * 60000);
+  expect((await editorialStatus(env, { runId })).status).toBe(
+    "research_rejected",
+  );
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(
+    sql.prepare("SELECT count(*) n FROM seo_research_rejections").get()!.n,
+  ).toBe(1);
+});
+
+it("refuses raw-response mutation after offering a rejection", async () => {
+  const { jobId, body } = await insufficientOffer();
+  const call = sql.prepare("SELECT call_id FROM seo_editorial_checks").get()!
+    .call_id;
+  const raw = JSON.parse(objects.get("seo-responses/" + call + ".json")!);
+  raw.usage.input_tokens = 101;
+  objects.set("seo-responses/" + call + ".json", JSON.stringify(raw));
+  expect((await request(jobId, "research-reject", body)).status).toBe(
+    "unresolved",
+  );
+  expect(
+    sql.prepare("SELECT count(*) n FROM seo_research_rejections").get()!.n,
+  ).toBe(0);
+});
+
+it.each(["insufficient", "verified-empty", "contract-violation"])(
+  "classifies two completed calls without confusing rejection and invalid output: %s",
+  async (kind) => {
+    env.SEO_RESEARCH_ENABLED = "true";
+    env.OPENAI_API_KEY_STORE = { get: async () => "fixture" };
+    (env.SEO_COORDINATOR as any).rejectResearch = vi.fn(async () => ({
+      status: "recorded",
+    }));
+    const fetcher = vi.fn(async (_url, options) => {
+      const input = JSON.parse(JSON.parse(options.body).input),
+        planning = !!input.claims;
+      const quote = planning
+        ? input.claims[0].contextParts.find((p: any) => p.selectable).quote
+        : "";
+      const value = planning
+        ? {
+            verdict: "ready",
+            claimId: input.claims[0].id,
+            targetQuote: quote,
+            conditions: [quote],
+            anchors: ["Original"],
+            queries: ["Original official documentation"],
+          }
+        : {
+            verdict: kind === "verified-empty" ? "verified" : "insufficient",
+            sources: [],
+            ...(kind === "contract-violation" ? { extra: true } : {}),
+          };
+      return Response.json({
+        id: "resp_fixture",
+        status: "completed",
+        usage: { input_tokens: 100, output_tokens: 100 },
+        output: [
+          ...(!planning
+            ? [
+                {
+                  type: "web_search_call",
+                  status: "completed",
+                  action: {
+                    type: "search",
+                    queries: input.plan.queries,
+                    sources: [],
+                  },
+                },
+              ]
+            : []),
+          {
+            type: "message",
+            status: "completed",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: planning
+                  ? JSON.stringify(value)
+                  : "No suitable primary source was established.\n```json\n" +
+                    JSON.stringify(value) +
+                    "\n```",
+                annotations: [],
+              },
+            ],
+          },
+        ],
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const jobId = await claimed(),
+      offer = await request(jobId, "research", {});
+    expect(offer.status).toBe(
+      kind === "insufficient" ? "research_insufficient" : "unresolved",
+    );
+    if (kind === "insufficient") {
+      expect(
+        (
+          await request(jobId, "research-reject", {
+            baseSha,
+            offerSha256: offer.offerSha256,
+            refs: [],
+            pullRequests: [],
+          })
+        ).status,
+      ).toBe("research_rejected");
+      const receipt = JSON.parse(
+        String(
+          sql.prepare("SELECT receipt_json FROM seo_research_rejections").get()!
+            .receipt_json,
+        ),
+      );
+      expect(receipt.calls.map((c: any) => [c.phase, c.verdict])).toEqual([
+        ["plan", "ready"],
+        ["research", "insufficient"],
+      ]);
+    }
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(mocks.infer).not.toHaveBeenCalled();
+  },
+);
