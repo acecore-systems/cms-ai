@@ -137,3 +137,7 @@ research contract 2 の新jobは、claim・API予約前に既存builderでplan r
 非公開R2の`seo-editorial/<jobId>/eligibility-preflight.json`へbase/source/bundle SHA、計測bytes・上限・理由を保存する。原本時点で超過する場合は既存skip経路で次の自然候補へ進み、記事lockとAI予約を取得しない。保存に失敗した場合は停止する。候補上限3件、旧contract 1、最終CMS gateは維持する。原文を切り捨てない。
 
 baseline適合は生成後の容量を保証しない。実資料や改訂による増大は従来の各stage上限でfail closedとする。runnerの既存claim skipped処理を利用するためrunner変更・6repo pin更新・migrationは不要。
+
+### コードフェンスの保護
+
+実canaryで、言語指定のない開始フェンスへ`text`を補完した提案を`seo_code_changed`で拒否した。コード本文が同じでも開始フェンス・言語指定を含む完全一致が必要である。新規研究あり／なし両方の生成指示へ、この契約を明示する。guardの緩和や保存提案の書換えは行わない。保存実応答のローカル再現と拒否回帰を確認したが、指示追加はモデル遵守を保証せず、実生成での成功は未確認である。
