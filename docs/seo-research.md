@@ -69,3 +69,9 @@ ceil((128000 + B + 8192) * (N + 1) * 0.3 + N * 10000 + 6000)
 最大3tools・出力6000・既存予約式・同一run/月上限・絶対期限・再送禁止を変更しない。費用は修正後のinstructionsを含む実要求bytesで再計算するため、予約額が前回と同額になる保証ではない。根拠不足は引き続き停止する。旧raw応答と同じ構造、引用欠落/JSON内だけのannotation、複数source・余分なキー・不正な末尾を拒否するローカルfixtureは実API成功の代用ではない。
 
 変更はCMSのresearch要求/受入に限定し、既存runnerのresearch応答version1・source hash・sources契約は維持する。今回の変更自体に6repoのrunner pin更新は不要。保存済み旧run・監査・記事lockへ適用せず、新しい親確認済みcanaryだけで実API成立を確認する。生成後全言語校閲・Draft PRの実受入前に全run enableへ進めない。
+
+## claim ID と既存 URL の境界
+
+調査入力には正本本文の paragraph AST offset から切り出した `claims`（`id` と元の `markdown`）、既存リンク・本文中 URL の `existingUrls` を渡す。モデルは `claimId` だけを返し、CMS が同じ source hash の原文へ対応付ける。強調、inline code、句読点を strip して比較を緩めない。不明 ID・旧 claim 文字列形式・既存 URL は拒否する。12〜800文字の段落だけを選択対象とし、コードブロックを主張として選ばせない。根拠の適用条件は段落全体について確認する。
+
+前回の実 API は search/open/url_citation まで成功したが、既存 URL と Markdown claim 不一致で生成前停止した。この変更のローカル回帰・CI は新しい有料実試験の成功を意味しない。予約額は増えた入力 bytes を既存計算式に含め、1 USD/run・5 USD/JST月と30分期限を維持する。新試験は新 run とし、旧 call を再送しない。runner protocol と出力 ResearchEvidence.claim は変更しないため6サイトのpin更新は不要。
