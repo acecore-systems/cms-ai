@@ -467,3 +467,50 @@ describe("SEO action runtime", () => {
     expect(github).toHaveBeenCalledTimes(10);
   });
 });
+
+it.each([false, true])(
+  "checks all-state PR absence before terminal rejection (PR exists=%s)",
+  async (exists) => {
+    const prior = request.getMockImplementation()!;
+    request.mockImplementation(async (operation = "", body) => {
+      if (!operation) {
+        const data = await prior(operation, body);
+        data.policy.protocolVersion = 2;
+        data.policy.researchContract = 2;
+        return data;
+      }
+      if (operation === "research")
+        return { status: "research_insufficient", offerSha256: "b".repeat(64) };
+      if (operation === "research-reject") {
+        expect(body).toEqual({
+          baseSha,
+          offerSha256: "b".repeat(64),
+          refs: [],
+          pullRequests: [],
+        });
+        return { status: "research_rejected", receiptSha256: "c".repeat(64) };
+      }
+      return prior(operation, body);
+    });
+    const priorGithub = github.getMockImplementation()!;
+    github.mockImplementation(async (path, ...args) =>
+      path.includes("state=all")
+        ? exists
+          ? [{ number: 1, state: "closed" }]
+          : []
+        : priorGithub(path, ...args),
+    );
+    const result = await runner.executeJob();
+    expect(result.status).toBe(exists ? "unresolved" : "research_rejected");
+    expect(
+      request.mock.calls.some((c) =>
+        ["propose", "publish", "finish"].includes(c[0]),
+      ),
+    ).toBe(false);
+    expect(request.mock.calls.some((c) => c[0] === "research-reject")).toBe(
+      !exists,
+    );
+    expect(pushed).toBe(false);
+    expect(github.mock.calls.some((c) => c[1] === "POST")).toBe(false);
+  },
+);

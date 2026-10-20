@@ -1,3 +1,9 @@
+import {
+  prepareRejection,
+  finalizeRejection,
+  notifyRejection,
+  rejectionRow,
+} from "./seo-rejection.ts";
 import type { AppEnv } from "./env.ts";
 import { dispatchSeoEditorialJob } from "./github.ts";
 import { sha256 } from "./seo-budget.ts";
@@ -54,6 +60,9 @@ type EditorialJob = {
   claim_recorded: number;
   callback_recorded: number;
   protocol_version: number;
+  research_contract: number;
+  generation_started: number;
+  publication_started: number;
 };
 const uuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -257,10 +266,11 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version) SELECT ?,run_id,?,candidate_index,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract) SELECT ?,run_id,?,candidate_index,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
+        researchEnabled(env, runId) ? 2 : 1,
         researchEnabled(env, runId) ? 2 : 1,
         runId,
         run.candidate_index,
@@ -291,6 +301,8 @@ async function advance(env: AppEnv, runId: string) {
 }
 
 async function notify(env: AppEnv, run: Run, job: EditorialJob) {
+  const rejection = await notifyRejection(env, job);
+  if (rejection !== null) return rejection;
   if (
     job.callback_recorded ||
     !job.article_key ||
@@ -363,8 +375,17 @@ export async function editorialStatus(env: AppEnv, input: unknown) {
         ...(run.article_key ? { articleKey: run.article_key } : {}),
       };
     return {
-      status: run.status,
+      status:
+        run.job_id && (await rejectionRow(env, run.job_id))
+          ? "research_rejected"
+          : run.status,
       ...(run.article_key ? { articleKey: run.article_key } : {}),
+      ...(run.job_id && (await rejectionRow(env, run.job_id))
+        ? {
+            receiptSha256: (await rejectionRow(env, run.job_id))!
+              .receipt_sha256,
+          }
+        : {}),
       ...(run.status === "draft_pr" && run.pr_url ? { prUrl: run.pr_url } : {}),
     };
   } catch {
@@ -402,7 +423,7 @@ async function authorizedJob(
 // Dedicated OIDC boundary. No Access/user/CMS role can invoke these operations.
 export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
   const match =
-    /^\/seo-runner\/jobs\/([a-f0-9-]{36})(?:\/(claim|research|review|propose|publish|finish|skip|unresolved))?$/.exec(
+    /^\/seo-runner\/jobs\/([a-f0-9-]{36})(?:\/(claim|research|research-reject|review|propose|publish|finish|skip|unresolved))?$/.exec(
       new URL(request.url).pathname,
     );
   if (!match) return json({ status: "not_found" }, 404);
@@ -439,9 +460,14 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
         validationCommands: identity.site.validationCommands,
         draftOnly: true,
         protocolVersion: job.protocol_version,
+        researchContract: job.research_contract,
       },
     });
   try {
+    if (operation === "research-reject")
+      return json(
+        await finalizeRejection(env, job, run, await readJsonObject(request)),
+      );
     if (operation !== "finish") alive(run);
     if (operation === "skip") {
       if (job.status !== "inspecting") throw new Error("state");
@@ -481,10 +507,27 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
           Object.keys(body).length
         )
           throw new Error("state");
-        return json({
-          status: "researched",
-          evidence: await researchArticle(env, context, article.source),
-        });
+        try {
+          return json({
+            status: "researched",
+            evidence: await researchArticle(env, context, article.source),
+          });
+        } catch (error) {
+          if (
+            job.research_contract === 2 &&
+            error instanceof Error &&
+            error.message === "seo_research_insufficient"
+          )
+            return json({
+              status: "research_insufficient",
+              offerSha256: await prepareRejection(
+                env,
+                context,
+                article.source.content,
+              ),
+            });
+          throw error;
+        }
       }
       if (
         job.status !== "generated" ||
@@ -522,7 +565,7 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
         await assertReview(env, checkContext(job, run), body.filesSha256);
       }
       const changed = await env.CMS_AI_DB.prepare(
-        "UPDATE seo_editorial_jobs SET status='publishing' WHERE id=? AND status='generated'",
+        "UPDATE seo_editorial_jobs SET status='publishing',publication_started=1 WHERE id=? AND status='generated'",
       )
         .bind(job.id)
         .run();
@@ -646,6 +689,7 @@ function checkContext(job: EditorialJob, run: Run): CheckContext {
     budgetArticleKey: job.site_id + ":" + job.article_path,
     sourceSha256: job.source_sha256!,
     deadline: run.deadline,
+    contractVersion: job.research_contract,
   };
 }
 
@@ -724,7 +768,7 @@ async function propose(
       : null;
   const callId = "seo-" + crypto.randomUUID();
   const changed = await env.CMS_AI_DB.prepare(
-    "UPDATE seo_editorial_jobs SET status='generating',call_id=? WHERE id=? AND status IN ('claimed','generated') AND next_step=?",
+    "UPDATE seo_editorial_jobs SET status='generating',generation_started=1,call_id=? WHERE id=? AND status IN ('claimed','generated') AND next_step=?",
   )
     .bind(callId, job.id, job.next_step)
     .run();

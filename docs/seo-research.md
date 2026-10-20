@@ -102,12 +102,30 @@ plannerは原文段落ID、条件quote（12文字以上）、原文由来anchor�
 | ----------------------------- | --------: | ---------------: |
 | planner、toolsなし、出力6000  |     16000 |            13258 |
 | 検索、3tools、4pass、出力6000 |     16000 |           218631 |
-| 生成、出力12000、9回          |   各38000 |           631728 |
-| AI校閲、toolsなし、出力6000   |    120000 |            44458 |
-| 合計12 API calls              |           |       **908075** |
+| 生成、出力12000、9回          |   各40000 |           649728 |
+| AI校閲、toolsなし、出力6000   |    180000 |            62458 |
+| 合計12 API calls              |           |       **944075** |
 
-生成1回は既存保護単価で`38000+8192+12000*2=70192`、検索は上記式で各passに入力bytesを加算。1 USD内に91925 microUSDの差がある。月残額不足・期限・実生成後の入力増大には従来どおり停止するため、全記事完了を保証しない。
+生成1回は既存保護単価で`40000+8192+12000*2=72192`、検索は上記式で各passに入力bytesを加算。1 USD内に55925 microUSDの差がある。月残額不足・期限・実生成後の入力増大には従来どおり停止するため、全記事完了を保証しない。
 
 保存されたSystems記事（9言語＋7559 bytesのguide）を実request builderへ渡し、合成plan/根拠と既存本文でローカル計測した。planner5518 bytes、検索4317 bytes、校閲106134 bytes、生成各21103〜29063 bytesで全上限内。予約合計785066 microUSD（9生成530044）だった。計測receiptは非公開運用記録の`planning-full-sizing.json`/`planning-generation-sizing.json`に保存。新しい生成結果、実検索品質、AI校閲passの証明ではない。
 
 2026-10-20 05:35:15 UTCの運用担当者による監査復旧はglobalActiveRows=0、元run partial、全6locks・予算・期限・根拠・旧audit不変を確認済み。新researchは無効を維持する。旧監査結果をこのplan方式で再解釈しない。確定insufficientを通常の安全な終端として扱う将来契約は別途設計判断が必要で、現在は管理復旧なしにglobal受付が維持されると称さない。unknownや生成後失敗の自動解除は本変更に含めない。
+
+## 新jobの文単位根拠と確定insufficient終端（contract 2）
+
+0008適用前のjobはresearch_contract=1のまま。新規research jobだけ2を指定する。plan.version=2では、サーバーが段落を完結文へ分け、選択可能なexact文をcontextPartsに示す。本文を二重に渡さず、すべてのpartsを連結すれば元段落に戻る。条件や否定を落とした任意substring、複数文、Markdownリンク/inline codeの途中境界を許可しない。モデルはtargetQuoteを1つ選び、条件quoteとanchorはその文内へ限定する。canonical evidence.claimはそのexact文であり、段落の他fact/提案を検証済みとしない。意味上の条件が前後文脈にある場合は文脈と合わせて検証し、不足はinsufficient。事実と推薦の意味的区別はAI判断を含み、人の確認済みとは称さない。
+
+新上限で保存mainの自然候補3件をローカル計測した。Portal先頭候補はplanner12464/search4366/review157848 bytes、生成最大37584 bytes、合成根拠で856319 microUSD。3番目は全上限内852587。2番目はreview227403 bytesかつ一部生成40000超過のため不適格。これは本番AI出力や検索成功の証明ではなく、生成後の膨張時は送信前停止する。
+
+確定insufficientだけ次の専用経路を使う。通常の契約違反、raw未保存、応答不明、生成/公開開始後、PR/ref存在は従来unresolved。
+
+1. CMSはplanのみ、またはplan+searchの全callがbudget complete/API completedで、最後の厳密な結果がinsufficientであることを原本から再検証する。ready plan、固定query/claim、全manifest、raw SHAを確認し、非公開rejection-offerを保存する。verified空配列をinsufficientへ読み替えない。
+2. 新runnerはOIDCで結び付いたjobのmainを再照合し、固定branch refと当該headの全状態PRをページングして不存在を確認する。成功時だけresearch-rejectへ空ref/PR集合とoffer hashを渡す。ここから生成/pushは実施しない。
+3. CMSは同source/hash/base/Actions run、期限内、next_step0/call_id null、生成予約/成果0、不可逆generation_started/publication_startedとも0を確認。R2原本と全callを再検証しimmutable receiptを保存後、D1 triggerが原子的に内部run/jobをterminal unresolvedへ固定する。専用receiptと成功callbackがあるstatus APIだけresearch_rejectedを返す。内部unresolved行単独を結果不明や復旧必要と判定しない。
+4. 専用Service Binding callback rejectResearchはreceipt hash、call一覧、source、owner、旧run/editorial/lockのexact snapshot CASを確認。SEO追加migration0006のtriggerでglobal runだけcollection_statusへ終了し、hold1/retained/deadline/全記事lock/根拠/費用を保持する。元finished_atがnullならdecisionTimeを記録し、既存時刻は保持する。旧管理auditへ追記・変更しない。
+5. 同receipt再通知は冪等。異なるreceipt・late draft callback・期限延長・再開・台帳削除を拒否する。callback通信不明はglobalを解放せず、status照合で同じ保存済みcallbackだけ再通知する。新planner/検索の再送はない。生成結果不明を解除する経路ではない。
+
+新job用receiptはD1 seo_research_rejectionsとprivate R2 seo-editorial/<job>/rejection.json。source/raw/manifest/call hashを含む。SEO側runtime_research_rejectionsは対応receiptと元全行snapshotを保持し、retentionで削除しない。これは通常の確定拒否の監査であり、旧research_rejection_auditによる手動復旧とは別契約。
+
+配備順: research無効・canary空を確認 → 運用担当者がSEO0006/CMS0008を旧行保持照合付きで適用 → SEO callback/WorkflowとCMSを配置 → 6repoのseo-content.ymlを本PRのCI成功40SHAへ更新・CI/main確認 → 最新候補/予算/lockを再確認。新有料run/全run enableは今回実施しない。6pinが旧版の間、新contractのinsufficientは安全側のunresolvedで終了するため、canaryを起動しない。
