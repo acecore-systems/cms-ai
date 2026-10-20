@@ -8,6 +8,7 @@ import {
   editorialStatus,
   handleSeoRunnerRequest,
 } from "../src/seo-editorial.ts";
+import { buildEditorialInstruction } from "../src/seo-editorial-instruction.ts";
 import { sha256 } from "../src/seo-hash.ts";
 import { assertEditorialFiles, sourceIdentity } from "../src/seo-content.ts";
 import { format } from "prettier";
@@ -1259,3 +1260,30 @@ describe("baseline eligibility before paid work", () => {
     expect(row().candidate_index).toBe(0);
   });
 });
+
+it.each([
+  null,
+  {
+    version: 1 as const,
+    checkedAt: "",
+    sourceSha256: "a".repeat(64),
+    responseId: "fixture",
+    queries: [],
+    sources: [],
+  },
+])(
+  "keeps explicit fence preservation in researched and original-only instructions",
+  (research) => {
+    const instruction = buildEditorialInstruction({
+      step: 0,
+      paths: [sourcePath],
+      translationCount: 8,
+      reason: "copy",
+      research,
+    });
+    expect(instruction).toContain("言語指定のない```へtext等を補完しない");
+    expect(instruction).toContain(
+      "完全保持と依頼が両立しなければclarification",
+    );
+  },
+);

@@ -591,3 +591,39 @@ describe("SEO source, locale and copy contracts", () => {
     );
   });
 });
+
+it("rejects the observed bare fence to text rewrite even with identical code and attested research", async () => {
+  const source = {
+    path: "src/content/blog/example.md",
+    content: base + "\n```\n# 変更前（VitePress）\ndocs/\n  pages/\n```\n",
+  };
+  const identity = sourceIdentity(
+    "cherry",
+    "https://cherry.acecore.net/blog/example/",
+    [source],
+    now,
+  )!;
+  const proposed = {
+    ...source,
+    content: source.content
+      .replace("title: Original", "title: Revised")
+      .replace("\n```\n#", "\n```text\n#"),
+  };
+  await expect(
+    acceptEditorialChange(identity, source, proposed, null, now, [
+      "https://docs.example.org/new-guide",
+    ]),
+  ).rejects.toThrow("seo_code_changed");
+  await expect(
+    acceptEditorialChange(
+      identity,
+      source,
+      {
+        ...source,
+        content: source.content.replace("title: Original", "title: Revised"),
+      },
+      null,
+      now,
+    ),
+  ).resolves.toContain("\n```\n#");
+});
