@@ -28,7 +28,7 @@ vi.mock("../src/inference.ts", async (original) => ({
   ...(await original()),
   runInference: (...args: unknown[]) => mocks.infer(...args),
 }));
-const now = Date.parse("2026-10-19T00:00:00Z");
+const now = Date.parse("2026-10-20T00:00:00Z");
 const runId = "editorial-00000000-0000-4000-8000-000000000001";
 const baseSha = "a".repeat(40);
 const sourcePath = "src/content/stories/example.md";
@@ -48,7 +48,11 @@ beforeEach(async () => {
   vi.clearAllMocks();
   clock = vi.spyOn(Date, "now").mockReturnValue(now);
   sql = new DatabaseSync(":memory:");
-  for (const migration of ["0004_seo_budget.sql", "0005_seo_editorial.sql"])
+  for (const migration of [
+    "0004_seo_budget.sql",
+    "0005_seo_editorial.sql",
+    "0006_seo_research.sql",
+  ])
     sql.exec(
       readFileSync(
         new URL("../migrations/" + migration, import.meta.url),
@@ -178,6 +182,7 @@ beforeEach(async () => {
 afterEach(() => {
   sql.close();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 const start = (candidates: unknown[] = [candidate]) =>
   startEditorial(env, { runId, deadline: now + 20 * 60_000, candidates });
@@ -218,6 +223,186 @@ async function claimed() {
 }
 
 describe("SEO durable editorial boundary", () => {
+  it("integrates fresh search, nine accepted files, final-byte AI review and publish under one durable budget/deadline", async () => {
+    env.SEO_RESEARCH_ENABLED = "true";
+    env.OPENAI_API_KEY_STORE = { get: async () => "fixture-secret" };
+    const reference = "https://docs.example.org/new-guide";
+    const infer = mocks.infer.getMockImplementation()!;
+    mocks.infer.mockImplementation(async (...args) => {
+      const result = await infer(...args);
+      result.changes[0].content += "\n[Reference](" + reference + ")\n";
+      return result;
+    });
+    const fetchMock = vi.fn(async (_url, options) => {
+      const payload = JSON.parse(options.body);
+      const input = JSON.parse(payload.input);
+      const research = !!payload.tools;
+      const value = research
+        ? {
+            verdict: "verified",
+            sources: [
+              {
+                url: reference,
+                title: "Guide",
+                claim: "Original body with",
+                excerpt:
+                  "Primary source supporting the original article statement.",
+                assessment: "supports",
+              },
+            ],
+          }
+        : {
+            verdict: "pass",
+            files: input.files.map((f: any) => ({
+              path: f.path,
+              meaningPreserved: true,
+              naturalLanguage: true,
+              referencesSupported: true,
+              issues: [],
+            })),
+          };
+      return new Response(
+        JSON.stringify({
+          id: "resp_fixture",
+          status: "completed",
+          usage: { input_tokens: 1000, output_tokens: 200 },
+          output: [
+            ...(research
+              ? [
+                  {
+                    type: "web_search_call",
+                    status: "completed",
+                    action: {
+                      type: "search",
+                      queries: ["article guide"],
+                      sources: [{ url: reference }],
+                    },
+                  },
+                  {
+                    type: "web_search_call",
+                    status: "completed",
+                    action: { type: "open_page", url: reference },
+                  },
+                ]
+              : []),
+            {
+              type: "message",
+              status: "completed",
+              role: "assistant",
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify(value),
+                  annotations: research
+                    ? [{ type: "url_citation", url: reference }]
+                    : [],
+                },
+              ],
+            },
+          ],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const jobId = await claimed();
+    expect((await request(jobId, "research", {})).status).toBe("researched");
+    const finalFiles = [];
+    let japanese = "";
+    for (let step = 0; step < 9; step++) {
+      const result = await request(jobId, "propose", {
+        step,
+        ...(step === 1 ? { japanese } : {}),
+      });
+      expect(
+        result.status,
+        "step=" +
+          step +
+          " diagnostic=" +
+          objects.get("seo-editorial/" + jobId + "/failure.json"),
+      ).toBe("proposal_created");
+      const file = {
+        path: result.file.path,
+        content: await format(result.file.content, portalFormat),
+      };
+      finalFiles.push(file);
+      if (step === 0) japanese = file.content;
+    }
+    const review = await request(jobId, "review", { files: finalFiles });
+    expect(review.status).toBe("reviewed");
+    expect(review.receipt.filesSha256).toBe(
+      await sha256(JSON.stringify(finalFiles)),
+    );
+    expect(
+      (
+        await request(jobId, "publish", {
+          filesSha256: review.receipt.filesSha256,
+        })
+      ).status,
+    ).toBe("publishing");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mocks.infer).toHaveBeenCalledTimes(9);
+    expect(sql.prepare("SELECT count(*) n FROM seo_budget_runs").get()?.n).toBe(
+      1,
+    );
+    expect(
+      sql
+        .prepare(
+          "SELECT count(*) n FROM seo_budget_calls WHERE status='complete'",
+        )
+        .get()?.n,
+    ).toBe(11);
+    expect(
+      Number(
+        sql
+          .prepare("SELECT sum(reserved_micros) cost FROM seo_budget_calls")
+          .get()?.cost,
+      ),
+    ).toBeLessThan(1000000);
+    expect(
+      sql.prepare("SELECT deadline FROM seo_budget_runs").get()?.deadline,
+    ).toBe(now + 20 * 60_000);
+  });
+  it("keeps new research disabled by default and restricts the canary to its exact editorial ID", async () => {
+    env.SEO_RESEARCH_CANARY_RUN_ID =
+      "editorial-00000000-0000-4000-8000-000000000002";
+    await inspecting();
+    expect(
+      sql.prepare("SELECT protocol_version FROM seo_editorial_jobs").get()
+        ?.protocol_version,
+    ).toBe(1);
+  });
+  it.each(["flag", "canary"])(
+    "requires research and review for a new %s v2 job before any generation/publish",
+    async (kind) => {
+      if (kind === "flag") env.SEO_RESEARCH_ENABLED = "true";
+      else env.SEO_RESEARCH_CANARY_RUN_ID = runId;
+      const jobId = await claimed();
+      expect(
+        sql.prepare("SELECT protocol_version FROM seo_editorial_jobs").get()
+          ?.protocol_version,
+      ).toBe(2);
+      expect((await request(jobId, "propose", { step: 0 })).status).toBe(
+        "unresolved",
+      );
+      expect(mocks.infer).not.toHaveBeenCalled();
+      expect(claim).toHaveBeenCalledOnce();
+      expect(complete).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "unresolved" }),
+      );
+    },
+  );
+  it("blocks a v2 publish even if all nine generation steps exist without a review receipt", async () => {
+    env.SEO_RESEARCH_ENABLED = "true";
+    const jobId = await claimed();
+    sql
+      .prepare(
+        "UPDATE seo_editorial_jobs SET next_step=9,status='generated' WHERE id=?",
+      )
+      .run(jobId);
+    expect(
+      (await request(jobId, "publish", { filesSha256: "a".repeat(64) })).status,
+    ).toBe("unresolved");
+  });
   it("accepts the canary indentation defect after one paid call and preserves the original proposal", async () => {
     const jobId = await claimed();
     const infer = mocks.infer.getMockImplementation()!;

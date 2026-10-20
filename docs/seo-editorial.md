@@ -1,5 +1,7 @@
 # クラウド週次SEOのDraft PR経路
 
+2026-10-20追加: 新規資料検索・取得・AI校閲のv2は[追加契約と段階配備](seo-research.md)を参照。初期無効・実API未確認であり、以下の既存v1の実受入と区別する。
+
 通常CMSの`runner@v1`、ユーザーrole、会話、編集経路は維持する。SEOは独立したService Binding、OIDC audience、workflow、D1 state、actionを使い、確認済みDraft PRだけを結果として返す。実際の記事生成・dispatch・統合・公開は、この実装PRの受入後に別途確認する。
 
 ## 親SEOとの契約
