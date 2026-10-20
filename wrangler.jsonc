@@ -41,7 +41,7 @@
   ],
   "vars": {
     "SEO_RESEARCH_ENABLED": "false",
-    "SEO_RESEARCH_CANARY_RUN_ID": "",
+    "SEO_RESEARCH_CANARY_RUN_ID": "editorial-ba2d441f-34cb-43c6-88ab-265f8a79e607",
     "SEO_EDITORIAL_ENABLED": "true",
     "SEO_GENERATION_ENABLED": "true",
     "CMS_AI_ACCESS_TEAM_DOMAIN": "https://acecore.cloudflareaccess.com",
