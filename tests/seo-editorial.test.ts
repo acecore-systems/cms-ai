@@ -244,7 +244,7 @@ describe("SEO durable editorial boundary", () => {
               {
                 url: reference,
                 title: "Guide",
-                claim: "Original body with",
+                claimId: "claim-1",
                 excerpt:
                   "Primary source supporting the original article statement.",
                 assessment: "supports",

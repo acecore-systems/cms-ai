@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../src/env.ts";
 import {
   parseResearch,
+  researchInputs,
   researchArticle,
   reviewArticle,
   loadResearch,
@@ -40,7 +41,7 @@ function provider(
     {
       url,
       title: "Primary guide",
-      claim,
+      claimId: "claim-1",
       excerpt: "The existing claim is supported by this source passage.",
       assessment: "supports",
     },
@@ -333,7 +334,7 @@ describe("SEO fresh search evidence and retained budget", () => {
     if (kind === "not discovered")
       (result.output[0] as any).action.sources = [];
     if (kind === "wrong claim")
-      value.sources[0].claim = "Claim that is not in the original article.";
+      value.sources[0].claimId = "Claim that is not in the original article.";
     if (kind === "failed open") result.output[1].status = "failed";
     if (kind === "old only") body += "\n" + url;
     if (kind === "no sources") value.sources = [];
@@ -664,4 +665,47 @@ describe("AI review gate", () => {
     ).rejects.toThrow("format_source_changed");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+});
+
+it("maps claim IDs to original Markdown without stripping emphasis, code or punctuation", () => {
+  const body =
+    "この処理では**初回だけ実行されます**。`client:load` の条件を保持します。";
+  const document =
+    "---\ntitle: test\n---\n\n" + body + "\n\n```js\nsecretCodeOnly()\n```\n";
+  const inputs = researchInputs(document);
+  expect(inputs.claims).toEqual([{ id: "claim-1", markdown: body }]);
+  const evidence = parseResearch(provider(), document, "a".repeat(64));
+  expect(evidence.sources[0].claim).toBe(body);
+});
+it("supplies existing inline, reference and plain URLs and rejects reusing them", () => {
+  const document =
+    source.content +
+    "\n[guide][ref]\n\n[ref]: " +
+    url +
+    "\nhttps://docs.example.org/plain\n";
+  expect(researchInputs(document).existingUrls).toEqual([
+    url,
+    "https://docs.example.org/plain",
+  ]);
+  expect(() => parseResearch(provider(), document, "a".repeat(64))).toThrow(
+    "seo_research_no_new_source",
+  );
+});
+it("rejects invented IDs and the former model-authored claim contract", () => {
+  for (const change of [
+    { claimId: "claim-999" },
+    { claimId: 1 },
+    { claimId: undefined, claim },
+  ]) {
+    const response = provider();
+    const message = response.output[2] as any;
+    const value = JSON.parse(
+      message.content[0].text.split("```json\n")[1].split("\n```")[0],
+    );
+    Object.assign(value.sources[0], change);
+    message.content[0].text = researchText(value);
+    expect(() =>
+      parseResearch(response, source.content, "a".repeat(64)),
+    ).toThrow("seo_research_evidence");
+  }
 });

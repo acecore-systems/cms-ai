@@ -1,3 +1,4 @@
+import { fromMarkdown } from "mdast-util-from-markdown";
 import type { AppEnv } from "./env.ts";
 import { sha256 } from "./seo-hash.ts";
 import {
@@ -153,6 +154,33 @@ async function check(
   }
 }
 
+// IDs are scoped to the exact source bytes already bound by sourceSha256.
+// AST offsets retain Markdown punctuation, inline code and emphasis verbatim.
+export function researchInputs(source: string) {
+  const body = markdown(source).body;
+  const claims: { id: string; markdown: string }[] = [];
+  const visit = (node: any) => {
+    if (node.type === "paragraph") {
+      const text = body.slice(
+        node.position.start.offset,
+        node.position.end.offset,
+      );
+      if (text.length >= 12 && text.length <= 800)
+        claims.push({ id: "claim-" + (claims.length + 1), markdown: text });
+      return;
+    }
+    for (const child of node.children || []) visit(child);
+  };
+  visit(fromMarkdown(body));
+  const existingUrls = [
+    ...new Set([
+      ...articleReferenceLinks(source),
+      ...[...source.matchAll(/https?:\/\/[^\s<>"'`)\]]+/gu)].map((m) => m[0]),
+    ]),
+  ].sort();
+  return { claims, existingUrls };
+}
+
 export function parseResearch(
   result: any,
   source: string,
@@ -242,11 +270,14 @@ export function parseResearch(
     value.sources.length !== 1
   )
     throw new Error("seo_research_insufficient");
-  const sourceBody = markdown(source).body;
+  const inputs = researchInputs(source);
   const sources = value.sources.map((item: any) => {
-    if (!exact(item, ["url", "title", "claim", "excerpt", "assessment"]))
+    if (!exact(item, ["url", "title", "claimId", "excerpt", "assessment"]))
       throw new Error("seo_research_evidence");
     const url = referenceUrl(item.url);
+    const claim = inputs.claims.find(
+      (claim) => claim.id === item.claimId,
+    )?.markdown;
     if (
       !opened.has(url) ||
       !discovered.has(url) ||
@@ -255,10 +286,8 @@ export function parseResearch(
       typeof item.title !== "string" ||
       item.title.length < 1 ||
       item.title.length > 300 ||
-      typeof item.claim !== "string" ||
-      item.claim.length < 12 ||
-      item.claim.length > 800 ||
-      !sourceBody.includes(item.claim) ||
+      typeof item.claimId !== "string" ||
+      !claim ||
       typeof item.excerpt !== "string" ||
       item.excerpt.length < 20 ||
       item.excerpt.length > 800
@@ -267,14 +296,17 @@ export function parseResearch(
     return {
       url,
       title: item.title,
-      claim: item.claim,
+      claim: claim!,
       excerpt: item.excerpt,
       assessment: "supports" as const,
     };
   });
   if (
     new Set(sources.map((s: any) => s.url)).size !== sources.length ||
-    !sources.some((s: any) => !source.includes(s.url))
+    !sources.some(
+      (s: any) =>
+        !source.includes(s.url) && !inputs.existingUrls.includes(s.url),
+    )
   )
     throw new Error("seo_research_no_new_source");
   return {
@@ -300,13 +332,13 @@ export async function researchArticle(
         "必ず今回のテーマからキーワード検索を実行し、検索で発見した公式一次資料のページを開いて本文と適用条件を読む。既存URLを開くだけでは検索したと扱わない。" +
         "記事全体の全主張を再調査する依頼ではない。既存本文から公開一次資料で検証できる主張を1つだけ選び、その主張を支持する記事未掲載の新規資料1件だけを確認する。" +
         "最大3回のtool callで検索1回と明示open_pageによる取得1〜2回を行う。検索snippetだけで採用しない。sourcesは選んだ主張と採用する1URLのみ。未openの別資料を追加しない。" +
-        "claimは記事本文の連続した原文をコピー、excerptは取得本文の短い根拠抜粋。新しい事実・数値・企業運用情報は提案しない。" +
+        "claimIdは入力claimsから1つ選び、対応するmarkdownの主張を検証する。claim本文を再生成しない。既存URL一覧existingUrlsにある資料は採用禁止。excerptは取得本文の短い根拠抜粋。新しい事実・数値・企業運用情報は提案しない。" +
         "まず選んだ主張・適用条件・根拠を短い自然文で説明し、実際に開いた資料のinline引用を付ける（API url_citation annotationが必要）。" +
         "その後、最後に1つだけ ```json 改行 JSON 改行 ``` のコードブロックを置く。他のコードブロックは禁止。JSONの形は " +
-        '{"verdict":"verified または insufficient","sources":[{"url":"URL","title":"資料名","claim":"本文原文","excerpt":"資料抜粋","assessment":"supports または contradicts または unverified"}]}。' +
+        '{"verdict":"verified または insufficient","sources":[{"url":"URL","title":"資料名","claimId":"入力claimsのid","excerpt":"資料抜粋","assessment":"supports または contradicts または unverified"}]}。' +
         "urlは検索結果で見つけ実際に開いたHTTPS公開URLそのもの、query/fragment/認証つきURLは禁止。JSON内のURLや手書き引用を実引用の代用にしない。" +
         "選んだ主張の反証・古い仕様との不一致・根拠不足・検索や取得の失敗時はverdict=insufficientとし、確認不能を具体的に説明する。sourcesは最大1件、採用できる資料がなければ空配列。未調査の他の主張まで確認済みとは称さない。",
-      { article: source },
+      { article: source, ...researchInputs(source.content) },
       null,
       true,
     );
