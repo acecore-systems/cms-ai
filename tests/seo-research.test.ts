@@ -1,3 +1,13 @@
+import {
+  parsePlan,
+  focusedInput,
+  validatePlannedSearch,
+} from "../src/seo-research-plan.ts";
+import {
+  assertStageInput,
+  FULL_RESEARCH_RUN_MICROS,
+  STAGE_INPUT_BYTES,
+} from "../src/seo-stage-budget.ts";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,7 +67,7 @@ function provider(
         status: "completed",
         action: {
           type: "search",
-          queries: ["existing claim official guide"],
+          queries: [claim + " 公式 一次資料"],
           sources: [{ url }],
         },
       },
@@ -90,6 +100,7 @@ beforeEach(async () => {
     "0004_seo_budget.sql",
     "0005_seo_editorial.sql",
     "0006_seo_research.sql",
+    "0007_seo_research_plan.sql",
   ])
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),
@@ -170,7 +181,12 @@ beforeEach(async () => {
       "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version) VALUES(?,?,?,?,2)",
     )
     .run(context.jobId, context.runId, "homepage-cherry", 0);
-  fetchMock = vi.fn(async () => new Response(JSON.stringify(provider())));
+  fetchMock = vi.fn(async (_url, options) => {
+    const input = JSON.parse(JSON.parse(options.body).input);
+    return new Response(
+      JSON.stringify(input.claims ? plannerProvider() : provider()),
+    );
+  });
   vi.stubGlobal("fetch", fetchMock);
 });
 afterEach(() => {
@@ -178,6 +194,20 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+function plannerProvider() {
+  const response = provider();
+  response.output = response.output.filter((x: any) => x.type === "message");
+  const part = (response.output[0] as any).content[0];
+  part.text = JSON.stringify({
+    verdict: "ready",
+    claimId: "claim-1",
+    conditions: [claim],
+    anchors: ["Original"],
+    queries: [claim + " 公式 一次資料"],
+  });
+  part.annotations = [];
+  return response;
+}
 const research = () => researchArticle(env, context, source);
 const budgetCount = () =>
   sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n;
@@ -273,8 +303,8 @@ describe("SEO fresh search evidence and retained budget", () => {
     expect(evidence.sources[0].url).toBe(url);
     expect(evidence.sourceSha256).toBe(context.sourceSha256);
     expect(await research()).toEqual(evidence);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [endpoint, options] = fetchMock.mock.calls[0] as any;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [endpoint, options] = fetchMock.mock.calls[1] as any;
     expect(endpoint).toBe("https://api.openai.com/v1/responses");
     const payload = JSON.parse(options.body);
     expect(payload).toMatchObject({
@@ -285,7 +315,7 @@ describe("SEO fresh search evidence and retained budget", () => {
     });
     expect(payload.tools[0].external_web_access).toBe(true);
     expect(payload.text).toEqual({ format: { type: "text" } });
-    expect(payload.instructions).toContain("主張を1つだけ");
+    expect(payload.instructions).toContain("別claimへの変更は禁止");
     expect(options.signal).toBeInstanceOf(AbortSignal);
     const expectedCost = Math.ceil(
       (128000 +
@@ -297,7 +327,11 @@ describe("SEO fresh search evidence and retained budget", () => {
         6000,
     );
     expect(responsesUpperCost(payload, now)).toBe(expectedCost);
-    const call = sql.prepare("SELECT * FROM seo_budget_calls").get()!;
+    const call = sql
+      .prepare(
+        "SELECT c.* FROM seo_budget_calls c JOIN seo_editorial_checks s ON s.call_id=c.id WHERE s.phase='research'",
+      )
+      .get()!;
     expect(call.reserved_micros).toBe(expectedCost);
     expect(call).toMatchObject({
       run_id: context.budgetRunId,
@@ -391,23 +425,37 @@ describe("SEO fresh search evidence and retained budget", () => {
     const value = JSON.parse(part.text.split("```json\n")[1].split("\n```")[0]);
     part.text = researchText({ ...value, verdict: "insufficient" });
     fetchMock.mockImplementation(
-      async () => new Response(JSON.stringify(result)),
+      async (_url, options) =>
+        new Response(
+          JSON.stringify(
+            JSON.parse(JSON.parse(options.body).input).claims
+              ? plannerProvider()
+              : result,
+          ),
+        ),
     );
     await expect(research()).rejects.toThrow("seo_research_insufficient");
-    expect(budgetCount()).toBe(1);
+    expect(budgetCount()).toBe(2);
     expect(
       sql.prepare("SELECT status FROM seo_budget_calls").get()!.status,
     ).toBe("complete");
     await expect(research()).rejects.toThrow("seo_check_conflict");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
   it("stops when no new source exists and indexes the private paid result without retry", async () => {
     fetchMock.mockImplementation(
-      async () => new Response(JSON.stringify(provider([]))),
+      async (_url, options) =>
+        new Response(
+          JSON.stringify(
+            JSON.parse(JSON.parse(options.body).input).claims
+              ? plannerProvider()
+              : provider([]),
+          ),
+        ),
     );
     await expect(research()).rejects.toThrow("seo_research_insufficient");
     await expect(research()).rejects.toThrow("seo_check_conflict");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(
       sql.prepare("SELECT status FROM seo_budget_calls").get()!.status,
     ).toBe("complete");
@@ -429,8 +477,12 @@ describe("SEO fresh search evidence and retained budget", () => {
               JSON.stringify({ ...provider(), status: "incomplete" }),
             ),
         );
-      if (kind === "storage")
-        env.CMS_AI_IMAGES.put = vi.fn(async () => null) as any;
+      if (kind === "storage") {
+        const put = env.CMS_AI_IMAGES.put;
+        env.CMS_AI_IMAGES.put = vi.fn(async (key: any, ...args: any[]) =>
+          key.startsWith("seo-responses/") ? null : (put as any)(key, ...args),
+        ) as any;
+      }
       await expect(research()).rejects.toThrow("seo_research_call");
       expect(
         sql
@@ -447,7 +499,7 @@ describe("SEO fresh search evidence and retained budget", () => {
   it("allows only one concurrent phase to call the provider", async () => {
     const result = await Promise.allSettled([research(), research()]);
     expect(result.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
   it.each(["run", "month"])(
     "checks the existing %s cap before search, counting held reservations",
@@ -476,8 +528,8 @@ describe("SEO fresh search evidence and retained budget", () => {
           );
       const before = budgetCount();
       await expect(research()).rejects.toThrow("seo_research_call");
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(budgetCount()).toBe(before);
+      expect(fetchMock).toHaveBeenCalledTimes(kind === "run" ? 1 : 0);
+      expect(budgetCount()).toBe(before + (kind === "run" ? 1 : 0));
     },
   );
   it.each(["deadline", "terminal", "hash"])(
@@ -504,7 +556,7 @@ describe("SEO fresh search evidence and retained budget", () => {
     expect(
       sql.prepare("SELECT reserved_micros FROM seo_budget_calls").get()!
         .reserved_micros,
-    ).toBeGreaterThan(189600);
+    ).toBeGreaterThan(6000);
   });
   it("detects tampered R2 evidence and stale rates", async () => {
     await research();
@@ -619,8 +671,8 @@ describe("AI review gate", () => {
     expect(
       await reviewArticle(env, context, identity, [source], [file], [file]),
     ).toEqual(receipt);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(budgetCount()).toBe(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(budgetCount()).toBe(3);
   });
   it("retains concrete review issues through the durable call index and never retries failed review", async () => {
     const { identity, file, pass } = await setup();
@@ -644,7 +696,7 @@ describe("AI review gate", () => {
     await expect(
       assertReview(env, context, await sha256(JSON.stringify([file]))),
     ).rejects.toThrow();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
   it("rejects semantic edits masquerading as formatting before paying for review", async () => {
     const { identity, file } = await setup();
@@ -663,7 +715,7 @@ describe("AI review gate", () => {
         ],
       ),
     ).rejects.toThrow("format_source_changed");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -708,4 +760,237 @@ it("rejects invented IDs and the former model-authored claim contract", () => {
       parseResearch(response, source.content, "a".repeat(64)),
     ).toThrow("seo_research_evidence");
   }
+});
+
+const fixedPlan = () =>
+  parsePlan(
+    {
+      verdict: "ready",
+      claimId: "claim-1",
+      conditions: [claim],
+      anchors: ["Original"],
+      queries: ["Original official guide"],
+    },
+    source.content,
+    context.sourceSha256,
+  );
+it("resolves exact unique quotes and retains the entire paragraph without other claims", () => {
+  const plan = fixedPlan();
+  expect(plan.requiredConditions).toEqual([
+    { start: 0, end: claim.length, quote: claim },
+  ]);
+  const input = focusedInput(source.content, context.sourceSha256, plan);
+  expect(input.plan.claimMarkdown).toBe(claim);
+  expect(Object.keys(input)).toEqual(["plan", "existingUrls"]);
+  expect(() => focusedInput(source.content, "b".repeat(64), plan)).toThrow();
+  for (const override of [
+    { conditions: ["invented claim statement"] },
+    { anchors: ["Different"] },
+    { queries: ["unrelated keyword"] },
+    { claimId: "claim-99" },
+  ])
+    expect(() =>
+      parsePlan(
+        {
+          verdict: "ready",
+          claimId: "claim-1",
+          conditions: [claim],
+          anchors: ["Original"],
+          queries: ["Original official guide"],
+          ...override,
+        },
+        source.content,
+        context.sourceSha256,
+      ),
+    ).toThrow();
+  const duplicated = source.content.replace(claim, claim + " " + claim);
+  expect(() =>
+    parsePlan(
+      {
+        verdict: "ready",
+        claimId: "claim-1",
+        conditions: [claim],
+        anchors: ["Original"],
+        queries: ["Original official guide"],
+      },
+      duplicated,
+      context.sourceSha256,
+    ),
+  ).toThrow();
+});
+it("rejects provider query rewrite and switching claim after search, including the observed shape", () => {
+  const plan = fixedPlan();
+  const response = provider();
+  expect(() => validatePlannedSearch(response, plan)).toThrow(
+    "seo_research_plan_mismatch",
+  );
+  (response.output[0] as any).action.queries = plan.queries;
+  expect(() => validatePlannedSearch(response, plan)).not.toThrow();
+  const part = (response.output[2] as any).content[0];
+  const value = JSON.parse(part.text.split("```json\n")[1].split("\n```")[0]);
+  value.sources[0].claimId = "claim-4";
+  part.text = researchText(value);
+  expect(() =>
+    parseResearch(response, source.content, context.sourceSha256, now, plan),
+  ).toThrow("seo_research_plan_mismatch");
+});
+it("persists two different call IDs and raw-response manifests, refuses an uncertain search re-entry", async () => {
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (...args) => {
+    const input = JSON.parse(JSON.parse((args[1] as any).body).input);
+    if (input.plan) throw new Error("lost search response");
+    return original(...args);
+  });
+  await expect(research()).rejects.toThrow();
+  const rows = sql
+    .prepare(
+      "SELECT phase,call_id,status FROM seo_editorial_checks ORDER BY phase",
+    )
+    .all();
+  expect(rows.map((r) => [r.phase, r.status])).toEqual([
+    ["plan", "complete"],
+    ["research", "unresolved"],
+  ]);
+  expect(new Set(rows.map((r) => r.call_id)).size).toBe(2);
+  for (const row of rows) {
+    const manifest = JSON.parse(
+      objects.get("seo-editorial/job/" + row.phase + "-call.json")!,
+    );
+    expect(manifest.callId).toBe(row.call_id);
+    expect(manifest.responseKey).toBe("seo-responses/" + row.call_id + ".json");
+  }
+  const before = fetchMock.mock.calls.length;
+  await expect(research()).rejects.toThrow("seo_check_conflict");
+  expect(fetchMock).toHaveBeenCalledTimes(before);
+  expect(budgetCount()).toBe(2);
+});
+it("stops an insufficient plan before search and preserves its private paid response", async () => {
+  const result = plannerProvider();
+  (result.output[0] as any).content[0].text = JSON.stringify({
+    verdict: "insufficient",
+    claimId: "",
+    conditions: [],
+    anchors: [],
+    queries: [],
+  });
+  fetchMock.mockResolvedValue(new Response(JSON.stringify(result)));
+  await expect(research()).rejects.toThrow("seo_research_insufficient");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(
+    sql.prepare("SELECT phase,status FROM seo_editorial_checks").all(),
+  ).toEqual([{ phase: "plan", status: "unresolved" }]);
+  expect(
+    JSON.parse(objects.get("seo-editorial/job/plan-failure.json")!)
+      .responseStored,
+  ).toBe(true);
+});
+it("proves 908075 microUSD for every bounded serialized request and rejects one extra byte", () => {
+  const make = (search: boolean, bytes: number) => {
+    const r = responseRequest("bounded", {}, search ? null : {}, search);
+    r.input = "";
+    r.input = "x".repeat(
+      bytes - new TextEncoder().encode(JSON.stringify(r)).length,
+    );
+    expect(new TextEncoder().encode(JSON.stringify(r)).length).toBe(bytes);
+    return r;
+  };
+  let total = 0;
+  for (const phase of ["plan", "research", "review"] as const) {
+    const request = make(phase === "research", STAGE_INPUT_BYTES[phase]);
+    assertStageInput(phase, request);
+    total += responsesUpperCost(request, now);
+    request.input += "x";
+    expect(() => assertStageInput(phase, request)).toThrow(
+      "seo_stage_input_budget",
+    );
+  }
+  total += 9 * (STAGE_INPUT_BYTES.generation + 8192 + 12000 * 2);
+  expect(total).toBe(908075);
+  expect(total).toBe(FULL_RESEARCH_RUN_MICROS);
+});
+it("rejects an oversized real planner input before credentials, reservation or fetch instead of truncating", async () => {
+  const large = {
+    ...source,
+    content:
+      source.content +
+      "\n\n" +
+      Array.from(
+        { length: 40 },
+        (_, i) => "Paragraph " + i + " " + "a".repeat(600),
+      ).join("\n\n"),
+  };
+  context.sourceSha256 = await sha256(large.content);
+  await expect(researchArticle(env, context, large)).rejects.toThrow();
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(budgetCount()).toBe(0);
+});
+
+it("does not add a planner reservation to an existing pre-upgrade search", async () => {
+  sql
+    .prepare(
+      "INSERT INTO seo_editorial_checks(job_id,phase,call_id,input_sha256,status,created_at) VALUES(?,'research',?,?,'complete',?)",
+    )
+    .run(context.jobId, id(99), "a".repeat(64), now);
+  await expect(research()).rejects.toThrow("seo_check_conflict");
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(budgetCount()).toBe(0);
+});
+
+it("preserves pre-migration check rows and all uniqueness constraints when adding plan", () => {
+  const previous = new DatabaseSync(":memory:");
+  try {
+    for (const file of ["0005_seo_editorial.sql", "0006_seo_research.sql"])
+      previous.exec(
+        readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),
+      );
+    previous.exec(
+      "INSERT INTO seo_editorial_runs(run_id,budget_run_id,input_sha256,deadline,candidates_json,created_at) VALUES('old','budget','hash',1,'[]',0); INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index) VALUES('oldjob','old','site',0); INSERT INTO seo_editorial_checks VALUES('oldjob','research','oldcall','hash','unresolved',NULL,1)",
+    );
+    const before = previous.prepare("SELECT * FROM seo_editorial_checks").all();
+    previous.exec(
+      readFileSync(
+        new URL("../migrations/0007_seo_research_plan.sql", import.meta.url),
+        "utf8",
+      ),
+    );
+    expect(
+      previous.prepare("SELECT * FROM seo_editorial_checks").all(),
+    ).toEqual(before);
+    previous.exec(
+      "INSERT INTO seo_editorial_checks VALUES('oldjob','plan','newcall','hash','started',NULL,2)",
+    );
+    for (const query of [
+      "INSERT INTO seo_editorial_checks VALUES('oldjob','plan','other','hash','started',NULL,2)",
+      "INSERT INTO seo_editorial_checks VALUES('oldjob','review','oldcall','hash','started',NULL,2)",
+      "INSERT INTO seo_editorial_checks VALUES('oldjob','other','other','hash','started',NULL,2)",
+    ])
+      expect(() => previous.exec(query)).toThrow();
+  } finally {
+    previous.close();
+  }
+});
+it("does not send or reserve an oversized review request", async () => {
+  const { seoResponse } = await import("../src/seo-responses.ts");
+  await expect(
+    seoResponse(env, {
+      runId: context.budgetRunId,
+      callId: id(88),
+      articleKey: context.budgetArticleKey,
+      deadline: context.deadline,
+      request: responseRequest("review", { text: "x".repeat(120000) }, {}),
+      phase: "review",
+    }),
+  ).rejects.toThrow("seo_stage_input_budget");
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(budgetCount()).toBe(0);
+});
+it("blocks re-entry after an uncertain planner response without reserving search", async () => {
+  fetchMock.mockRejectedValue(new Error("unknown"));
+  await expect(research()).rejects.toThrow();
+  await expect(research()).rejects.toThrow("seo_check_conflict");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(budgetCount()).toBe(1);
+  expect(
+    sql.prepare("SELECT phase,status FROM seo_editorial_checks").all(),
+  ).toEqual([{ phase: "plan", status: "unresolved" }]);
 });

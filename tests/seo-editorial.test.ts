@@ -52,6 +52,7 @@ beforeEach(async () => {
     "0004_seo_budget.sql",
     "0005_seo_editorial.sql",
     "0006_seo_research.sql",
+    "0007_seo_research_plan.sql",
   ])
     sql.exec(
       readFileSync(
@@ -237,30 +238,38 @@ describe("SEO durable editorial boundary", () => {
       const payload = JSON.parse(options.body);
       const input = JSON.parse(payload.input);
       const research = !!payload.tools;
-      const value = research
+      const value = input.claims
         ? {
-            verdict: "verified",
-            sources: [
-              {
-                url: reference,
-                title: "Guide",
-                claimId: "claim-1",
-                excerpt:
-                  "Primary source supporting the original article statement.",
-                assessment: "supports",
-              },
-            ],
+            verdict: "ready",
+            claimId: input.claims[0].id,
+            conditions: [input.claims[0].markdown],
+            anchors: ["Original"],
+            queries: ["Original article guide"],
           }
-        : {
-            verdict: "pass",
-            files: input.files.map((f: any) => ({
-              path: f.path,
-              meaningPreserved: true,
-              naturalLanguage: true,
-              referencesSupported: true,
-              issues: [],
-            })),
-          };
+        : research
+          ? {
+              verdict: "verified",
+              sources: [
+                {
+                  url: reference,
+                  title: "Guide",
+                  claimId: "claim-1",
+                  excerpt:
+                    "Primary source supporting the original article statement.",
+                  assessment: "supports",
+                },
+              ],
+            }
+          : {
+              verdict: "pass",
+              files: input.files.map((f: any) => ({
+                path: f.path,
+                meaningPreserved: true,
+                naturalLanguage: true,
+                referencesSupported: true,
+                issues: [],
+              })),
+            };
       return new Response(
         JSON.stringify({
           id: "resp_fixture",
@@ -274,7 +283,7 @@ describe("SEO durable editorial boundary", () => {
                     status: "completed",
                     action: {
                       type: "search",
-                      queries: ["article guide"],
+                      queries: input.plan.queries,
                       sources: [{ url: reference }],
                     },
                   },
@@ -350,7 +359,7 @@ describe("SEO durable editorial boundary", () => {
         })
       ).status,
     ).toBe("publishing");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(mocks.infer).toHaveBeenCalledTimes(9);
     expect(sql.prepare("SELECT count(*) n FROM seo_budget_runs").get()?.n).toBe(
       1,
@@ -361,7 +370,7 @@ describe("SEO durable editorial boundary", () => {
           "SELECT count(*) n FROM seo_budget_calls WHERE status='complete'",
         )
         .get()?.n,
-    ).toBe(11);
+    ).toBe(12);
     expect(
       Number(
         sql

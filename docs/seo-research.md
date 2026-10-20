@@ -1,6 +1,6 @@
 # SEOの新規資料調査とAI校閲
 
-2026年10月20日の利用者指示による追加。通常CMSの会話・生成APIは変更しない。新機能は無効を維持。前回の限定実APIはcompleted/insufficient・open1・citation0で生成前停止した。新しい引用形式の実API・クラウドE2Eは未確認。テストで用いる検索応答、出典、校閲結果は合成fixtureであり、実資料の取得成功や記事品質の証明ではない。
+2026年10月20日の利用者指示による追加。通常CMSの会話・生成APIは変更しない。新機能は無効を維持。前回の限定実APIはcompleted/insufficient・open1・citation0で生成前停止した。その後の実APIでは検索・open・引用・claim ID形式は成立したが、選択主張と検索主題の不一致によりinsufficientで停止した。下記の固定plan方式は実API・クラウドE2E未確認。テストで用いる検索応答、出典、校閲結果は合成fixtureであり、実資料の取得成功や記事品質の証明ではない。
 
 ## 実行と根拠
 
@@ -8,7 +8,7 @@
 
 v2は対象Actionsがsource・open PRを確認して中央claimを取得した後、次の順に進む。
 
-1. `research {}`: 共用Secrets StoreのOpenAI認証をWorker内だけで利用し、`gpt-6-luna`のResponses APIで今回のテーマをキーワード検索する。新providerや追加認証は使わない。
+1. `research {}`内部で、まずLunaのtoolsなしplannerを1回実行し、原文のclaim ID・必要条件の完全一致抜粋・anchor・自然な検索queriesを固定して非公開R2へ保存する。その後、別call IDで対象段落とplanだけを検索へ渡す。共用認証をWorker内だけで利用し、新providerや追加認証は使わない。
 2. 既存本文の1主張と、その主張を支持する未掲載の一次資料1件に対象を絞る。最大3回のhosted `web_search` callで検索とページ取得を実施する。1回のResponses要求内で、引用付き自然文の根拠説明と末尾の単一JSONコードブロックを返す。検索query、検索で発見したURL、完了した`open_page`、`url_citation`、構造化結果の支持判定が揃うことを確認する。最低1つは正本に未掲載のURLでなければ停止する。単なる既存URL再取得、検索結果要約のみ、資料不足・反証・不明は成功扱いしない。
 3. 既存本文の主張へ資料を対応付ける。新しい数値・企業実績・運用情報を生成する機能ではない。新規リンクは証跡にあるURLだけ許可し、metadata・コード・数値等の既存guardを維持する。URL内の数字だけは確認済みURLについて数値guardの対象から除き、本文の追加数値は拒否する。
 4. 日本語改訂→整形→既存localeの順次生成を行う。全APIは同一budget run・同一絶対deadlineを使う。対象repoの既存検証後、`review {files}`で最終9ファイル（単言語siteは1ファイル）をAI校閲する。
@@ -30,7 +30,7 @@ v2は対象Actionsがsource・open PRを確認して中央claimを取得した�
 ceil((128000 + B + 8192) * (N + 1) * 0.3 + N * 10000 + 6000)
 ```
 
-検索料はsearchだけでなくopenも含む最大3call分を保守的に予約する。入力`B+8192 <= 128000`、出力（推論tokens含む）最大6000。校閲はtoolsなしで`ceil((B+8192)*0.3+6000)`。既存9生成予約647117 microUSDと通常量の検索・校閲が1 USD内に収まるfixture、および超過時の送信前停止を検証する。記事長や残月額によっては9言語が揃う前に停止する。完了を保証して上限を緩めない。2026-11-19 00:00 UTC以降は料金再確認まで停止する。
+検索料はsearchだけでなくopenも含む最大3call分を保守的に予約する。入力`B+8192 <= 128000`、出力（推論tokens含む）最大6000。計画・校閲はtoolsなしで`ceil((B+8192)*0.3+6000)`。下記の段階別serialized request上限と送信前停止を検証する。記事長や残月額によっては9言語が揃う前に停止する。完了を保証して上限を緩めない。2026-11-19 00:00 UTC以降は料金再確認まで停止する。
 
 `migrations/0006_seo_research.sql`で既存jobへv1を付与し、`seo_editorial_checks`を追加する。`(job_id,phase)`の一意制約で検索と校閲の開始を一度だけ確保し、started/unresolvedを再送しない。同じ入力・complete・R2 hash一致時のみ保存済み結果を返す。期限後や終端runは再開しない。
 
@@ -48,11 +48,11 @@ ceil((128000 + B + 8192) * (N + 1) * 0.3 + N * 10000 + 6000)
 
 運用担当者が次の順で実施する。このPR作業ではmigration適用、配置、生成、dispatch、lock変更はしない。
 
-現行SEOの`manual_editorial`はrun ID・実行時刻だけを受け付け、実収集の`report.candidates`をそのまま渡す。対象URLの手動指定契約はない。2026-10-20共有のtop3は非記事2件と観測中記事1件のため、通常canaryが全skipなら検索APIは未検証のまま。実収集で未ロックの適格記事が候補に入るまで待つ。それより前の限定実試験には、実資料・選定理由・run・sourceを監査保持する別の明示的な対象選択契約が必要であり、本実装には含めない。観測lock解除、report候補の直接書換え、既存claimのsite照合だけを利用した別記事への差替えは行わない。
+現行SEOの`manual_editorial`はrun ID・実行時刻だけを受け付け、実収集の`report.candidates`を渡す。通常の候補生成は記事routeと既存lock（Hattは最終gate）で事前選別し、最大3件と最終CMS照合を維持する。対象URLの手動指定、観測lock解除、偽候補注入は行わない。有料試験前に新しい実収集候補・main/source・open PR・lock・残予算を確認する。今回のローカル入力計測に使った旧記事が次の適格候補であるとは限らない。
 
-1. CMS/SEOの差分・全CIを受入。実行中v2 jobがないことを確認し、`npx wrangler d1 migrations apply cms-ai --remote`で0006まで適用する（DB名は`cms-ai`）。本番状態・migration適用結果は非公開運用記録へ残す。
+1. CMS/SEOの差分・全CIを受入。実行中v2 jobがないことを確認し、`npx wrangler d1 migrations apply cms-ai --remote`で0007まで適用する（DB名は`cms-ai`）。本番状態・migration適用結果は非公開運用記録へ残す。
 2. CMSをGitHub連携で配置し、`SEO_RESEARCH_ENABLED=false`、canary ID空の読戻しを確認する。通常CMS、現行週次Cron・既存観測lock・予算台帳を維持する。
-3. 6対象repo（homepage-hatt、homepage-cherry、acecore-net、acecore-systems、aceserver-portal、aceserver-wiki）の`.github/workflows/seo-content.yml`にある`acecore-systems/cms-ai/seo-runner@<40SHA>`を、このCMS PRのCI成功commitへ更新する。inputは`run_id`/`job_id`のまま。各CI・mainのpin読戻し後に次へ進む。新runnerはv1も実行できる。旧runnerはv2のresearchがないため生成前に停止する。
+3. 6対象repoの既設v2 runner pinとmain反映を確認する。今回の固定planはCMSサーバー内部の変更でrunner protocolを変えないため、6repo pin更新は不要。初期v2配備前の旧runnerはresearchがないため生成前に停止する。
 4. 未ロック・open PR重複なしの記事と残run/月予算を確認し、新しい1つの`editorial-UUID`だけをcanary IDに設定する。全run flagはfalseのまま。通常のcoordinator `manual_editorial`でそのIDを一度だけ開始し、deadlineは開始から30分、Draftで止める。
 5. 実APIで検索→open_page→自然文の実citation＋末尾JSONの組合せが成立するか、資料が実際の主張を支持するかを確認する。R2/D1、11call（検索1＋最大9生成＋校閲1、単言語は3call）、予算、source/最終hash、9言語本文、repo検証、Draft PR、callback、lockの一致を受入。mock passをこの確認の代用にしない。
 6. 不明・失敗ならcanary IDを取り外し、全run flagはfalseを維持。旧runの終端・予約・lock・成果は保持する。新しいIDや自動再送で失敗を回避しない。
@@ -75,3 +75,39 @@ ceil((128000 + B + 8192) * (N + 1) * 0.3 + N * 10000 + 6000)
 調査入力には正本本文の paragraph AST offset から切り出した `claims`（`id` と元の `markdown`）、既存リンク・本文中 URL の `existingUrls` を渡す。モデルは `claimId` だけを返し、CMS が同じ source hash の原文へ対応付ける。強調、inline code、句読点を strip して比較を緩めない。不明 ID・旧 claim 文字列形式・既存 URL は拒否する。12〜800文字の段落だけを選択対象とし、コードブロックを主張として選ばせない。根拠の適用条件は段落全体について確認する。
 
 前回の実 API は search/open/url_citation まで成功したが、既存 URL と Markdown claim 不一致で生成前停止した。この変更のローカル回帰・CI は新しい有料実試験の成功を意味しない。予約額は増えた入力 bytes を既存計算式に含め、1 USD/run・5 USD/JST月と30分期限を維持する。新試験は新 run とし、旧 call を再送しない。runner protocol と出力 ResearchEvidence.claim は変更しないため6サイトのpin更新は不要。
+
+## 固定plan方式（今回の追加、実API未確認）
+
+直近の実試験は原文の無料個別証明書の主張を選びながら別時期のDedicated証明書を検索し、取得したchangelogでは必要条件を支持できずinsufficientとなった。検索途中の主張変更を防ぐため、Luna no-tools plannerのstrict JSONを先に保存し、検索には他のclaimsや記事全文を渡さない。検索・引用・新規一次資料・支持判定の基準は維持する。
+
+plannerは原文段落ID、条件quote（12文字以上）、原文由来anchor（3文字以上）、自然なquery（最大2つ）を返す。quote/anchorの一意な原文substringをサーバーで解決し、条件offsetと原文段落全体を固定する。LLMへoffset計算を要求しない。各queryは全anchorを含み、英語keywordも使用できる。条件全文のqueryへの連結は要求しない。段落は切り詰めず、範囲外文脈や曖昧な指示語が必要ならplannerはinsufficientとする。queryと主張の意味的対応、公式性、実資料による支持はAI判断の限界として残る。
+
+検索responseの実action.queriesは固定plan.queriesと完全一致する文字列だけを許可し、選択claim IDの変更も拒否する。provider側の言換えはfail closed。これは実APIが必ず同じqueryを使用するという保証ではなく、既知の主題変更・query rewriteのfixtureを拒否する契約である。
+
+### 永続性と配備
+
+`0007_seo_research_plan.sql`は既存check全列を保持してphaseにplanを追加する。運用担当者が無効状態・実行中v2なしを確認しmigrationを適用してからCMSをGitHub連携配置する。runner protocol/ResearchEvidenceは変えないため、この変更に6repo pin更新は不要。
+
+- 各phaseの開始時にD1で一意call IDを確保し、`seo-editorial/<job_id>/<phase>-call.json`へinput hash・raw response key・result key・plan manifest keyを保存してからAPIを呼ぶ。
+- `plan.json`はsource hash・claim ID・原文・条件offset/quote・anchors・queriesを保存。検索のinput hashはこのplanとsource hashに固定する。
+- planner/searchは別call ID・別予約。同一budget run/絶対deadlineを使う。途中停止でもD1と各manifest、`<phase>-failure.json`から両方の原本へ到達できる。raw response未保存は不明であり未課金の証明ではない。
+- completeかつ入力/result hash一致時だけ保存結果を利用する。started/unresolved・期限後・終端runは再送しない。旧方式のresearchが存在してplanがないjobへ追加plannerを送らない。
+- 生成前拒否の管理照合は全plan/research call・予約・原本・manifestを列挙する。旧単一callのproofへ押し込まず、SEO監査のexact CAS/immutable guardを維持する。自動復旧は追加しない。
+
+### 全工程予約の上限
+
+以下は各段階の最終要求JSONのUTF-8 bytes上限。入力だけでなくinstructions/schema等を含み、超過時は予約・送信前に停止し、本文を切り詰めない。生成の追加上限はresearch v2だけに適用し、通常CMS/v1は維持する。
+
+| 段階                          | bytes上限 | 最大予約microUSD |
+| ----------------------------- | --------: | ---------------: |
+| planner、toolsなし、出力6000  |     16000 |            13258 |
+| 検索、3tools、4pass、出力6000 |     16000 |           218631 |
+| 生成、出力12000、9回          |   各38000 |           631728 |
+| AI校閲、toolsなし、出力6000   |    120000 |            44458 |
+| 合計12 API calls              |           |       **908075** |
+
+生成1回は既存保護単価で`38000+8192+12000*2=70192`、検索は上記式で各passに入力bytesを加算。1 USD内に91925 microUSDの差がある。月残額不足・期限・実生成後の入力増大には従来どおり停止するため、全記事完了を保証しない。
+
+保存されたSystems記事（9言語＋7559 bytesのguide）を実request builderへ渡し、合成plan/根拠と既存本文でローカル計測した。planner5518 bytes、検索4317 bytes、校閲106134 bytes、生成各21103〜29063 bytesで全上限内。予約合計785066 microUSD（9生成530044）だった。計測receiptは非公開運用記録の`planning-full-sizing.json`/`planning-generation-sizing.json`に保存。新しい生成結果、実検索品質、AI校閲passの証明ではない。
+
+2026-10-20 05:35:15 UTCの運用担当者による監査復旧はglobalActiveRows=0、元run partial、全6locks・予算・期限・根拠・旧audit不変を確認済み。新researchは無効を維持する。旧監査結果をこのplan方式で再解釈しない。確定insufficientを通常の安全な終端として扱う将来契約は別途設計判断が必要で、現在は管理復旧なしにglobal受付が維持されると称さない。unknownや生成後失敗の自動解除は本変更に含めない。

@@ -1,3 +1,4 @@
+import { assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
 import { SeoBudget, sha256, RATE_VALID_UNTIL } from "./seo-budget.ts";
 
@@ -60,6 +61,7 @@ export async function seoResponse(
     articleKey: string;
     deadline: number;
     request: Record<string, unknown>;
+    phase?: "plan" | "research" | "review";
   },
 ) {
   if (
@@ -70,6 +72,10 @@ export async function seoResponse(
   const budget = new SeoBudget(env.CMS_AI_DB);
   let reserved = false;
   try {
+    assertStageInput(
+      args.phase || (args.request.tools ? "research" : "review"),
+      args.request,
+    );
     const amount = responsesUpperCost(args.request);
     // Runtime binding only; no key is read by the development agent or runner.
     const key = (await env.OPENAI_API_KEY_STORE?.get())?.trim();
@@ -129,7 +135,7 @@ export async function seoResponse(
       throw new Error("seo_research_response");
     await budget.finish(args.callId, "complete");
     return result;
-  } catch {
+  } catch (error) {
     if (reserved) {
       try {
         await budget.finish(args.callId, "unresolved");
@@ -137,6 +143,8 @@ export async function seoResponse(
         /* Never release. */
       }
     }
+    if (error instanceof Error && error.message === "seo_stage_input_budget")
+      throw error;
     throw new Error("seo_research_call");
   }
 }
