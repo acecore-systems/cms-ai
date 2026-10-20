@@ -129,3 +129,11 @@ plannerは原文段落ID、条件quote（12文字以上）、原文由来anchor�
 新job用receiptはD1 seo_research_rejectionsとprivate R2 seo-editorial/<job>/rejection.json。source/raw/manifest/call hashを含む。SEO側runtime_research_rejectionsは対応receiptと元全行snapshotを保持し、retentionで削除しない。これは通常の確定拒否の監査であり、旧research_rejection_auditによる手動復旧とは別契約。
 
 配備順: research無効・canary空を確認 → 運用担当者がSEO0006/CMS0008を旧行保持照合付きで適用 → SEO callback/WorkflowとCMSを配置 → 6repoのseo-content.ymlを本PRのCI成功40SHAへ更新・CI/main確認 → 最新候補/予算/lockを再確認。新有料run/全run enableは今回実施しない。6pinが旧版の間、新contractのinsufficientは安全側のunresolvedで終了するため、canaryを起動しない。
+
+## 原本サイズの事前適格判定
+
+research contract 2 の新jobは、claim・API予約前に既存builderでplan requestと未改訂の全原本を使ったbaseline review requestの最終JSON bytesを計測する。上限はplan 16,000 bytes、review 180,000 bytes。reviewの資料は`not_acquired_size_estimate_only`と明示する空の最小placeholderであり、実証拠や校閲合格ではない。
+
+非公開R2の`seo-editorial/<jobId>/eligibility-preflight.json`へbase/source/bundle SHA、計測bytes・上限・理由を保存する。原本時点で超過する場合は既存skip経路で次の自然候補へ進み、記事lockとAI予約を取得しない。保存に失敗した場合は停止する。候補上限3件、旧contract 1、最終CMS gateは維持する。原文を切り捨てない。
+
+baseline適合は生成後の容量を保証しない。実資料や改訂による増大は従来の各stage上限でfail closedとする。runnerの既存claim skipped処理を利用するためrunner変更・6repo pin更新・migrationは不要。

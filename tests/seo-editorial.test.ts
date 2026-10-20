@@ -1174,3 +1174,88 @@ it.each(["insufficient", "verified-empty", "contract-violation"])(
     expect(mocks.infer).not.toHaveBeenCalled();
   },
 );
+
+describe("baseline eligibility before paid work", () => {
+  beforeEach(() => {
+    env.SEO_RESEARCH_ENABLED = "true";
+  });
+  it("skips a plan over cap without taking a lock or reserving an API call", async () => {
+    const id = await inspecting();
+    files[0].content +=
+      "\n\n" +
+      Array.from(
+        { length: 200 },
+        (_, i) =>
+          `Fact number ${i} has enough original context to form a complete factual sentence.`,
+      ).join("\n\n");
+    expect((await request(id, "claim", { baseSha, files })).status).toBe(
+      "skipped",
+    );
+    expect(claim).not.toHaveBeenCalled();
+    expect(
+      sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n,
+    ).toBe(0);
+    expect(
+      JSON.parse(objects.get(`seo-editorial/${id}/eligibility-preflight.json`)!)
+        .reasons,
+    ).toContain("plan_input_exceeded");
+  });
+  it("skips oversized original locales with no claim or API reservation and advances naturally", async () => {
+    env.SEO_RESEARCH_ENABLED = "true";
+    const started = await start([
+      candidate,
+      { ...candidate, url: "https://asv.acecore.net/en/stories/next/" },
+    ]);
+    const jobId = started.jobId!;
+    await request(jobId);
+    files[1].content += "Large translation. ".repeat(6000);
+    expect(await request(jobId, "claim", { baseSha, files })).toEqual({
+      status: "skipped",
+    });
+    expect(claim).not.toHaveBeenCalled();
+    expect(mocks.infer).not.toHaveBeenCalled();
+    expect(
+      sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n,
+    ).toBe(0);
+    expect(row().candidate_index).toBe(1);
+    expect(row().job_id).not.toBe(jobId);
+    const receipt = JSON.parse(
+      objects.get(`seo-editorial/${jobId}/eligibility-preflight.json`)!,
+    );
+    expect(receipt.reasons).toContain("baseline_review_input_exceeded");
+    expect(receipt.evidenceStatus).toBe("not_acquired_size_estimate_only");
+    expect(receipt.reviewBytes).toBeGreaterThan(receipt.limits.review);
+  });
+  it("keeps fitting candidates and never calls the placeholder actual evidence", async () => {
+    const id = await claimed();
+    const receipt = JSON.parse(
+      objects.get(`seo-editorial/${id}/eligibility-preflight.json`)!,
+    );
+    expect(receipt.status).toBe("baseline_fits_not_reviewed");
+    expect(receipt.reasons).toEqual([]);
+    expect(claim).toHaveBeenCalledOnce();
+  });
+  it("does not change v1 eligibility", async () => {
+    const id = await inspecting();
+    sql.exec("UPDATE seo_editorial_jobs SET research_contract=1");
+    files[1].content += "Large translation. ".repeat(6000);
+    expect((await request(id, "claim", { baseSha, files })).status).toBe(
+      "claimed",
+    );
+    expect(objects.has(`seo-editorial/${id}/eligibility-preflight.json`)).toBe(
+      false,
+    );
+  });
+  it("stops before claim when private receipt persistence fails", async () => {
+    const id = await inspecting();
+    vi.spyOn(env.CMS_AI_IMAGES, "put").mockResolvedValueOnce(null);
+    expect((await request(id, "claim", { baseSha, files })).status).toBe(
+      "unresolved",
+    );
+    expect(claim).not.toHaveBeenCalled();
+    expect(
+      sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n,
+    ).toBe(0);
+    expect(row().candidate_index).toBe(0);
+  });
+});

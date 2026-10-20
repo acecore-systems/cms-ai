@@ -20,12 +20,15 @@ import {
   type EditorialFile,
 } from "./seo-content.ts";
 import {
+  buildPlanRequest,
+  buildReviewRequest,
   researchArticle,
   loadResearch,
   reviewArticle,
   assertReview,
   type CheckContext,
 } from "./seo-checks.ts";
+import { STAGE_INPUT_BYTES } from "./seo-stage-budget.ts";
 import { evidenceReferences } from "./seo-evidence.ts";
 import { buildEditorialInstruction } from "./seo-editorial-instruction.ts";
 
@@ -640,6 +643,55 @@ async function claimJob(
     article.source.path,
     ...article.translations.map((t) => t.path),
   ];
+  // Local size estimates only: no evidence acquisition, lock or API reservation.
+  // Keep legacy jobs on their original contract.
+  if (job.research_contract === 2) {
+    const baseline = paths.map((path) => files.find((f) => f.path === path)!);
+    const bytes = (request: unknown) =>
+      new TextEncoder().encode(JSON.stringify(request)).length;
+    const planBytes = bytes(buildPlanRequest(article.source.content, 2));
+    const reviewBytes = bytes(
+      buildReviewRequest(article, files, baseline, {
+        version: 1,
+        checkedAt: "",
+        sourceSha256: sourceHash,
+        responseId: "not_acquired_size_estimate_only",
+        queries: [],
+        sources: [],
+      }),
+    );
+    const reasons = [
+      ...(planBytes > STAGE_INPUT_BYTES.plan ? ["plan_input_exceeded"] : []),
+      ...(reviewBytes > STAGE_INPUT_BYTES.review
+        ? ["baseline_review_input_exceeded"]
+        : []),
+    ];
+    const saved = await env.CMS_AI_IMAGES.put(
+      baseKey(job) + "/eligibility-preflight.json",
+      JSON.stringify({
+        version: 1,
+        researchContract: 2,
+        baseSha: body.baseSha,
+        sourceSha256: sourceHash,
+        sourceBundleSha256: await sha256(JSON.stringify(baseline)),
+        planBytes,
+        reviewBytes,
+        limits: {
+          plan: STAGE_INPUT_BYTES.plan,
+          review: STAGE_INPUT_BYTES.review,
+        },
+        evidenceStatus: "not_acquired_size_estimate_only",
+        reasons,
+        status: reasons.length ? "ineligible" : "baseline_fits_not_reviewed",
+      }),
+      { onlyIf: { etagDoesNotMatch: "*" } },
+    );
+    if (!saved) throw new Error("snapshot");
+    if (reasons.length) {
+      await skipJob(env, job);
+      return { status: "skipped" };
+    }
+  }
   const changed = await env.CMS_AI_DB.prepare(
     "UPDATE seo_editorial_jobs SET status='claiming',source_sha256=?,base_sha=?,article_key=?,article_path=?,paths_json=? WHERE id=? AND status='inspecting'",
   )
