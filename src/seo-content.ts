@@ -51,6 +51,26 @@ export function assertFormattedSource(original: string, formatted: string) {
     throw new Error("format_source_changed");
 }
 
+export function articleReferenceLinks(content: string): Set<string> {
+  const root = fromMarkdown(markdown(content).body, {
+    extensions: [gfm()],
+    mdastExtensions: [gfmFromMarkdown()],
+  });
+  const definitions = new Map<string, string>();
+  const links = new Set<string>();
+  const references: string[] = [];
+  const walk = (node: any) => {
+    if (node.type === "link") links.add(node.url);
+    if (node.type === "definition") definitions.set(node.identifier, node.url);
+    if (node.type === "linkReference") references.push(node.identifier);
+    for (const child of node.children || []) walk(child);
+  };
+  walk(root);
+  for (const ref of references)
+    if (definitions.has(ref)) links.add(definitions.get(ref)!);
+  return links;
+}
+
 export function sourceIdentity(
   siteId: string,
   url: string,
@@ -118,7 +138,11 @@ function codeBlocks(text: string) {
     ...text.matchAll(/(^|\n)(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\2(?=\n|$)/g),
   ].map((match) => match[0].trim());
 }
-function assertContent(original: string, next: string) {
+function assertContent(
+  original: string,
+  next: string,
+  verifiedUrls: readonly string[] = [],
+) {
   if (/\b(?:javascript|vbscript|file|data)\s*:/iu.test(next))
     throw new Error("seo_content_unsafe");
   if (
@@ -129,15 +153,25 @@ function assertContent(original: string, next: string) {
   )
     throw new Error("seo_content_unsafe");
   const originalUrls = externalUrls(original);
-  if ([...externalUrls(next)].some((url) => !originalUrls.has(url)))
+  if (
+    [...externalUrls(next)].some(
+      (url) => !originalUrls.has(url) && !verifiedUrls.includes(url),
+    )
+  )
     throw new Error("seo_unverified_reference");
   if (JSON.stringify(codeBlocks(original)) !== JSON.stringify(codeBlocks(next)))
     throw new Error("seo_code_changed");
+  // Only attested new reference destinations are excluded from the numeric copy guard.
+  const numericBody = (text: string) => {
+    let body = markdown(text).body;
+    for (const url of verifiedUrls) body = body.split(url).join("");
+    return body;
+  };
   const originalNumbers = new Set(
-    markdown(original).body.match(/\d+(?:[.,]\d+)*(?:[%％])?/g) || [],
+    numericBody(original).match(/\d+(?:[.,]\d+)*(?:[%％])?/g) || [],
   );
   if (
-    (markdown(next).body.match(/\d+(?:[.,]\d+)*(?:[%％])?/g) || []).some(
+    (numericBody(next).match(/\d+(?:[.,]\d+)*(?:[%％])?/g) || []).some(
       (number) => !originalNumbers.has(number),
     )
   )
@@ -211,6 +245,7 @@ export async function acceptEditorialChange(
   proposed: EditorialFile,
   japanese: string | null,
   now = Date.now(),
+  verifiedUrls: readonly string[] = [],
 ) {
   if (original.path !== proposed.path || !proposed.content.trim())
     throw new Error("seo_change_path");
@@ -255,7 +290,7 @@ export async function acceptEditorialChange(
     before.body.trim() === after.body.trim()
   )
     throw new Error("seo_no_copy_change");
-  assertContent(original.content, normalized.content);
+  assertContent(original.content, normalized.content, verifiedUrls);
   if (japanese && identity.target.spec.translationHash === "frontmatter") {
     const expected = "sha256:" + (await sha256(normalizeLf(japanese)));
     if (before.data.sourceHash !== undefined)
@@ -286,6 +321,7 @@ export async function assertEditorialFiles(
   identity: ArticleIdentity,
   originals: EditorialFile[],
   files: EditorialFile[],
+  verifiedUrls: readonly string[] = [],
 ) {
   const japanese = files.find((f) => f.path === identity.source.path)!;
   if (!japanese) throw new Error("seo_source_missing");
@@ -346,6 +382,6 @@ export async function assertEditorialFiles(
       before.body.trim() === after.body.trim()
     )
       throw new Error("seo_no_copy_change");
-    assertContent(original.content, revised.content);
+    assertContent(original.content, revised.content, verifiedUrls);
   }
 }

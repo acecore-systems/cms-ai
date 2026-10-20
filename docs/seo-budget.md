@@ -1,5 +1,7 @@
 # SEO内部生成と費用上限
 
+2026-10-20追加: [新規調査・AI校閲](seo-research.md)は同じ台帳・上限を使い、検索contextと要求入力の各pass分・検索料を別の保守式で予約する。以下の本文生成の単価と通常CMSは変更しない。新機能は初期無効・実API未確認。
+
 2026年10月19日に利用者がSEO分の上限を1実行1米ドル、月5米ドルと確定した。月は日本時間の暦月、API送信前の予約時点で計上する。既存CMSの対話利用とは独立したD1台帳で管理する。これはSEO生成APIの費用上限であり、CloudflareやGitHub等の利用料金を含めない。
 
 `SeoConnection` は従来の接続専用契約を保持する。新しい `SeoGeneration` の名前付きService Bindingだけが改訂案を生成できる。HTTP入口は404、ユーザーのCMS権限やGitHub保存認証は流用しない。生成の許可は `SEO_GENERATION_ENABLED` で停止できる。GitHub dispatch・PR・統合・公開の機能はこのentrypointにない。

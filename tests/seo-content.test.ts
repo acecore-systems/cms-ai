@@ -15,6 +15,69 @@ const base =
   "---\ntitle: Original\ndescription: Original description\ndate: 2026-08-08T10:00:00+09:00\nauthor: gui\nimage: /uploads/original.webp\n---\n\nOriginal body [source](https://example.org/guide).\n";
 
 describe("SEO source, locale and copy contracts", () => {
+  it("permits only attested reference destinations while retaining metadata, numeric and code guards", async () => {
+    const source = { path: "src/content/blog/example.md", content: base };
+    const identity = sourceIdentity(
+      "cherry",
+      "https://cherry.acecore.net/blog/example/",
+      [source],
+      now,
+    )!;
+    const reference = "https://example.org/2026/new-guide";
+    const proposed = {
+      ...source,
+      content:
+        base.replace("title: Original", "title: Revised") +
+        "\n[Reference](" +
+        reference +
+        ")\n",
+    };
+    await expect(
+      acceptEditorialChange(identity, source, proposed, null, now),
+    ).rejects.toThrow("seo_unverified_reference");
+    await expect(
+      acceptEditorialChange(identity, source, proposed, null, now, [reference]),
+    ).resolves.toContain(reference);
+    await expect(
+      acceptEditorialChange(
+        identity,
+        source,
+        {
+          ...proposed,
+          content: proposed.content + "\nUnverified number 9999\n",
+        },
+        null,
+        now,
+        [reference],
+      ),
+    ).rejects.toThrow("seo_number_added");
+    await expect(
+      acceptEditorialChange(
+        identity,
+        source,
+        {
+          ...proposed,
+          content: proposed.content + "\n[Other](https://example.org/other)\n",
+        },
+        null,
+        now,
+        [reference],
+      ),
+    ).rejects.toThrow("seo_unverified_reference");
+    await expect(
+      acceptEditorialChange(
+        identity,
+        source,
+        {
+          ...proposed,
+          content: proposed.content.replace("author: gui", "author: changed"),
+        },
+        null,
+        now,
+        [reference],
+      ),
+    ).rejects.toThrow("seo_immutable_metadata");
+  });
   it("accepts real Prettier GFM table formatting while retaining metadata and content", async () => {
     const original = base + articleBody;
     const formatted = await format(original, portalFormat);

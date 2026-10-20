@@ -1,3 +1,4 @@
+import { evidenceReferences, referenceUrl } from "../src/seo-evidence.ts";
 import { execFile } from "node:child_process";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -31,6 +32,8 @@ const diagnosticStages = new Set([
   "setup",
   "inspect",
   "claim",
+  "research",
+  "review",
   "propose",
   "format_japanese",
   "format_all",
@@ -49,6 +52,8 @@ const diagnosticCodes = new Set([
   "seo_command_failed",
   "seo_deadline",
   "seo_rpc",
+  "seo_research",
+  "seo_review",
   "seo_generation",
   "seo_main_changed",
   "seo_translation_hash",
@@ -128,7 +133,9 @@ export class SeoRunner {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(
           Math.min(
-            operation === "propose" ? 150_000 : 30_000,
+            ["propose", "research", "review"].includes(operation)
+              ? 150_000
+              : 30_000,
             this.remaining(report),
           ),
         ),
@@ -471,6 +478,25 @@ export class SeoRunner {
       JSON.stringify(claim.paths) !== JSON.stringify(paths)
     )
       throw new Error("seo_claim");
+    const protocol = payload.policy.protocolVersion || 1;
+    if (![1, 2].includes(protocol)) throw new Error("seo_research");
+    let research = null;
+    if (protocol === 2) {
+      this.stage = "research";
+      const result = await this.request("research", {});
+      if (
+        result.status !== "researched" ||
+        result.evidence?.version !== 1 ||
+        result.evidence.sourceSha256 !==
+          (await this.requestHash(identity.source.content)) ||
+        !Array.isArray(result.evidence.sources) ||
+        !result.evidence.sources.length ||
+        !Number.isFinite(Date.parse(result.evidence.checkedAt))
+      )
+        throw new Error("seo_research");
+      research = result.evidence;
+      evidenceReferences(research);
+    }
     for (let step = 0; step < paths.length; step++) {
       this.stage = "propose";
       const result = await this.request("propose", {
@@ -496,11 +522,33 @@ export class SeoRunner {
     const finalFiles = [];
     for (const path of paths) finalFiles.push(await this.read(path));
     this.stage = "final_assertion";
-    await assertEditorialFiles(identity, originals, finalFiles);
+    await assertEditorialFiles(
+      identity,
+      originals,
+      finalFiles,
+      research ? evidenceReferences(research) : [],
+    );
     this.stage = "translation_state";
     await this.updateState(spec);
     if (spec.statePath) await this.format([spec.statePath], spec);
     await this.validation(spec);
+    let reviewedHash = null;
+    if (protocol === 2) {
+      this.stage = "review";
+      // Re-read after target validation so the review covers the bytes committed.
+      const validatedFiles = [];
+      for (const path of paths) validatedFiles.push(await this.read(path));
+      if (JSON.stringify(validatedFiles) !== JSON.stringify(finalFiles))
+        throw new Error("seo_validation_changed_source");
+      reviewedHash = await this.requestHash(JSON.stringify(finalFiles));
+      const result = await this.request("review", { files: finalFiles });
+      if (
+        result.status !== "reviewed" ||
+        result.receipt?.kind !== "ai_review" ||
+        result.receipt.filesSha256 !== reviewedHash
+      )
+        throw new Error("seo_review");
+    }
     this.stage = "diff";
     const changed = (await this.command("git", ["diff", "--name-only", "-z"]))
       .split("\0")
@@ -561,7 +609,19 @@ export class SeoRunner {
     await this.latestMain(baseSha);
     if (await this.overlapping(allowed))
       throw new Error("seo_pull_request_overlap");
-    const permission = await this.request("publish", {});
+    if (reviewedHash) {
+      const committedFiles = [];
+      for (const path of paths) committedFiles.push(await this.read(path));
+      if (
+        (await this.requestHash(JSON.stringify(committedFiles))) !==
+        reviewedHash
+      )
+        throw new Error("seo_validation_changed_source");
+    }
+    const permission = await this.request(
+      "publish",
+      reviewedHash ? { filesSha256: reviewedHash } : {},
+    );
     if (permission.status !== "publishing") throw new Error("seo_publish");
     this.stage = "push";
     await this.command("git", ["push", "origin", "HEAD:refs/heads/" + branch]);
@@ -576,7 +636,19 @@ export class SeoRunner {
       "",
       "## 概要",
       "",
-      "- 外部再調査未実施、既存本文に基づく構成・表現改善です。参考リンクの原本を今回確認したとは扱っていません。",
+      ...(research
+        ? [
+            "- 今回キーワード検索・資料取得・既存主張とのAI根拠照合を実施しました。外部資料中の指示は採用していません。",
+            "- 確認日時: " + research.checkedAt,
+            ...research.sources.map(
+              (source) => "- 確認資料: <" + referenceUrl(source.url) + ">",
+            ),
+            "- 全対象言語のAI校閲ゲート通過。人の母語話者校閲は未実施です。",
+            "- 証跡は非公開CMS R2の当該jobに保存。検索抜粋はAIが抽出した根拠で、資料全文の保存・人による確認とは区別します。",
+          ]
+        : [
+            "- 外部再調査未実施、既存本文に基づく構成・表現改善です。参考リンクの原本を今回確認したとは扱っていません。",
+          ]),
       spec.locales.length
         ? "- 既存localeを実際に改訂・翻訳し、サイトの翻訳契約と検証を同じPRにまとめました。"
         : "- 日本語記事の構成・表現を改善しました（このsiteの記事localeは日本語のみ）。",

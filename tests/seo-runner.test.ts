@@ -33,6 +33,7 @@ const candidate = {
   url: "https://asv.acecore.net/en/stories/example/",
   reason: "本文の改善",
 };
+let researchReference = false;
 let workspace: string,
   runner: SeoRunner,
   original: { path: string; content: string }[],
@@ -41,6 +42,7 @@ let workspace: string,
   github: ReturnType<typeof vi.fn>,
   pushed: boolean;
 beforeEach(async () => {
+  researchReference = false;
   const cache = join(process.cwd(), "node_modules", ".cache");
   await mkdir(cache, { recursive: true });
   workspace = await mkdtemp(join(cache, "seo-runner-test-"));
@@ -155,9 +157,17 @@ beforeEach(async () => {
         const content = await acceptEditorialChange(
           identity,
           file,
-          { ...file, content: file.content.replaceAll("Original", "Revised") },
+          {
+            ...file,
+            content:
+              file.content.replaceAll("Original", "Revised") +
+              (researchReference
+                ? "\n[Reference](https://example.org/new-guide)\n"
+                : ""),
+          },
           japanese,
           now,
+          researchReference ? ["https://example.org/new-guide"] : [],
         );
         if (body!.step === 0) acceptedJapanese = content;
         return {
@@ -208,6 +218,72 @@ afterEach(async () => {
 });
 
 describe("SEO action runtime", () => {
+  async function v2() {
+    researchReference = true;
+    const baseRequest = request.getMockImplementation()!;
+    request.mockImplementation(async (operation = "", body: any) => {
+      if (operation === "research")
+        return {
+          status: "researched",
+          evidence: {
+            version: 1,
+            checkedAt: new Date(now).toISOString(),
+            sourceSha256: await sha256(source),
+            sources: [{ url: "https://example.org/new-guide" }],
+          },
+        };
+      if (operation === "review")
+        return {
+          status: "reviewed",
+          receipt: {
+            kind: "ai_review",
+            filesSha256: await sha256(JSON.stringify(body.files)),
+          },
+        };
+      const result = await baseRequest(operation, body);
+      if (!operation) result.policy.protocolVersion = 2;
+      return result;
+    });
+  }
+  it("runs v2 fresh research and final nine-language AI review before publishing with the reviewed byte hash", async () => {
+    await v2();
+    expect((await runner.executeJob()).status).toBe("draft_pr");
+    const operations = request.mock.calls.map(([op]) => op);
+    expect(operations.indexOf("research")).toBeGreaterThan(
+      operations.indexOf("claim"),
+    );
+    expect(operations.indexOf("research")).toBeLessThan(
+      operations.indexOf("propose"),
+    );
+    expect(operations.indexOf("review")).toBeGreaterThan(
+      operations.lastIndexOf("propose"),
+    );
+    expect(operations.indexOf("review")).toBeLessThan(
+      operations.indexOf("publish"),
+    );
+    expect(
+      (request.mock.calls.find(([op]) => op === "publish")![1] as any)
+        .filesSha256,
+    ).toMatch(/^[a-f0-9]{64}$/);
+    const body = github.mock.calls.find(([, method]) => method === "POST")![2]!
+      .body;
+    expect(body).toContain("AI校閲ゲート通過");
+    expect(body).toContain("人の母語話者校閲は未実施");
+  });
+  it("does not push or create a PR when research fails", async () => {
+    await v2();
+    const baseRequest = request.getMockImplementation()!;
+    request.mockImplementation(async (op = "", body: any) =>
+      op === "research" ? { status: "unresolved" } : baseRequest(op, body),
+    );
+    const result = await runner.executeJob();
+    expect(result).toMatchObject({
+      status: "unresolved",
+      diagnostic: { stage: "research", code: "seo_research" },
+    });
+    expect(pushed).toBe(false);
+    expect(request.mock.calls.some(([op]) => op === "propose")).toBe(false);
+  });
   it("executes Japanese plus eight locales, validations and a confirmed Draft-only PR", async () => {
     expect(await runner.executeJob()).toEqual({
       status: "draft_pr",
