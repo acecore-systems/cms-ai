@@ -26,6 +26,10 @@ const source = {
     "---\ntitle: Original\ndate: 2026-08-08T00:00:00Z\n---\n\nOriginal useful existing claim in this article.\n",
 };
 const claim = "Original useful existing claim in this article.";
+const researchText = (value: unknown) =>
+  "The existing claim is supported by the opened primary guide [1].\n```json\n" +
+  JSON.stringify(value) +
+  "\n```";
 let sql: DatabaseSync,
   env: AppEnv,
   objects: Map<string, string>,
@@ -68,8 +72,10 @@ function provider(
         content: [
           {
             type: "output_text",
-            text: JSON.stringify({ verdict: "verified", sources }),
-            annotations: [{ type: "url_citation", url }],
+            text: researchText({ verdict: "verified", sources }),
+            annotations: [
+              { type: "url_citation", url, start_index: 59, end_index: 62 },
+            ],
           },
         ],
       },
@@ -176,6 +182,25 @@ const budgetCount = () =>
   sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n;
 
 describe("SEO fresh search evidence and retained budget", () => {
+  it("rejects the prior canary shape: strict JSON insufficient, three support items, one open, zero citations", () => {
+    // Redacted shape of the saved response; no private article or reasoning payload.
+    const result = provider();
+    const part: any = (result.output[2] as any).content[0];
+    const item = JSON.parse(part.text.split("```json\n")[1].split("\n```")[0])
+      .sources[0];
+    part.text = JSON.stringify({
+      verdict: "insufficient",
+      sources: [
+        { ...item, url: "https://docs.example.org/first" },
+        { ...item, url: "https://docs.example.org/second" },
+        item,
+      ],
+    });
+    part.annotations = [];
+    expect(() =>
+      parseResearch(result, source.content, context.sourceSha256, now),
+    ).toThrow("seo_research_evidence");
+  });
   it("reserves article/instructions on every search pass and fits a representative existing nine-call run within $1", async () => {
     const budget = new SeoBudget(env.CMS_AI_DB);
     // Existing E2E reservation amount is a budget fixture, not a new live call.
@@ -258,6 +283,8 @@ describe("SEO fresh search evidence and retained budget", () => {
       tool_choice: "required",
     });
     expect(payload.tools[0].external_web_access).toBe(true);
+    expect(payload.text).toEqual({ format: { type: "text" } });
+    expect(payload.instructions).toContain("主張を1つだけ");
     expect(options.signal).toBeInstanceOf(AbortSignal);
     const expectedCost = Math.ceil(
       (128000 +
@@ -296,7 +323,9 @@ describe("SEO fresh search evidence and retained budget", () => {
   ])("rejects %s instead of claiming research success", async (kind) => {
     const result = provider();
     const text: any = result.output[2];
-    const value = JSON.parse(text.content[0].text);
+    const value = JSON.parse(
+      text.content[0].text.split("```json\n")[1].split("\n```")[0],
+    );
     let body = source.content;
     if (kind === "no search") result.output.splice(0, 1);
     if (kind === "no open") result.output.splice(1, 1);
@@ -310,10 +339,66 @@ describe("SEO fresh search evidence and retained budget", () => {
     if (kind === "no sources") value.sources = [];
     if (kind === "contradiction") value.sources[0].assessment = "contradicts";
     if (kind === "URL query") value.sources[0].url += "?private=value";
-    text.content[0].text = JSON.stringify(value);
+    text.content[0].text = researchText(value);
     expect(() =>
       parseResearch(result, body, context.sourceSha256, now),
     ).toThrow();
+  });
+  it.each([
+    "plain JSON",
+    "missing block",
+    "trailing text",
+    "multiple blocks",
+    "extra field",
+    "second source",
+    "citation in JSON",
+    "negative citation",
+    "empty citation",
+    "fractional citation",
+    "missing offsets",
+    "forged marker",
+  ])("rejects malformed natural evidence: %s", (kind) => {
+    const result = provider();
+    const part: any = (result.output[2] as any).content[0];
+    const value = JSON.parse(part.text.split("```json\n")[1].split("\n```")[0]);
+    if (kind === "plain JSON") part.text = JSON.stringify(value);
+    if (kind === "missing block") part.text = "Verified [1].";
+    if (kind === "trailing text") part.text += "\nother";
+    if (kind === "multiple blocks")
+      part.text = "```json\n{}\n```\n" + part.text;
+    if (kind === "extra field")
+      part.text = researchText({ ...value, extra: true });
+    if (kind === "second source")
+      part.text = researchText({
+        ...value,
+        sources: [...value.sources, ...value.sources],
+      });
+    if (kind === "citation in JSON")
+      Object.assign(part.annotations[0], { start_index: 100, end_index: 110 });
+    if (kind === "negative citation") part.annotations[0].start_index = -1;
+    if (kind === "empty citation") part.annotations[0].end_index = 59;
+    if (kind === "fractional citation") part.annotations[0].start_index = 1.5;
+    if (kind === "missing offsets") delete part.annotations[0].end_index;
+    if (kind === "forged marker") part.annotations = [];
+    expect(() =>
+      parseResearch(result, source.content, context.sourceSha256, now),
+    ).toThrow("seo_research_evidence");
+  });
+  it("keeps explicit insufficient rejected even with a genuine citation and support item", async () => {
+    const result = provider();
+    const part: any = (result.output[2] as any).content[0];
+    const value = JSON.parse(part.text.split("```json\n")[1].split("\n```")[0]);
+    part.text = researchText({ ...value, verdict: "insufficient" });
+    fetchMock.mockImplementation(
+      async () => new Response(JSON.stringify(result)),
+    );
+    await expect(research()).rejects.toThrow("seo_research_insufficient");
+    expect(budgetCount()).toBe(1);
+    expect(
+      sql.prepare("SELECT status FROM seo_budget_calls").get()!.status,
+    ).toBe("complete");
+    await expect(research()).rejects.toThrow("seo_check_conflict");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("stops when no new source exists and indexes the private paid result without retry", async () => {
     fetchMock.mockImplementation(

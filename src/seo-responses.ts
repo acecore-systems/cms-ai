@@ -157,14 +157,16 @@ export function responseRequest(
     reasoning: { effort: "high" },
     instructions,
     input: JSON.stringify(input),
-    text: {
-      format: {
-        type: "json_schema",
-        name: search ? "seo_research" : "seo_review",
-        strict: true,
-        schema,
-      },
-    },
+    text: search
+      ? { format: { type: "text" } }
+      : {
+          format: {
+            type: "json_schema",
+            name: search ? "seo_research" : "seo_review",
+            strict: true,
+            schema,
+          },
+        },
     ...(search
       ? {
           tools: [
@@ -183,6 +185,11 @@ export function responseRequest(
 }
 
 export function responseText(result: any) {
+  const { text, annotations } = responseMessage(result);
+  return { value: JSON.parse(text), annotations };
+}
+
+export function responseMessage(result: any) {
   if (!Array.isArray(result.output)) throw new Error("seo_research_response");
   const messages = result.output.filter((item: any) => item.type === "message");
   if (
@@ -200,7 +207,7 @@ export function responseText(result: any) {
   )
     throw new Error("seo_research_response");
   return {
-    value: JSON.parse(content[0].text),
+    text: content[0].text as string,
     annotations: content[0].annotations || [],
   };
 }

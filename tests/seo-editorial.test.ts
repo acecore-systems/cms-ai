@@ -292,9 +292,20 @@ describe("SEO durable editorial boundary", () => {
               content: [
                 {
                   type: "output_text",
-                  text: JSON.stringify(value),
+                  text: research
+                    ? "Verified claim [1].\n```json\n" +
+                      JSON.stringify(value) +
+                      "\n```"
+                    : JSON.stringify(value),
                   annotations: research
-                    ? [{ type: "url_citation", url: reference }]
+                    ? [
+                        {
+                          type: "url_citation",
+                          url: reference,
+                          start_index: 15,
+                          end_index: 18,
+                        },
+                      ]
                     : [],
                 },
               ],
