@@ -87,3 +87,31 @@ describe("SEO generation gate", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+it("rejects oversized v2 generation before reserve/fetch without truncation", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-20T00:00:00Z"));
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const batch = vi.fn();
+  const env = {
+    SEO_GENERATION_ENABLED: "true",
+    CMS_AI_MODEL: "gpt-6-luna",
+    OPENAI_API_KEY_STORE: { get: async () => "fixture" },
+    CMS_AI_DB: { batch },
+  } as unknown as AppEnv;
+  const response = await generateSeo(env, {
+    runId: "seo-00000000-0000-4000-8000-000000000001",
+    callId: "seo-00000000-0000-4000-8000-000000000002",
+    siteId: "homepage-hatt",
+    articlePath: "src/content/blog/example.md",
+    allowedPaths: ["src/content/blog/example.md"],
+    instruction: "Revise with evidence",
+    files: [
+      { path: "src/content/blog/example.md", content: "x".repeat(38000) },
+    ],
+    researchBudget: true,
+  });
+  expect(response).toMatchObject({ status: "stopped", stage: "budget" });
+  expect(batch).not.toHaveBeenCalled();
+  expect(fetcher).not.toHaveBeenCalled();
+});

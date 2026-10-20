@@ -1,3 +1,4 @@
+import { assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
 import { runInference, validateSourceFiles } from "./inference.ts";
 import type { Job } from "./models.ts";
@@ -43,9 +44,13 @@ export async function generateSeo(env: AppEnv, input: unknown) {
       "files",
     ];
     if (
-      Object.keys(value).some((k) => !keys.includes(k) && k !== "deadline") ||
+      Object.keys(value).some(
+        (k) => !keys.includes(k) && k !== "deadline" && k !== "researchBudget",
+      ) ||
       !keys.every((k) => k in value)
     )
+      throw new Error("invalid");
+    if (value.researchBudget !== undefined && value.researchBudget !== true)
       throw new Error("invalid");
     const deadline = value.deadline;
     if (
@@ -123,6 +128,8 @@ export async function generateSeo(env: AppEnv, input: unknown) {
       undefined,
       async (model, request) => {
         stage = "budget";
+        if (value.researchBudget === true)
+          assertStageInput("generation", request);
         await budget.reserve(
           runId,
           callId,
