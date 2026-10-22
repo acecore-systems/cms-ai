@@ -1,9 +1,10 @@
+import { stageBudget } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
 export { sha256 } from "./seo-hash.ts";
 
 // User-approved ceiling, in millionths of USD. Failed/unknown calls retain their reservation.
 export const SEO_BUDGET = {
-  runMicros: 1_000_000,
+  runMicros: 1_250_000,
   monthMicros: 7_000_000,
 } as const;
 // Conservative rates above standard long-context rates verified 2026-10-19.
@@ -47,14 +48,16 @@ export class SeoBudget {
     amount: number,
     now = Date.now(),
     deadline = now + 30 * 60_000,
+    version = 1,
   ) {
+    const runLimit = stageBudget(version).runMicros;
     if (
       !/^seo-[0-9a-f-]{36}$/.test(runId) ||
       !/^seo-[0-9a-f-]{36}$/.test(callId) ||
       !/^[0-9a-f]{64}$/.test(hash) ||
       !Number.isSafeInteger(amount) ||
       amount < 1 ||
-      amount > SEO_BUDGET.runMicros ||
+      amount > 1_000_000 ||
       !Number.isSafeInteger(deadline) ||
       deadline <= now ||
       deadline > now + 30 * 60_000
@@ -64,12 +67,12 @@ export class SeoBudget {
     const results = await this.db.batch([
       this.db
         .prepare(
-          "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline) VALUES(?,?,?,?) ON CONFLICT(id) DO NOTHING",
+          "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline,run_limit_micros) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
         )
-        .bind(runId, article, now, deadline),
+        .bind(runId, article, now, deadline, runLimit),
       this.db
         .prepare(
-          "INSERT INTO seo_budget_calls(id,run_id,month_jst,request_sha256,reserved_micros,created_at) SELECT ?,id,?,?,?,? FROM seo_budget_runs WHERE id=? AND article_key=? AND deadline>? AND created_at<=? ON CONFLICT(id) DO NOTHING",
+          "INSERT INTO seo_budget_calls(id,run_id,month_jst,request_sha256,reserved_micros,created_at) SELECT ?,id,?,?,?,? FROM seo_budget_runs WHERE id=? AND article_key=? AND deadline>? AND created_at<=? AND run_limit_micros=? ON CONFLICT(id) DO NOTHING",
         )
         .bind(
           callId,
@@ -81,6 +84,7 @@ export class SeoBudget {
           article,
           now,
           now,
+          runLimit,
         ),
     ]);
     if (results[1].meta.changes !== 1)

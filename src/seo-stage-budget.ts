@@ -8,10 +8,11 @@ export const STAGE_INPUT_BYTES = {
 export function assertStageInput(
   stage: keyof typeof STAGE_INPUT_BYTES,
   request: unknown,
+  version = 1,
 ) {
   if (
     new TextEncoder().encode(JSON.stringify(request)).length >
-    STAGE_INPUT_BYTES[stage]
+    stageBudget(version).limits[stage]
   )
     throw new Error("seo_stage_input_budget");
 }
@@ -33,6 +34,7 @@ export const GENERATION_INPUT_POOL = 9 * limits.generation;
 
 export function allocateGenerationInputs(
   inputs: { path: string; bytes: number }[],
+  version = 1,
 ) {
   if (
     inputs.length !== 9 ||
@@ -42,9 +44,10 @@ export function allocateGenerationInputs(
     )
   )
     throw new Error("seo_stage_allocation");
+  const pool = stageBudget(version).pool;
   const used = inputs.reduce((total, x) => total + x.bytes, 0);
-  if (used > GENERATION_INPUT_POOL) throw new Error("seo_stage_input_budget");
-  const remaining = GENERATION_INPUT_POOL - used;
+  if (used > pool) throw new Error("seo_stage_input_budget");
+  const remaining = pool - used;
   // Stable path order; the remainder is assigned once at claim time. No future
   // step can borrow from an already used cap or reinterpret a persisted plan.
   return inputs.map((input, i) => ({
@@ -57,13 +60,49 @@ export function allocateGenerationInputs(
 
 export function assertGenerationAllocation(
   value: ReturnType<typeof allocateGenerationInputs>,
+  version = 1,
 ) {
   if (
     JSON.stringify(
       allocateGenerationInputs(
         value.map((x) => ({ path: x.path, bytes: x.baselineBytes })),
+        version,
       ),
     ) !== JSON.stringify(value)
   )
     throw new Error("seo_stage_allocation");
+}
+
+export const CURRENT_BUDGET_VERSION = 2;
+const CURRENT_LIMITS = {
+  plan: 32000,
+  research: 16000,
+  review: 500000,
+  generation: 45000,
+} as const;
+export const CURRENT_SPLIT_RUN_MICROS =
+  Math.ceil((CURRENT_LIMITS.plan + 8192) * 0.3 + 6000) +
+  2 *
+    Math.ceil(
+      (128000 + CURRENT_LIMITS.research + 8192) * 2 * 0.3 + 10000 + 6000,
+    ) +
+  525000 +
+  9 * (8192 + 12000 * 2) +
+  Math.ceil((CURRENT_LIMITS.review + 8192) * 0.3 + 6000);
+export function stageBudget(version = 1) {
+  if (version === 1)
+    return {
+      limits: STAGE_INPUT_BYTES,
+      pool: GENERATION_INPUT_POOL,
+      maximum: SPLIT_RESEARCH_RUN_MICROS,
+      runMicros: 1000000,
+    };
+  if (version === 2)
+    return {
+      limits: CURRENT_LIMITS,
+      pool: 525000,
+      maximum: CURRENT_SPLIT_RUN_MICROS,
+      runMicros: 1250000,
+    };
+  throw new Error("seo_budget_version");
 }

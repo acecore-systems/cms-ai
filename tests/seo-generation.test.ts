@@ -85,7 +85,7 @@ describe("SEO generation gate", () => {
       status: "disabled",
     });
     expect(generationReadiness(env).budget).toMatchObject({
-      runMicros: 1_000_000,
+      runMicros: 1_250_000,
       monthMicros: 7_000_000,
     });
     expect(fetcher).not.toHaveBeenCalled();

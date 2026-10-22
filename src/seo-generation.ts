@@ -1,4 +1,4 @@
-import { GENERATION_INPUT_POOL, assertStageInput } from "./seo-stage-budget.ts";
+import { stageBudget, assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
 import {
   runInference,
@@ -54,20 +54,23 @@ export async function generateSeo(env: AppEnv, input: unknown) {
           !keys.includes(k) &&
           k !== "deadline" &&
           k !== "researchBudget" &&
-          k !== "generationInputCap",
+          k !== "generationInputCap" &&
+          k !== "budgetVersion",
       ) ||
       !keys.every((k) => k in value)
     )
       throw new Error("invalid");
     if (value.researchBudget !== undefined && value.researchBudget !== true)
       throw new Error("invalid");
+    const version = value.budgetVersion === undefined ? 1 : value.budgetVersion;
+    if (version !== 1 && version !== 2) throw new Error("seo_budget_version");
     const cap = value.generationInputCap;
     if (
       cap !== undefined &&
       (value.researchBudget !== true ||
         !Number.isSafeInteger(cap) ||
         (cap as number) <= 0 ||
-        (cap as number) > GENERATION_INPUT_POOL)
+        (cap as number) > stageBudget(version).pool)
     )
       throw new Error("invalid");
     const deadline = value.deadline;
@@ -128,7 +131,8 @@ export async function generateSeo(env: AppEnv, input: unknown) {
       async (model, request) => {
         stage = "budget";
         if (value.researchBudget === true) {
-          if (cap === undefined) assertStageInput("generation", request);
+          if (cap === undefined)
+            assertStageInput("generation", request, version);
           else if (
             new TextEncoder().encode(JSON.stringify(request)).length >
             (cap as number)
@@ -143,6 +147,7 @@ export async function generateSeo(env: AppEnv, input: unknown) {
           upperCost(model, request),
           Date.now(),
           deadline as number | undefined,
+          version,
         );
         reserved = true;
         stage = "generation";

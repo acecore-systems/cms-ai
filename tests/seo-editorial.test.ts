@@ -58,6 +58,7 @@ beforeEach(async () => {
     "0009_seo_review_rejection.sql",
     "0010_seo_discovery.sql",
     "0011_seo_month_budget.sql",
+    "0012_seo_run_budget.sql",
   ])
     sql.exec(
       readFileSync(
@@ -1137,7 +1138,7 @@ describe("SEO durable editorial boundary", () => {
       status: "unresolved",
     });
   });
-  it("stops translation when the shared $1 run cap is exhausted", async () => {
+  it("stops translation when the shared $1.25 run cap is exhausted", async () => {
     const jobId = await claimed();
     const normal = mocks.infer.getMockImplementation()!;
     mocks.infer.mockImplementation(async (...args) => {
@@ -1166,7 +1167,7 @@ describe("SEO durable editorial boundary", () => {
         "SELECT SUM(reserved_micros) AS amount,COUNT(*) AS n FROM seo_budget_calls",
       )
       .get()!;
-    expect(ledger.amount).toBeLessThanOrEqual(1_000_000);
+    expect(ledger.amount).toBeLessThanOrEqual(1_250_000);
     expect(ledger.n).toBeLessThan(9);
     expect(row().status).toBe("unresolved");
     expect(complete).toHaveBeenCalledWith({
@@ -1432,6 +1433,11 @@ it.each(["insufficient", "verified-empty", "contract-violation"])(
         ["research", "insufficient"],
       ]);
     }
+    expect(
+      sql
+        .prepare("SELECT DISTINCT run_limit_micros n FROM seo_budget_runs")
+        .all(),
+    ).toEqual([{ n: 1250000 }]);
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(mocks.infer).not.toHaveBeenCalled();
   },
@@ -1472,6 +1478,9 @@ describe("baseline eligibility before paid work", () => {
     await request(jobId);
     files[1].content += "Large translation. ".repeat(6000);
     files[2].content += "Another translation. ".repeat(5000);
+    files[3].content += "Third translation. ".repeat(6000);
+    files[4].content += "Fourth translation. ".repeat(6000);
+    files[5].content += "Fifth translation. ".repeat(6000);
     expect(await request(jobId, "claim", { baseSha, files })).toEqual({
       status: "skipped",
     });
@@ -1736,7 +1745,7 @@ it("binds the fixed generation allocation to persisted bytes and rejects tamperi
 it("skips before claim when the complete new run would exceed remaining monthly budget", async () => {
   env.SEO_RESEARCH_ENABLED = "true";
   const id = await inspecting();
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 7; i++) {
     sql
       .prepare(
         "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline) VALUES(?,'other',?,?)",

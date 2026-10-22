@@ -6,6 +6,8 @@ import {
   SPLIT_RESEARCH_RUN_MICROS,
   FULL_RESEARCH_RUN_MICROS,
   STAGE_INPUT_BYTES,
+  stageBudget,
+  assertStageInput,
 } from "../src/seo-stage-budget.ts";
 import { responseRequest, responsesUpperCost } from "../src/seo-responses.ts";
 import { upperCost } from "../src/seo-budget.ts";
@@ -84,4 +86,79 @@ it("bounds actual serialized payloads and each call rounding at 985076, preservi
   expect(() =>
     responsesUpperCost({ ...search, max_tool_calls: 2 }, now),
   ).toThrow();
+});
+
+it("bounds actual serialized payloads and each call rounding at 1205876 for budget v2", () => {
+  function fill(request: any, bytes: number) {
+    request.padding = "";
+    request.padding = "x".repeat(
+      bytes - Buffer.byteLength(JSON.stringify(request)),
+    );
+    expect(Buffer.byteLength(JSON.stringify(request))).toBe(bytes);
+    return request;
+  }
+  const plan = fill(responseRequest("", {}, {}), stageBudget(2).limits.plan);
+  const search = fill(
+    { ...responseRequest("", {}, null, true), max_tool_calls: 1 },
+    stageBudget(2).limits.research,
+  );
+  const review = fill(
+    responseRequest("", {}, {}),
+    stageBudget(2).limits.review,
+  );
+  const allocations = allocateGenerationInputs(
+    Array.from({ length: 9 }, (_, i) => ({
+      path: `p${i}`,
+      bytes: 39000 + i * 500,
+    })),
+    2,
+  );
+  const generation = allocations.reduce(
+    (sum, x) =>
+      sum +
+      upperCost(
+        "gpt-6-luna",
+        fill(
+          {
+            service_tier: "default",
+            max_completion_tokens: 12000,
+            messages: [],
+          },
+          x.maxBytes,
+        ),
+        now,
+      ),
+    0,
+  );
+  const total =
+    responsesUpperCost(plan, now) +
+    2 * responsesUpperCost(search, now) +
+    responsesUpperCost(review, now) +
+    generation;
+  expect(total).toBe(stageBudget(2).maximum);
+  expect(total).toBe(1205876);
+  expect(total).toBeLessThan(1250000);
+  expect(FULL_RESEARCH_RUN_MICROS).toBe(989075);
+  expect(() =>
+    responsesUpperCost({ ...search, max_tool_calls: 2 }, now),
+  ).toThrow();
+});
+
+it("does not reinterpret old fixed allocations or loosen their per-stage caps", () => {
+  const inputs = Array.from({ length: 9 }, (_, i) => ({
+    path: `p${i}`,
+    bytes: 40000,
+  }));
+  const old = allocateGenerationInputs(inputs, 1),
+    current = allocateGenerationInputs(inputs, 2);
+  expect(old.reduce((s, x) => s + x.maxBytes, 0)).toBe(405000);
+  expect(current.reduce((s, x) => s + x.maxBytes, 0)).toBe(525000);
+  expect(() => assertGenerationAllocation(old, 1)).not.toThrow();
+  expect(() => assertGenerationAllocation(current, 2)).not.toThrow();
+  expect(() => assertGenerationAllocation(old, 2)).toThrow();
+  expect(() => assertGenerationAllocation(current, 1)).toThrow();
+  const request = { text: "x".repeat(20000) };
+  expect(() => assertStageInput("plan", request, 1)).toThrow();
+  expect(() => assertStageInput("plan", request, 2)).not.toThrow();
+  expect(() => stageBudget(3)).toThrow();
 });

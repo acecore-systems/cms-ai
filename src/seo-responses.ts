@@ -59,6 +59,7 @@ export async function seoResponse(
   env: AppEnv,
   args: {
     runId: string;
+    budgetVersion?: number;
     callId: string;
     articleKey: string;
     deadline: number;
@@ -78,6 +79,7 @@ export async function seoResponse(
       (args.phase === "discovery" ? "research" : args.phase) ||
         (args.request.tools ? "research" : "review"),
       args.request,
+      args.budgetVersion,
     );
     const amount = responsesUpperCost(args.request);
     // Runtime binding only; no key is read by the development agent or runner.
@@ -91,6 +93,7 @@ export async function seoResponse(
       amount,
       Date.now(),
       args.deadline,
+      args.budgetVersion,
     );
     reserved = true;
     if (Date.now() >= args.deadline)

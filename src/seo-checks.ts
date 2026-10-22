@@ -51,6 +51,7 @@ export type CheckContext = {
   deadline: number;
   contractVersion?: number;
   retrievalVersion?: number;
+  budgetVersion?: number;
 };
 const object = (properties: Record<string, unknown>) => ({
   type: "object",
@@ -454,6 +455,7 @@ export async function researchArticle(
     const request = buildPlanRequest(source.content, context.contractVersion);
     const response = await seoResponse(env, {
       runId: context.budgetRunId,
+      budgetVersion: context.budgetVersion,
       callId,
       articleKey: context.budgetArticleKey,
       deadline: context.deadline,
@@ -479,6 +481,7 @@ export async function researchArticle(
       async (callId) => {
         const response = await seoResponse(env, {
           runId: context.budgetRunId,
+          budgetVersion: context.budgetVersion,
           callId,
           articleKey: context.budgetArticleKey,
           deadline: context.deadline,
@@ -536,6 +539,7 @@ export async function researchArticle(
         : buildSearchRequest(focused);
       const response = await seoResponse(env, {
         runId: context.budgetRunId,
+        budgetVersion: context.budgetVersion,
         callId,
         articleKey: context.budgetArticleKey,
         deadline: context.deadline,
@@ -679,6 +683,7 @@ export async function reviewArticle(
     );
     const response = await seoResponse(env, {
       runId: context.budgetRunId,
+      budgetVersion: context.budgetVersion,
       callId,
       articleKey: context.budgetArticleKey,
       deadline: context.deadline,
