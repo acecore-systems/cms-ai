@@ -479,6 +479,202 @@ describe("Workers AI inference", () => {
   );
 });
 
+describe("inference response validation", () => {
+  const change = {
+    content: "<main>after</main>\n",
+    path: "src/pages/index.astro",
+    reason: "依頼された変更",
+  };
+  const proposal = {
+    changes: [change],
+    clarification: "",
+    summary: "private-answer",
+  };
+  const completion = (value: unknown, extra: Record<string, unknown> = {}) => ({
+    choices: [
+      {
+        finish_reason: "stop",
+        message: { content: JSON.stringify(value) },
+        ...extra,
+      },
+    ],
+  });
+
+  async function rejectsWithDiagnostic(
+    value: unknown,
+    phase: string,
+    reason: string,
+  ) {
+    const run = vi.fn().mockResolvedValue(value);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        runInference(
+          { AI: { run }, CMS_AI_MODEL: deepSeekModel } as unknown as AppEnv,
+          site,
+          job({ instruction: "private-instruction" }),
+          [{ path: change.path, content: "private-source" }],
+          [],
+        ),
+      ).rejects.toMatchObject({ phase, reason });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(warn.mock.calls[0][0])).toEqual({
+        event: "cms_ai_response_rejected",
+        model: deepSeekModel,
+        purpose: "cms",
+        phase,
+        reason,
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(
+        /private-|index\.astro|data:image/,
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  }
+
+  it.each([
+    ["length", "length"],
+    ["content_filter", "content_filter"],
+    ["tool_calls", "tool_calls"],
+    ["function_call", "function_call"],
+    [null, "unknown_finish_reason"],
+    ["private-finish-reason", "unknown_finish_reason"],
+  ])(
+    "完了しなかった%sは有効なJSON変更案でも受理しない",
+    async (finishReason, reason) => {
+      await rejectsWithDiagnostic(
+        completion(proposal, { finish_reason: finishReason }),
+        "completion",
+        String(reason),
+      );
+    },
+  );
+
+  it("responseオブジェクトがあっても不完全なchoicesを迂回できない", () => {
+    expect(() =>
+      parseInferenceResponse(site, {
+        response: proposal,
+        ...completion(proposal, { finish_reason: "length" }),
+      }),
+    ).toThrow(/出力上限/);
+  });
+
+  it("refusal付き応答のJSONを受理せず拒否本文も記録しない", async () => {
+    await rejectsWithDiagnostic(
+      completion(proposal, {
+        message: {
+          content: JSON.stringify(proposal),
+          refusal: "private-refusal",
+        },
+      }),
+      "completion",
+      "refusal",
+    );
+  });
+
+  it.each([
+    [
+      { choices: [{ finish_reason: "stop", message: { content: null } }] },
+      "envelope",
+      "missing_content",
+    ],
+    [{ response: 'private-prefix {"changes":[]}' }, "json", "invalid_json"],
+    [{ response: '{"changes":[' }, "json", "invalid_json"],
+    [{ response: "[]" }, "shape", "invalid_result"],
+    [completion({ summary: "private-answer" }), "shape", "changes_count"],
+    [
+      completion({ ...proposal, changes: [{ ...change, content: null }] }),
+      "shape",
+      "change_shape",
+    ],
+    [
+      completion({ changes: [], summary: "", clarification: "" }),
+      "shape",
+      "missing_answer",
+    ],
+    [
+      completion({
+        ...proposal,
+        changes: [{ ...change, path: "package.json" }],
+      }),
+      "policy",
+      "disallowed_path",
+    ],
+    [
+      completion({ ...proposal, changes: [change, change] }),
+      "policy",
+      "duplicate_path",
+    ],
+    [
+      completion({ ...proposal, changes: [{ ...change, reason: "" }] }),
+      "policy",
+      "invalid_change_reason",
+    ],
+    [
+      completion({ ...proposal, changes: [{ ...change, content: "" }] }),
+      "policy",
+      "change_size",
+    ],
+    [
+      completion({
+        ...proposal,
+        changes: [{ ...change, content: "x".repeat(256 * 1024 + 1) }],
+      }),
+      "policy",
+      "change_size",
+    ],
+    [
+      completion({
+        ...proposal,
+        changes: [
+          {
+            ...change,
+            content: '<img src="data:image/png;base64,private-image">',
+          },
+        ],
+      }),
+      "policy",
+      "private_image_reference",
+    ],
+    [
+      completion({
+        ...proposal,
+        changes: [{ ...change, content: "private-content\u0000" }],
+      }),
+      "policy",
+      "null_character",
+    ],
+    [
+      completion({
+        ...proposal,
+        changes: ["one", "two", "three"].map((name) => ({
+          ...change,
+          path: `src/pages/${name}.astro`,
+          content: "x".repeat(180 * 1024),
+        })),
+      }),
+      "policy",
+      "total_change_size",
+    ],
+  ])(
+    "不正応答の診断ケース%#は本文を記録せず区別する",
+    async (value, phase, reason) => {
+      await rejectsWithDiagnostic(value, String(phase), String(reason));
+    },
+  );
+
+  it.each([
+    { response: proposal },
+    { response: JSON.stringify(proposal) },
+    completion(proposal),
+    { choices: [{ message: { content: JSON.stringify(proposal) } }] },
+  ])("正常なChat Completionsと既存Workers AI形式を維持する", (value) => {
+    expect(parseInferenceResponse(site, value).changes).toEqual([change]);
+  });
+});
+
 function job(overrides: Partial<Job> = {}): Job {
   const now = new Date().toISOString();
   return {
