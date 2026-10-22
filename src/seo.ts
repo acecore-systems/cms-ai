@@ -1,3 +1,6 @@
+import { seoRepositoryReader } from "./github.ts";
+import { seoSite } from "./sites.ts";
+import { editorialEligibility } from "./seo-eligibility.ts";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { AppEnv } from "./env.ts";
 import { seoConnectionContract } from "./seo-contract.ts";
@@ -31,6 +34,15 @@ export class SeoGeneration extends WorkerEntrypoint<AppEnv> {
 
 // Explicit capability, separate from the read-only connection and proposal RPCs.
 export class SeoEditorial extends WorkerEntrypoint<AppEnv> {
+  async eligibility(input: unknown) {
+    const v = input as { site?: string; deadline?: number };
+    const spec = v && typeof v.site === "string" ? seoSite(v.site) : null;
+    if (!spec) throw new Error("seo_eligibility_unknown");
+    return editorialEligibility(
+      input,
+      seoRepositoryReader(this.env, spec.site, v.deadline!),
+    );
+  }
   async fetch() {
     return new Response(null, { status: 404 });
   }

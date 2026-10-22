@@ -91,6 +91,67 @@ async function createInstallationToken(
   return (body as { token: string }).token;
 }
 
+// Public resources need no additional repository read permission. Reuse the
+// existing repository-scoped App credential; never expose it through RPC/storage.
+// At most six sites: 600 GETs + six token requests per collection (no retry).
+export function seoRepositoryReader(
+  env: AppEnv,
+  site: SiteConfig,
+  deadline: number,
+): typeof fetch {
+  let token: Promise<string> | undefined;
+  let requests = 0;
+  const prefix = `${GITHUB_API}/repos/${site.repository}/`;
+  return async (input, init) => {
+    try {
+      const url = String(input);
+      if (
+        !url.startsWith(prefix) ||
+        (init?.method && init.method !== "GET") ||
+        ++requests > 100 ||
+        Date.now() >= deadline
+      )
+        throw new Error();
+      const suffix = url.slice(prefix.length);
+      if (
+        !/^(?:commits\/main|git\/trees\/[a-f0-9]{40}\?recursive=1|git\/blobs\/[a-f0-9]{40}|pulls(?:\/[1-9][0-9]*(?:\/files)?)?(?:\?[^#]*)?)$/.test(
+          suffix,
+        )
+      )
+        throw new Error();
+      token ??= createInstallationToken(env, site, deadline);
+      const response = await fetch(url, {
+        ...init,
+        method: "GET",
+        headers: githubHeaders(await token),
+        redirect: "error",
+        signal: AbortSignal.timeout(
+          Math.max(1, Math.min(10000, deadline - Date.now())),
+        ),
+      });
+      // Fail closed on shared installation exhaustion, missing rate evidence,
+      // authentication failures and secondary limits. Never fall back anonymously.
+      const remaining = response.headers.get("x-ratelimit-remaining");
+      const limit = response.headers.get("x-ratelimit-limit");
+      if (
+        !response.ok ||
+        !remaining ||
+        !limit ||
+        !/^\d+$/.test(remaining) ||
+        !/^\d+$/.test(limit) ||
+        Number(limit) < 5000 ||
+        Number(remaining) < 606
+      ) {
+        await response.body?.cancel();
+        throw new Error();
+      }
+      return response;
+    } catch {
+      throw new Error("seo_eligibility_unknown");
+    }
+  };
+}
+
 // Same actions-only installation token; no repository contents are read here.
 export async function dispatchSeoEditorialJob(
   env: AppEnv,
