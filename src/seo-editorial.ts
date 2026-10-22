@@ -14,7 +14,7 @@ import {
 } from "./seo-rejection.ts";
 import type { AppEnv } from "./env.ts";
 import { dispatchSeoEditorialJob } from "./github.ts";
-import { sha256, jstMonth, SEO_BUDGET } from "./seo-budget.ts";
+import { sha256, jstMonth, monthBudgetMicros } from "./seo-budget.ts";
 import { generateSeo, buildSeoGenerationRequest } from "./seo-generation.ts";
 import { validateSourceFiles } from "./inference.ts";
 import { json, HttpError, readJsonObject } from "./http.ts";
@@ -763,12 +763,13 @@ async function claimJob(
         /* ineligible, no paid call */
       }
     }
+    const monthJst = jstMonth(Date.now());
     const monthly =
       job.retrieval_contract === 2
         ? await env.CMS_AI_DB.prepare(
             "SELECT COALESCE(SUM(reserved_micros),0) AS held FROM seo_budget_calls WHERE month_jst=?",
           )
-            .bind(jstMonth(Date.now()))
+            .bind(monthJst)
             .first<{ held: number }>()
         : null;
     if (
@@ -779,7 +780,7 @@ async function claimJob(
     const reasons = [
       ...(monthly &&
       monthly.held + stageBudget(job.budget_version).maximum >
-        SEO_BUDGET.monthMicros
+        monthBudgetMicros(monthJst)
         ? ["monthly_budget_insufficient"]
         : []),
       ...(planBytes > stageBudget(job.budget_version).limits.plan
