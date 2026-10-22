@@ -124,7 +124,8 @@ beforeEach(async () => {
   objects = new Map();
   env = {
     SEO_GENERATION_ENABLED: "true",
-    CMS_AI_MODEL: "gpt-6-luna",
+    CMS_AI_MODEL: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+    SEO_AI_MODEL: "gpt-6-luna",
     OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
     CMS_AI_DB: {
       prepare,

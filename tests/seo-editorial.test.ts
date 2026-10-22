@@ -84,7 +84,8 @@ beforeEach(async () => {
   env = {
     SEO_EDITORIAL_ENABLED: "true",
     SEO_GENERATION_ENABLED: "true",
-    CMS_AI_MODEL: "gpt-6-luna",
+    CMS_AI_MODEL: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+    SEO_AI_MODEL: "gpt-6-luna",
     CMS_AI_DB: {
       prepare,
       batch: async (statements: { query: string; args: unknown[] }[]) => {

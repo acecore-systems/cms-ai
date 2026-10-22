@@ -18,6 +18,7 @@ const MAX_CHANGE_FILE_BYTES = 256 * 1024;
 const MAX_CHANGE_BYTES = 512 * 1024;
 const MAX_HISTORY_TURNS = 12;
 const MAX_HISTORY_CHARACTERS = 24_000;
+const DEEPSEEK_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
 
 export type SourceFile = {
   content: string;
@@ -48,6 +49,7 @@ export async function runInference(
     request: Record<string, unknown>,
   ) => Promise<void>,
   requestDeadline?: number,
+  purpose: "cms" | "seo" = "cms",
 ): Promise<InferenceResult> {
   const files = validateSourceFiles(site, sourceFiles);
   // Bound all image data per inference and prioritize the current turn.
@@ -64,7 +66,7 @@ export async function runInference(
     currentContent,
     await buildConversationMessages(env, job, conversationJobs, imageBudget),
   );
-  const model = getModel(env);
+  const model = getModel(env, purpose);
   if (model === "gpt-6-luna" && !env.OPENAI_API_KEY_STORE) {
     throw new HttpError(503, "OpenAI APIの設定がありません。");
   }
@@ -80,7 +82,7 @@ export async function runInference(
     );
   } catch (error) {
     if (error instanceof HttpError) throw error;
-    if (model === "gpt-6-luna" || beforeRequest) {
+    if (model === "gpt-6-luna" || model === DEEPSEEK_MODEL || beforeRequest) {
       throw new HttpError(
         502,
         "AIの応答を取得できませんでした。時間をおいて再試行してください。",
@@ -468,8 +470,10 @@ function parseJson(value: string): unknown {
   }
 }
 
-function getModel(env: AppEnv) {
-  const configured = String(env.CMS_AI_MODEL || "").trim();
+function getModel(env: AppEnv, purpose: "cms" | "seo") {
+  const configured = String(
+    (purpose === "seo" ? env.SEO_AI_MODEL : env.CMS_AI_MODEL) || "",
+  ).trim();
   const model = configured;
   if (model !== "gpt-6-luna" && !isWorkersAiTextModel(model)) {
     throw new HttpError(503, "AIモデルの設定が無効です。");
@@ -513,9 +517,26 @@ async function runTextModel(
 ): Promise<unknown> {
   if (isWorkersAiTextModel(model)) {
     if (beforeRequest) throw new Error("seo_model_not_allowed");
-    return (env.AI.run as (model: string, input: unknown) => Promise<unknown>)(
+    // DeepSeek uses the Chat Completions schema envelope, unlike legacy
+    // Workers AI models. Keep the CMS's existing effort choices compatible.
+    const { model: _model, ...chatRequest } = openAiPayload(
       model,
       request,
+      false,
+    );
+    const input =
+      model === DEEPSEEK_MODEL
+        ? {
+            ...chatRequest,
+            reasoning_effort:
+              request.reasoning_effort === "medium"
+                ? "high"
+                : request.reasoning_effort,
+          }
+        : request;
+    return (env.AI.run as (model: string, input: unknown) => Promise<unknown>)(
+      model,
+      input,
     );
   }
   let apiKey: string;

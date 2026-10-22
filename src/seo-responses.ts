@@ -66,7 +66,7 @@ export async function seoResponse(
 ) {
   if (
     String(env.SEO_GENERATION_ENABLED) !== "true" ||
-    env.CMS_AI_MODEL !== "gpt-6-luna"
+    env.SEO_AI_MODEL !== "gpt-6-luna"
   )
     throw new Error("seo_research_disabled");
   const budget = new SeoBudget(env.CMS_AI_DB);

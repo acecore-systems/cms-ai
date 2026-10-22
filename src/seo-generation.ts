@@ -129,6 +129,7 @@ export async function generateSeo(env: AppEnv, input: unknown) {
         stage = "generation";
       },
       deadline as number | undefined,
+      "seo",
     );
     stage = "result_validation";
     if (!result.changes.every((c) => paths.includes(c.path)))
