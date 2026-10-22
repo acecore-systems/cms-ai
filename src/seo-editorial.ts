@@ -82,6 +82,7 @@ type EditorialJob = {
   generation_syntax: 1 | 2;
   external_sources: 0 | 1;
   research_context: "low" | "high";
+  allocation_version: 1 | 2;
   input_allocation_sha256: string | null;
   generation_started: number;
   publication_started: number;
@@ -288,7 +289,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -300,6 +301,7 @@ async function advance(env: AppEnv, runId: string) {
         2,
         1,
         "high",
+        2,
         runId,
         run.candidate_index,
       ),
@@ -770,6 +772,7 @@ async function claimJob(
         generationAllocation = allocateGenerationInputs(
           generationInputs,
           job.budget_version,
+          job.allocation_version,
         );
       } catch {
         /* ineligible, no paid call */
@@ -815,6 +818,7 @@ async function claimJob(
     const preflightRaw = JSON.stringify({
       version: 1,
       researchContract: 2,
+      ...(job.allocation_version === 2 ? { allocationVersion: 2 } : {}),
       ...(job.generation_syntax === 2 ? { generationSyntax: 2 } : {}),
       ...(job.discovery_policy === 3
         ? { discoveryPolicy: job.external_sources ? 4 : 3 }
@@ -836,7 +840,10 @@ async function claimJob(
         generation: stageBudget(job.budget_version).limits.generation,
         ...(job.budget_version === 2
           ? {
-              generationPool: stageBudget(2).pool,
+              generationPool:
+                job.allocation_version === 2
+                  ? Math.floor((stageBudget(2).pool * paths.length) / 9)
+                  : stageBudget(2).pool,
               maximumMicros: stageBudget(2).maximum,
               runMicros: stageBudget(2).runMicros,
             }
@@ -1008,6 +1015,7 @@ async function propose(
       !saved ||
       saved.retrievalContract !== 2 ||
       (saved.budgetVersion ?? 1) !== job.budget_version ||
+      (saved.allocationVersion ?? 1) !== job.allocation_version ||
       (saved.discoveryPolicy ?? 2) !==
         (job.external_sources ? 4 : job.discovery_policy) ||
       (saved.generationSyntax ?? 1) !== job.generation_syntax ||
@@ -1017,7 +1025,11 @@ async function propose(
         JSON.stringify(paths)
     )
       throw new Error("seo_check_evidence");
-    assertGenerationAllocation(saved.generationAllocation, job.budget_version);
+    assertGenerationAllocation(
+      saved.generationAllocation,
+      job.budget_version,
+      job.allocation_version,
+    );
     generationInputCap = saved.generationAllocation[job.next_step].maxBytes;
   }
   const callId = "seo-" + crypto.randomUUID();

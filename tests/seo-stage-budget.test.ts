@@ -178,3 +178,78 @@ it("does not reinterpret old fixed allocations or loosen their per-stage caps", 
   expect(() => assertStageInput("plan", request, 2)).not.toThrow();
   expect(() => stageBudget(3)).toThrow();
 });
+
+it.each([1, 2, 3, 4, 5, 6, 7, 8, 9])(
+  "new cardinality %s uses only its proportional pool and exact replay",
+  (count) => {
+    const inputs = Array.from({ length: count }, (_, i) => ({
+      path: `p${i}`,
+      bytes: 10000 + i,
+    }));
+    const value = allocateGenerationInputs(inputs, 2, 2);
+    expect(value.reduce((n, x) => n + x.maxBytes, 0)).toBe(
+      Math.floor((525000 * count) / 9),
+    );
+    expect(() => assertGenerationAllocation(value, 2, 2)).not.toThrow();
+    if (count === 9) expect(value).toEqual(allocateGenerationInputs(inputs, 2));
+    else expect(() => assertGenerationAllocation(value, 2, 1)).toThrow();
+    value[0].maxBytes++;
+    expect(() => assertGenerationAllocation(value, 2, 2)).toThrow();
+  },
+);
+it("variable cardinality rejects empty, duplicate, ten and disproportionate inputs", () => {
+  for (const inputs of [
+    [],
+    [
+      { path: "p", bytes: 1 },
+      { path: "p", bytes: 1 },
+    ],
+    Array.from({ length: 10 }, (_, i) => ({ path: `p${i}`, bytes: 1 })),
+    [{ path: "p", bytes: 58334 }],
+  ])
+    expect(() => allocateGenerationInputs(inputs, 2, 2)).toThrow();
+  expect(() =>
+    allocateGenerationInputs([{ path: "p", bytes: 100 }], 2),
+  ).toThrow();
+  expect(() =>
+    allocateGenerationInputs([{ path: "p", bytes: 100 }], 2, 3),
+  ).toThrow();
+});
+
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
+it("migration keeps old allocation policy and prevents policy changes", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(
+      "CREATE TABLE seo_editorial_jobs(id TEXT, input_allocation_sha256 TEXT); INSERT INTO seo_editorial_jobs VALUES('old','saved')",
+    );
+    db.exec(
+      readFileSync(
+        new URL(
+          "../migrations/0018_seo_allocation_cardinality.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    expect(db.prepare("SELECT * FROM seo_editorial_jobs").get()).toEqual({
+      id: "old",
+      input_allocation_sha256: "saved",
+      allocation_version: 1,
+    });
+    db.exec("INSERT INTO seo_editorial_jobs VALUES('new','newhash',2)");
+    expect(() =>
+      db.exec(
+        "UPDATE seo_editorial_jobs SET allocation_version=2 WHERE id='old'",
+      ),
+    ).toThrow("immutable_allocation_version");
+    expect(() =>
+      db.exec(
+        "UPDATE seo_editorial_jobs SET allocation_version=1 WHERE id='new'",
+      ),
+    ).toThrow("immutable_allocation_version");
+  } finally {
+    db.close();
+  }
+});

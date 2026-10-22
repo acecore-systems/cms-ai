@@ -1,0 +1,17 @@
+# 1〜9ファイルの生成入力配分
+
+新jobだけallocation_version=2を保存し、1〜9ファイルを許可する。既定1の旧jobは9ファイル固定を維持する。0018で列を追加し変更禁止とする。予算versionとは独立して保存し、旧jobの保存配分や金額上限を再解釈しない。
+
+新しい有効poolはfloor(既存pool×ファイル数/9)。現行予算版の単言語は58333 bytes、9件は525000 bytesで従来の順序・端数配分まで完全一致する。使わない翻訳の入力枠や出力枠を単一言語に流用しない。空・重複・10件・比例枠超過を拒否する。全工程上限1205876 microUSD/13API・run1250000・月上限・出力12000は不変であり、月予算preflightも従来の最大全工程を確保する。
+
+preflightに配分versionと有効poolを保存し、全体hashをjobへ束縛する。proposeはjobの不変version・budgetVersion・source/base・全path順・保存hashと配分再計算を照合してからAPIを予約する。
+
+## 無課金検証と配備
+
+旧9件完全一致、1〜9件の正しい比例配分、不正入力・配分改変・migration旧列保持/immutableを回帰検証する。Wikiの無料統合fixtureはclaim→研究3call→生成1call→校閲1callの5call相当をmockしpassまで確認する。実API成功とは区別する。
+
+最新Wiki保存原稿はplan6908/review7187/既知generation9930bytes、配分58333で適合。合成根拠でのbuilder予約264197microUSDは推定であり実研究や支持の証明ではない。本文と既存案内リンクは変更していない。
+
+0018をコード配信前に適用し旧全列/default1を照合する。成功経路のrunner/SEO契約は既にpath件数に対応し、今回6site pinとSEO変更は不要。
+
+**残る制限:** CMS/SEOの校閲拒否receiptは9件固定である。単言語校閲failはunresolvedとして原本・lock・予約を保持し、通常終端化はしない。既存receiptを緩和しない。本番でこの失敗も自動終端化するには、別の明示的receipt版・SEO側検証/SQLの変更が必要。単言語の成功を9言語翻訳成功とは扱わない。
