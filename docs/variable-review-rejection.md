@@ -1,0 +1,18 @@
+# 可変言語数の校閲拒否 receipt v3
+
+新規jobのみ、保存済み正本とサイトの全locale契約から1〜9ファイルを照合し、校閲failを独立した台帳へ記録する。Wiki等の単言語は1件、現行多言語サイトは日本語と8翻訳の9件を必須とする。少数ファイルへの省略は認めない。
+
+CMSは原文・全生成manifest・accepted/proposal/final hash・校閲fail原応答・全API完了を照合する。runnerのOIDCで自動branch/refと全状態PRの不存在を確認後、receiptを不変保存する。新receiptはversion 3、call数はplan/discovery/research/reviewの4件と生成N件。最大13call・既存予算上限は変更しない。
+
+SEOは正本articleKeyから全pathと順序を再検証し、exact snapshot CASでglobal runだけを元collection_statusへ終端化する。終了時刻は既存値またはreceipt判断時刻に固定し、hold・期限・記事lock・根拠は保持する。不明、欠落、hash不一致、公開開始済みはunresolvedを維持する。同一receiptの遅延callbackは再生成なしで冪等に受理する。
+
+## 配備順序
+
+1. SEOの既存全table・全列、migration一覧を保存。0014_variable_review_receipt.sqlのみ適用し、全旧行とresearch trigger定義の不変、新runtime_variable_review_rejectionsが0行を照合する。
+2. SEO実装PRのCI成功・統合済みcommitから既存Wrangler経路でWorkerを配置しversionを確認する。
+3. CMSの既存全table・全列を保存。0019_seo_variable_review.sqlのみ適用し、旧全列不変、新列variable_reviewが全旧jobで0、新seo_variable_review_rejectionsが0行を照合する。新列は更新禁止。既存旧receiptをunion viewでそのまま読めることを確認する。
+4. CMS実装PRを統合し、Git連携Build成功・本番versionを確認する。CMSコードは新viewを参照するためmigrationを先行させる。
+
+旧receipt v1/v2と旧jobは旧table・旧規則を維持する。0010〜0013など既存migrationを変更しない。research receiptの契約は変更しない。runner通信は既存のoffer hashを渡す方式のままで、runnerコード・6サイトpin更新は不要。
+
+本番migration・配備・有料実行は運用担当者が実施する。今回のローカルSQLite/workerd検証は本番受入とは区別する。既存台帳の削除・旧job再開・品質条件の緩和は行わない。

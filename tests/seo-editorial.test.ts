@@ -43,10 +43,12 @@ let sql: DatabaseSync,
   objects: Map<string, string>,
   files: { path: string; content: string }[],
   clock: ReturnType<typeof vi.spyOn>;
+let legacyReview = false;
 let claim: ReturnType<typeof vi.fn>, complete: ReturnType<typeof vi.fn>;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  legacyReview = false;
   clock = vi.spyOn(Date, "now").mockReturnValue(now);
   sql = new DatabaseSync(":memory:");
   for (const migration of [
@@ -65,6 +67,7 @@ beforeEach(async () => {
     "0016_seo_external_sources.sql",
     "0017_seo_research_context.sql",
     "0018_seo_allocation_cardinality.sql",
+    "0019_seo_variable_review.sql",
   ])
     sql.exec(
       readFileSync(
@@ -100,6 +103,11 @@ beforeEach(async () => {
       batch: async (statements: { query: string; args: unknown[] }[]) => {
         sql.exec("BEGIN");
         try {
+          if (legacyReview)
+            for (const item of statements) {
+              if (item.query.startsWith("INSERT INTO seo_editorial_jobs"))
+                item.args[item.args.length - 3] = 0;
+            }
           const values = statements.map((item) => ({
             meta: {
               changes: Number(
@@ -243,6 +251,12 @@ describe("SEO durable editorial boundary", () => {
   it.each([
     "valid",
     "wiki-pass",
+    "wiki-valid",
+    "wiki-lost-callback",
+    "wiki-missing-manifest",
+    "wiki-budget-unknown",
+    "wiki-source-changed",
+    "legacy-valid",
     "missing-manifest",
     "budget-unknown",
     "source-changed",
@@ -254,9 +268,15 @@ describe("SEO durable editorial boundary", () => {
     "malformed-review",
     "receipt-store-failure",
   ])("review rejection receipt: %s", async (variant) => {
+    const wiki = variant.startsWith("wiki-");
+    if (variant === "legacy-valid") {
+      legacyReview = true;
+      variant = "valid";
+    }
+    if (wiki && variant !== "wiki-pass") variant = variant.slice(5);
     env.SEO_RESEARCH_ENABLED = "true";
     env.OPENAI_API_KEY_STORE = { get: async () => "fixture-secret" };
-    if (variant === "wiki-pass") {
+    if (wiki) {
       files = [
         {
           path: "poc/astro-sveltia/src/content/wiki/example.md",
@@ -385,7 +405,7 @@ describe("SEO durable editorial boundary", () => {
     if (variant === "lost-callback")
       rejectReview.mockResolvedValueOnce({ status: "denied" });
     let jobId: string;
-    if (variant === "wiki-pass") {
+    if (wiki) {
       const started = await start([
         {
           site: "wiki",
@@ -500,10 +520,10 @@ describe("SEO durable editorial boundary", () => {
       variant === "valid" ? "review_rejected" : "unresolved",
     );
     expect(
-      sql.prepare("SELECT count(*) n FROM seo_review_rejections").get()!.n,
+      sql.prepare("SELECT count(*) n FROM seo_all_review_rejections").get()!.n,
     ).toBe(safe ? 1 : 0);
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(mocks.infer).toHaveBeenCalledTimes(9);
+    expect(mocks.infer).toHaveBeenCalledTimes(wiki ? 1 : 9);
     if (safe) {
       const budget = sql
         .prepare("SELECT * FROM seo_budget_calls ORDER BY id")
@@ -531,9 +551,9 @@ describe("SEO durable editorial boundary", () => {
             "SELECT next_step,publication_started FROM seo_editorial_jobs",
           )
           .get(),
-      ).toEqual({ next_step: 9, publication_started: 0 });
+      ).toEqual({ next_step: wiki ? 1 : 9, publication_started: 0 });
       for (const query of [
-        "DELETE FROM seo_review_rejections",
+        "DELETE FROM seo_all_review_rejections",
         "UPDATE seo_editorial_jobs SET next_step=0",
         "UPDATE seo_budget_calls SET status='reserved'",
       ])

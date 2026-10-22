@@ -1,3 +1,5 @@
+import { sourceIdentity } from "./seo-content.ts";
+import { externalScope } from "./seo-external-sources.ts";
 import type { AppEnv } from "./env.ts";
 import { sha256 } from "./seo-hash.ts";
 import { responseText } from "./seo-responses.ts";
@@ -33,15 +35,19 @@ export async function immutableReviewObject(
 }
 export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
   const split = job.retrieval_contract === 2;
-  const expectedCalls = split ? 13 : 12;
-  const table = split ? "seo_all_checks" : "seo_editorial_checks";
+  const variable = job.variable_review === 1;
   const paths: string[] = JSON.parse(job.paths_json || "[]");
+  const count = variable ? paths.length : 9;
+  const expectedCalls = (split ? 4 : 3) + count;
+  const table = split ? "seo_all_checks" : "seo_editorial_checks";
   if (
+    (variable &&
+      (!split || job.allocation_version !== 2 || count < 1 || count > 9)) ||
     job.research_contract !== 2 ||
     job.status !== "generated" ||
-    job.next_step !== 9 ||
-    paths.length !== 9 ||
-    new Set(paths).size !== 9 ||
+    job.next_step !== count ||
+    paths.length !== count ||
+    new Set(paths).size !== count ||
     job.generation_started !== 1 ||
     job.publication_started !== 0 ||
     run.status !== "pending" ||
@@ -56,10 +62,26 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
       job.source_sha256
   )
     return fail();
+  if (variable) {
+    const identity = sourceIdentity(
+      job.site_id,
+      externalScope(job.site_id, canonical).sourceUrl,
+      source.value,
+    );
+    if (
+      !identity ||
+      identity.articleKey !== job.article_key ||
+      JSON.stringify([
+        identity.source.path,
+        ...identity.translations.map((t) => t.path),
+      ]) !== JSON.stringify(paths)
+    )
+      return fail();
+  }
   const final = await read(env, key(job.id, "review-input"));
   if (
     !Array.isArray(final.value) ||
-    final.value.length !== 9 ||
+    final.value.length !== count ||
     final.value.some(
       (f: any, i: number) =>
         f.path !== paths[i] || typeof f.content !== "string",
@@ -129,8 +151,8 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
         Object.keys(v).sort().join() !== "files,verdict" ||
         v.verdict !== "fail" ||
         !Array.isArray(v.files) ||
-        v.files.length !== 9 ||
-        new Set(v.files.map((x: any) => x.path)).size !== 9
+        v.files.length !== count ||
+        new Set(v.files.map((x: any) => x.path)).size !== count
       )
         return fail();
       if (
@@ -162,7 +184,7 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
       status: "completed",
     });
   }
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < count; i++) {
     const m = await read(env, key(job.id, `step-${i}-call`)),
       accepted = await read(env, key(job.id, `step-${i}`));
     const proposal = await read(env, `seo-proposals/${m.value.callId}.json`);
@@ -195,7 +217,7 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
   }
   if (ids.size !== expectedCalls || !ids.has(job.call_id)) return fail();
   const offer = {
-    version: split ? 2 : 1,
+    version: variable ? 3 : split ? 2 : 1,
     runId: run.run_id,
     jobId: job.id,
     articleKey: job.article_key,
@@ -214,7 +236,7 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
 }
 export async function reviewRejectionRow(env: AppEnv, jobId: string) {
   return env.CMS_AI_DB.prepare(
-    "SELECT receipt_sha256,receipt_json FROM seo_review_rejections WHERE job_id=?",
+    "SELECT receipt_sha256,receipt_json FROM seo_all_review_rejections WHERE job_id=?",
   )
     .bind(jobId)
     .first<{ receipt_sha256: string; receipt_json: string }>();
@@ -262,8 +284,9 @@ export async function finalizeReviewRejection(
     ...offer.value,
     reason: "confirmed_review_rejection",
     researchContract: 2,
-    generationCalls: 9,
-    generationArtifacts: 9,
+    generationCalls: job.variable_review === 1 ? offer.value.files.length : 9,
+    generationArtifacts:
+      job.variable_review === 1 ? offer.value.files.length : 9,
     publicationStarted: false,
     baseSha: job.base_sha,
     githubRunId: job.github_run_id,
@@ -283,7 +306,7 @@ export async function finalizeReviewRejection(
       return fail();
     await immutableReviewObject(env, key(job.id, "review-rejection"), receipt);
     await env.CMS_AI_DB.prepare(
-      "INSERT INTO seo_review_rejections(job_id,run_id,receipt_sha256,receipt_json,created_at) VALUES(?,?,?,?,?)",
+      `INSERT INTO ${job.variable_review === 1 ? "seo_variable_review_rejections" : "seo_review_rejections"}(job_id,run_id,receipt_sha256,receipt_json,created_at) VALUES(?,?,?,?,?)`,
     )
       .bind(job.id, run.run_id, hash, raw, Date.now())
       .run();
