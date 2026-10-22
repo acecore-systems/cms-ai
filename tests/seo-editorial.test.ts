@@ -672,6 +672,11 @@ describe("SEO durable editorial boundary", () => {
       const instruction = mocks.infer.mock.calls.at(-1)![2].instruction;
       expect(instruction).toContain("1 call = 1 file");
       expect(instruction).toContain(
+        "成功時とエラー時など対になる確認は両方を残し",
+      );
+      expect(instruction).toContain("原文にない手順や目的は補わない");
+      expect(instruction).toContain("後続の独立AI校閲が実際に判定する");
+      expect(instruction).toContain(
         "第" +
           (step + 1) +
           "/9段階、locale=" +
@@ -694,6 +699,8 @@ describe("SEO durable editorial boundary", () => {
         "判断材料が不足ならchangesを空にしてclarificationを返す",
       );
       if (step > 0) {
+        expect(instruction).toContain("冠詞と名詞の性数、主語と動詞の一致");
+        expect(instruction).toContain("文法を直すために意味を変えない");
         expect(instruction).toContain(
           "title・description・見出し・本文・リンク説明の通常語を担当言語へ訳し、日本語の断片を残さない",
         );

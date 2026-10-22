@@ -678,30 +678,37 @@ describe("AI review gate", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(budgetCount()).toBe(3);
   });
-  it("retains concrete review issues through the durable call index and never retries failed review", async () => {
-    const { identity, file, pass } = await setup();
-    pass.verdict = "fail";
-    pass.files[0].issues.push("否定条件が翻訳で失われている");
-    await expect(
-      reviewArticle(env, context, identity, [source], [file], [file]),
-    ).rejects.toThrow("seo_ai_review_failed");
-    const row = sql
-      .prepare("SELECT * FROM seo_editorial_checks WHERE phase='review'")
-      .get()!;
-    expect(row.status).toBe("unresolved");
-    const index = JSON.parse(
-      objects.get("seo-editorial/job/review-failure.json")!,
-    );
-    expect(index.callId).toBe(row.call_id);
-    expect(objects.get(index.responseKey)).toContain("否定条件");
-    await expect(
-      reviewArticle(env, context, identity, [source], [file], [file]),
-    ).rejects.toThrow("seo_check_conflict");
-    await expect(
-      assertReview(env, context, await sha256(JSON.stringify([file]))),
-    ).rejects.toThrow();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
+  it.each([
+    "否定条件が翻訳で失われている",
+    "成功応答だけでなくエラー応答を確認する手順と設定漏れ発見の目的が欠落しています。",
+    "Le source public は名詞と冠詞の性が一致していません。",
+  ])(
+    "retains review issue %s and never retries or releases publication",
+    async (issue) => {
+      const { identity, file, pass } = await setup();
+      pass.verdict = "fail";
+      pass.files[0].issues.push(issue);
+      await expect(
+        reviewArticle(env, context, identity, [source], [file], [file]),
+      ).rejects.toThrow("seo_ai_review_failed");
+      const row = sql
+        .prepare("SELECT * FROM seo_editorial_checks WHERE phase='review'")
+        .get()!;
+      expect(row.status).toBe("unresolved");
+      const index = JSON.parse(
+        objects.get("seo-editorial/job/review-failure.json")!,
+      );
+      expect(index.callId).toBe(row.call_id);
+      expect(objects.get(index.responseKey)).toContain(issue);
+      await expect(
+        reviewArticle(env, context, identity, [source], [file], [file]),
+      ).rejects.toThrow("seo_check_conflict");
+      await expect(
+        assertReview(env, context, await sha256(JSON.stringify([file]))),
+      ).rejects.toThrow();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    },
+  );
   it("rejects semantic edits masquerading as formatting before paying for review", async () => {
     const { identity, file } = await setup();
     await expect(
