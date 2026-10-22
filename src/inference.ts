@@ -37,6 +37,17 @@ export type InferenceResult = {
   summary: string;
 };
 
+class InferenceResponseError extends HttpError {
+  constructor(
+    readonly phase: "completion" | "envelope" | "json" | "shape" | "policy",
+    readonly reason: string,
+    status: number,
+    message: string,
+  ) {
+    super(status, message);
+  }
+}
+
 export async function runInference(
   env: AppEnv,
   site: SiteConfig,
@@ -108,7 +119,23 @@ export async function runInference(
     }
   }
 
-  const parsed = parseInferenceResponse(site, response);
+  let parsed: InferenceResult;
+  try {
+    parsed = parseInferenceResponse(site, response);
+  } catch (error) {
+    if (error instanceof InferenceResponseError) {
+      console.warn(
+        JSON.stringify({
+          event: "cms_ai_response_rejected",
+          model,
+          purpose,
+          phase: error.phase,
+          reason: error.reason,
+        }),
+      );
+    }
+    throw error;
+  }
 
   if (!canEdit(job.requestedRole)) {
     return {
@@ -245,7 +272,12 @@ export function parseInferenceResponse(
   const parsed = unwrapModelResponse(value);
 
   if (!isRecord(parsed)) {
-    throw new HttpError(502, "AIの応答形式を確認できません。");
+    throw new InferenceResponseError(
+      "shape",
+      "invalid_result",
+      502,
+      "AIの応答形式を確認できません。",
+    );
   }
 
   const modelSummary = limitedText(parsed.summary, 2_000);
@@ -255,7 +287,12 @@ export function parseInferenceResponse(
     (changes.length === 0 ? modelSummary : null);
 
   if (changes.length === 0 && !clarification) {
-    throw new HttpError(502, "AIから回答または変更案を受け取れませんでした。");
+    throw new InferenceResponseError(
+      "shape",
+      "missing_answer",
+      502,
+      "AIから回答または変更案を受け取れませんでした。",
+    );
   }
 
   const summary =
@@ -384,7 +421,12 @@ function buildUserPrompt(
 
 function parseChanges(site: SiteConfig, value: unknown) {
   if (!Array.isArray(value) || value.length > MAX_CHANGE_FILES) {
-    throw new HttpError(502, "AIの変更件数を確認できません。");
+    throw new InferenceResponseError(
+      "shape",
+      "changes_count",
+      502,
+      "AIの変更件数を確認できません。",
+    );
   }
 
   const paths = new Set<string>();
@@ -398,35 +440,47 @@ function parseChanges(site: SiteConfig, value: unknown) {
       typeof item.content !== "string" ||
       typeof item.reason !== "string"
     ) {
-      throw new HttpError(502, "AIの変更形式を確認できません。");
+      throw new InferenceResponseError(
+        "shape",
+        "change_shape",
+        502,
+        "AIの変更形式を確認できません。",
+      );
     }
 
     const path = normalizeRepositoryPath(item.path);
     const reason = limitedText(item.reason, 500);
     const bytes = new TextEncoder().encode(item.content).byteLength;
 
-    if (
-      !path ||
-      !isSiteWritablePath(site, path) ||
-      paths.has(path) ||
-      !reason ||
-      bytes === 0 ||
-      bytes > MAX_CHANGE_FILE_BYTES ||
-      /data:image\/[a-z0-9.+-]+;base64,|\/admin\/api\/ai\/jobs\/[^\s]+\/images\//i.test(
-        item.content,
-      ) ||
-      item.content.includes("\u0000")
-    ) {
-      throw new HttpError(
+    const reject: (code: string) => never = (code) => {
+      throw new InferenceResponseError(
+        "policy",
+        code,
         422,
         "AIの変更は許可されたサイトコード・コンテンツだけにしてください。",
       );
-    }
+    };
+    if (!path || !isSiteWritablePath(site, path)) reject("disallowed_path");
+    if (paths.has(path)) reject("duplicate_path");
+    if (!reason) reject("invalid_change_reason");
+    if (bytes === 0 || bytes > MAX_CHANGE_FILE_BYTES) reject("change_size");
+    if (
+      /data:image\/[a-z0-9.+-]+;base64,|\/admin\/api\/ai\/jobs\/[^\s]+\/images\//i.test(
+        item.content,
+      )
+    )
+      reject("private_image_reference");
+    if (item.content.includes("\u0000")) reject("null_character");
 
     totalBytes += bytes;
 
     if (totalBytes > MAX_CHANGE_BYTES) {
-      throw new HttpError(422, "AIの変更量が上限を超えました。");
+      throw new InferenceResponseError(
+        "policy",
+        "total_change_size",
+        422,
+        "AIの変更量が上限を超えました。",
+      );
     }
 
     paths.add(path);
@@ -437,7 +491,51 @@ function parseChanges(site: SiteConfig, value: unknown) {
 }
 
 function unwrapModelResponse(value: unknown): unknown {
-  if (!isRecord(value)) return null;
+  const invalidEnvelope = (): never => {
+    throw new InferenceResponseError(
+      "envelope",
+      "missing_content",
+      502,
+      "AIの応答形式を確認できません。",
+    );
+  };
+  if (!isRecord(value)) return invalidEnvelope();
+  // Check completion before accepting any JSON, including a parseable prefix.
+  // Legacy Workers AI response envelopes omit choices/finish_reason.
+  if (Array.isArray(value.choices)) {
+    for (const choice of value.choices) {
+      if (!isRecord(choice)) continue;
+      if (
+        choice.finish_reason !== undefined &&
+        choice.finish_reason !== "stop"
+      ) {
+        const reason = [
+          "length",
+          "content_filter",
+          "tool_calls",
+          "function_call",
+        ].includes(String(choice.finish_reason))
+          ? String(choice.finish_reason)
+          : "unknown_finish_reason";
+        throw new InferenceResponseError(
+          "completion",
+          reason,
+          502,
+          reason === "length"
+            ? "AIの応答が出力上限に達したため、変更案を受け取りませんでした。"
+            : "AIの応答が完了しなかったため、変更案を受け取りませんでした。",
+        );
+      }
+      if (isRecord(choice.message) && choice.message.refusal) {
+        throw new InferenceResponseError(
+          "completion",
+          "refusal",
+          502,
+          "AIが回答を完了できませんでした。",
+        );
+      }
+    }
+  }
   if (isRecord(value.response)) return value.response;
   if (typeof value.response === "string") return parseJson(value.response);
 
@@ -451,10 +549,10 @@ function unwrapModelResponse(value: unknown): unknown {
       })
       .at(0);
 
-    return typeof content === "string" ? parseJson(content) : null;
+    return typeof content === "string" ? parseJson(content) : invalidEnvelope();
   }
 
-  return null;
+  return invalidEnvelope();
 }
 
 function parseJson(value: string): unknown {
@@ -466,7 +564,12 @@ function parseJson(value: string): unknown {
   try {
     return JSON.parse(normalized);
   } catch {
-    return null;
+    throw new InferenceResponseError(
+      "json",
+      "invalid_json",
+      502,
+      "AIの応答形式を確認できません。",
+    );
   }
 }
 

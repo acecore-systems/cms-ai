@@ -5,6 +5,7 @@ AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤で�
 ## 方針
 
 - `CMS_AI_MODEL` は `@cf/deepseek-ai/deepseek-v4.1-flash-1017` です。既存のWorkers AI binding `AI`を使い、テキストと参考画像から会話回答・編集案を生成します。障害時のモデル自動切替やJSON Schemaを外した再送はしません。
+- Chat Completionsの終了理由が`length`・`content_filter`等の未完了状態なら、有効なJSONが含まれていても変更案を受理しません。応答検証の失敗は`cms_ai_response_rejected`イベントへモデル・用途・固定値のphase/reasonだけを記録し、会話・ソース・画像・応答本文・推論過程を記録しません。
 - 推論深度はメッセージごとに`low`、`medium`、`high`、`max`から選べます。DeepSeekでは`medium`を`high`へ対応させます。その他は同名の深度を渡します（[Cloudflare公式仕様](https://developers.cloudflare.com/workers-ai/models/deepseek-v4.1-flash-1017/)）。
 - SEO生成・調査・校閲は別設定`SEO_AI_MODEL=gpt-6-luna`を使い、既存のOpenAI API直結とSecrets Store binding `OPENAI_API_KEY_STORE`を維持します。
 - 質問、相談、修正依頼は同じ会話で扱い、対象URLの入力は求めません。
@@ -35,6 +36,8 @@ npm run deploy:dry-run
 ```
 
 CMSの実モデル確認にはWorkers AIのremote bindingと有料アクセス、SEOにはOpenAI側の課金設定が必要です。通常の単体テストではfixtureを使います。文章・変更内容は生成APIが一度の推論で返し、権限・許可パス・PR承認はアプリケーションで検証します。
+
+合成参考画像には`tests/fixtures/reference-red.png`（64×64の赤色RGB PNG）を使います。画像のCRC・終端・全画素は`tests/reference-image.test.ts`で検証します。実モデルの画像理解の確認結果と、JSON・編集内容の検証結果は区別します。
 
 共有runnerはGitHub-hosted Linux runnerのDockerを利用します。依存関係の取得時だけsandboxのnetworkを有効にし、その後の検証コマンドはnetworkなしで実行します。
 
