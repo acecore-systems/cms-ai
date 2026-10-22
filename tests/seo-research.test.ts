@@ -104,6 +104,7 @@ beforeEach(async () => {
     "0008_seo_rejection.sql",
     "0009_seo_review_rejection.sql",
     "0010_seo_discovery.sql",
+    "0012_seo_run_budget.sql",
   ])
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),
@@ -523,7 +524,7 @@ describe("SEO fresh search evidence and retained budget", () => {
           context.deadline,
         );
       else
-        for (let i = 2; i < 7; i++)
+        for (let i = 2; i < 9; i++)
           await budget.reserve(
             id(i),
             id(i + 80),

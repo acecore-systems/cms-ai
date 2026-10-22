@@ -29,6 +29,13 @@ beforeEach(() => {
       "utf8",
     ),
   );
+  sql.exec("CREATE TABLE seo_editorial_jobs(id TEXT PRIMARY KEY)");
+  sql.exec(
+    readFileSync(
+      new URL("../migrations/0012_seo_run_budget.sql", import.meta.url),
+      "utf8",
+    ),
+  );
   const prepare = (query: string) => ({
     bind: (...args: (string | number)[]) => ({
       run: async () => ({
@@ -60,6 +67,84 @@ beforeEach(() => {
 });
 afterEach(() => sql.close());
 describe("SEO persistent budget", () => {
+  it("fixes each new run's version and rejects mixed versions while enforcing $1.25 and $7 atomically", async () => {
+    await budget.reserve(id(1), id(11), "a", hash, 900000, now, now + 60000, 2);
+    await budget.finish(id(11), "unresolved");
+    const results = await Promise.allSettled([
+      budget.reserve(id(1), id(12), "a", hash, 350000, now, now + 60000, 2),
+      budget.reserve(id(1), id(13), "a", hash, 350000, now, now + 60000, 2),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    await expect(
+      budget.reserve(id(1), id(14), "a", hash, 1, now, now + 60000, 1),
+    ).rejects.toThrow();
+    expect(
+      sql.prepare("SELECT SUM(reserved_micros) n FROM seo_budget_calls").get()!
+        .n,
+    ).toBe(1250000);
+    expect(() =>
+      sql.exec("UPDATE seo_budget_runs SET run_limit_micros=1000000"),
+    ).toThrow("immutable_run_limit");
+    for (let i = 2; i <= 6; i++)
+      await budget.reserve(
+        id(i),
+        id(i + 20),
+        "a",
+        hash,
+        1000000,
+        now,
+        now + 60000,
+        2,
+      );
+    await budget.reserve(id(7), id(27), "a", hash, 750000, now, now + 60000, 2);
+    await expect(
+      budget.reserve(id(8), id(28), "a", hash, 1, now, now + 60000, 2),
+    ).rejects.toThrow("seo_month_budget_exhausted");
+  });
+  it("migration keeps every old column and assigns immutable legacy defaults", () => {
+    const legacy = new DatabaseSync(":memory:");
+    try {
+      legacy.exec(
+        readFileSync(
+          new URL("../migrations/0004_seo_budget.sql", import.meta.url),
+          "utf8",
+        ),
+      );
+      legacy.exec(
+        "CREATE TABLE seo_editorial_jobs(id TEXT PRIMARY KEY,status TEXT); INSERT INTO seo_editorial_jobs VALUES('old','unresolved'); INSERT INTO seo_budget_runs VALUES('old','article',1,2); INSERT INTO seo_budget_calls VALUES('call','old','2026-10','hash',123,'unresolved',1)",
+      );
+      const before = legacy.prepare("SELECT * FROM seo_budget_calls").all();
+      legacy.exec(
+        readFileSync(
+          new URL("../migrations/0012_seo_run_budget.sql", import.meta.url),
+          "utf8",
+        ),
+      );
+      expect(legacy.prepare("SELECT * FROM seo_budget_calls").all()).toEqual(
+        before,
+      );
+      expect(legacy.prepare("SELECT * FROM seo_budget_runs").get()).toEqual({
+        id: "old",
+        article_key: "article",
+        created_at: 1,
+        deadline: 2,
+        run_limit_micros: 1000000,
+      });
+      expect(legacy.prepare("SELECT * FROM seo_editorial_jobs").get()).toEqual({
+        id: "old",
+        status: "unresolved",
+        budget_version: 1,
+      });
+      expect(() =>
+        legacy.exec("UPDATE seo_editorial_jobs SET budget_version=2"),
+      ).toThrow("immutable_budget_version");
+      expect(() =>
+        legacy.exec("UPDATE seo_budget_runs SET run_limit_micros=1250000"),
+      ).toThrow("immutable_run_limit");
+    } finally {
+      legacy.close();
+    }
+  });
   it("upgrades the monthly trigger without changing prior complete/unknown reservations or deadlines", async () => {
     sql.exec("DROP TRIGGER seo_budget_cap");
     const original = readFileSync(

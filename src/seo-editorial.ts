@@ -1,3 +1,4 @@
+import { stageBudget, CURRENT_BUDGET_VERSION } from "./seo-stage-budget.ts";
 import {
   immutableReviewObject,
   prepareReviewRejection,
@@ -38,8 +39,6 @@ import {
 import {
   allocateGenerationInputs,
   assertGenerationAllocation,
-  SPLIT_RESEARCH_RUN_MICROS,
-  STAGE_INPUT_BYTES,
 } from "./seo-stage-budget.ts";
 import { evidenceReferences } from "./seo-evidence.ts";
 import { buildEditorialInstruction } from "./seo-editorial-instruction.ts";
@@ -77,6 +76,7 @@ type EditorialJob = {
   protocol_version: number;
   research_contract: number;
   retrieval_contract: number;
+  budget_version: number;
   input_allocation_sha256: string | null;
   generation_started: number;
   publication_started: number;
@@ -283,13 +283,14 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract) SELECT ?,run_id,?,candidate_index,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version) SELECT ?,run_id,?,candidate_index,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
         researchEnabled(env, runId) ? 2 : 1,
         researchEnabled(env, runId) ? 2 : 1,
         researchEnabled(env, runId) ? 2 : 1,
+        CURRENT_BUDGET_VERSION,
         runId,
         run.candidate_index,
       ),
@@ -747,7 +748,10 @@ async function claimJob(
       ReturnType<typeof allocateGenerationInputs> | undefined;
     if (job.retrieval_contract === 2) {
       try {
-        generationAllocation = allocateGenerationInputs(generationInputs);
+        generationAllocation = allocateGenerationInputs(
+          generationInputs,
+          job.budget_version,
+        );
       } catch {
         /* ineligible, no paid call */
       }
@@ -767,18 +771,22 @@ async function claimJob(
       throw new Error("seo_budget_state_conflict");
     const reasons = [
       ...(monthly &&
-      monthly.held + SPLIT_RESEARCH_RUN_MICROS > SEO_BUDGET.monthMicros
+      monthly.held + stageBudget(job.budget_version).maximum >
+        SEO_BUDGET.monthMicros
         ? ["monthly_budget_insufficient"]
         : []),
-      ...(planBytes > STAGE_INPUT_BYTES.plan ? ["plan_input_exceeded"] : []),
-      ...(reviewBytes > STAGE_INPUT_BYTES.review
+      ...(planBytes > stageBudget(job.budget_version).limits.plan
+        ? ["plan_input_exceeded"]
+        : []),
+      ...(reviewBytes > stageBudget(job.budget_version).limits.review
         ? ["baseline_review_input_exceeded"]
         : []),
       ...((
         job.retrieval_contract === 2
           ? !generationAllocation
           : generationInputs.some(
-              (input) => input.bytes > STAGE_INPUT_BYTES.generation,
+              (input) =>
+                input.bytes > stageBudget(job.budget_version).limits.generation,
             )
       )
         ? ["baseline_generation_input_exceeded"]
@@ -787,6 +795,7 @@ async function claimJob(
     const preflightRaw = JSON.stringify({
       version: 1,
       researchContract: 2,
+      ...(job.budget_version === 2 ? { budgetVersion: 2 } : {}),
       baseSha: body.baseSha,
       sourceSha256: sourceHash,
       sourceBundleSha256: await sha256(JSON.stringify(baseline)),
@@ -798,9 +807,16 @@ async function claimJob(
         ? { generationAllocation, retrievalContract: 2 }
         : {}),
       limits: {
-        plan: STAGE_INPUT_BYTES.plan,
-        review: STAGE_INPUT_BYTES.review,
-        generation: STAGE_INPUT_BYTES.generation,
+        plan: stageBudget(job.budget_version).limits.plan,
+        review: stageBudget(job.budget_version).limits.review,
+        generation: stageBudget(job.budget_version).limits.generation,
+        ...(job.budget_version === 2
+          ? {
+              generationPool: stageBudget(2).pool,
+              maximumMicros: stageBudget(2).maximum,
+              runMicros: stageBudget(2).runMicros,
+            }
+          : {}),
       },
       evidenceStatus: "not_acquired_size_estimate_only",
       reasons,
@@ -871,6 +887,7 @@ function checkContext(job: EditorialJob, run: Run): CheckContext {
     deadline: run.deadline,
     contractVersion: job.research_contract,
     retrievalVersion: job.retrieval_contract,
+    budgetVersion: job.budget_version,
   };
 }
 
@@ -963,13 +980,14 @@ async function propose(
     if (
       !saved ||
       saved.retrievalContract !== 2 ||
+      (saved.budgetVersion ?? 1) !== job.budget_version ||
       saved.sourceSha256 !== job.source_sha256 ||
       saved.baseSha !== job.base_sha ||
       JSON.stringify(saved.generationAllocation?.map((x: any) => x.path)) !==
         JSON.stringify(paths)
     )
       throw new Error("seo_check_evidence");
-    assertGenerationAllocation(saved.generationAllocation);
+    assertGenerationAllocation(saved.generationAllocation, job.budget_version);
     generationInputCap = saved.generationAllocation[job.next_step].maxBytes;
   }
   const callId = "seo-" + crypto.randomUUID();
@@ -981,6 +999,7 @@ async function propose(
   if (changed.meta.changes !== 1) throw new Error("state");
   const generated = await generateSeo(env, {
     runId: run.budget_run_id,
+    budgetVersion: job.budget_version,
     callId,
     deadline: run.deadline,
     siteId: job.site_id,

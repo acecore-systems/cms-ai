@@ -1,5 +1,27 @@
 # SEOの新規資料調査とAI校閲
 
+## 2026-10-23: 新規jobの1.25 USD配分（実装検証、本番適用前）
+
+利用者の明示承認で1.25 USD/run・7 USD/JST月を採用する。原文、全9locale、guide、条件、出力12000 tokens、URL完全一致・公式性・引用・支持判定・AI校閲を維持し、入力packing試作は採用しない。既存の本番payload builderを変更せず、`budget_version=2`のjobだけplan32000、discovery/research各16000、review500000 bytes、生成9段階の固定pool525000 bytesを使う。最大3候補・1記事・30分・Draft終了は不変。
+
+保守的な全13callの最大はplan18058 + discovery107316 + retrieval107316 + generation814728 + review158458 = **1205876 microUSD**。`stageBudget(2)`を計測・予約・実送信上限の共通定義とし、各call切上げと出力上限を含む実request回帰で確認する。差額44124は再試行枠ではない。claim前には同じbuilderで全9原稿を計測し、月残額が全工程最大未満ならAPI/lock取得前にskipする。実根拠や改訂の増大は各段階送信前に再検査し、超過時は停止する。
+
+CMS0012を新コードより先に適用する。旧runには1 USD上限、旧jobにはbudget version1をdefaultとして追加し、それ以外の旧列を変更しない。version1はplan16000/review180000/pool405000と既存保存allocationを保持する。新version2のpreflightは版・上限・path順・source hashを含む全体hashで固定し、propose時にjob版と一致することを要求する。run上限とjob版のUPDATEは禁止する。研究/拒否receipt版・call数・OIDC/runner protocolは変わらず、SEO側migration・6site runner pin更新は不要。
+
+最新取得原稿（2026-10-23、Systems `fd4af4fe` / Portal `b456acaa`）と実builderによる無課金計測は次のとおり。原本とguideは全保持。合成根拠はサイズ見積専用で、実取得・主張支持・生成成功を意味しない。
+
+| 自然候補                          | plan bytes | baseline review bytes | 既知生成合計 bytes | 判定                 |
+| --------------------------------- | ---------: | --------------------: | -----------------: | -------------------- |
+| Systems Astro i18n                |      19166 |                257332 |             537058 | pool超過、無課金skip |
+| Systems AI monkey testing         |      21724 |                239205 |             469500 | baseline適合         |
+| Portal Java/Bedrock shared server |      23292 |                201307 |             444854 | baseline適合         |
+
+全9原稿の各段落へ合成改訂を加え、さらに本文UTF-8 bytesの10%を増やした検証でも、候補1/2（0始まり）は全文復元一致・上限内だった。校閲413941/363423 bytes、生成配分の最小残1494/5618 bytes。これは有限のストレスfixtureであり、任意の実改訂増大や品質合格を保証しない。候補0を差し替えず、自然順にskip後の候補を既存最終gateで照合する。
+
+計測原本・script・結果は非公開SEO root `.local/research-run125-20261023/`に保持する。残額2916659なら全工程最大2回後504907 microUSD（1.25 USD枠を2回確保した場合416659）だが、本番実行前の最新台帳確認と運用担当者による10月26日枠の確保が必要。今回の実装作業では有料API・本番migration・配備を行わない。
+
+以下は過去の配分・配備時点の記録。
+
 ## 2026-10-22: 月7 USDと一次資料の優先選定（実装・本番未反映）
 
 利用者の新承認により月上限を7 USDへ変更する。1 USD/run・全工程最大985076 microUSD・最大3候補/1記事・30分・Draft終了は維持。CMS0011を先に適用して旧全行不変を確認し、その後コードを配置する。既存5 USDの履歴は当時の条件として残す。CLIは独自の月上限を持たず、共通`SEO_BUDGET`とCMS D1予約を利用する。

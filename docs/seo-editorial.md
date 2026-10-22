@@ -1,5 +1,7 @@
 # クラウド週次SEOのDraft PR経路
 
+2026-10-23追加: 新規jobの予算版2は1.25 USD/run・7 USD/JST月。旧job/保存配分は版1のまま保持する。CMS0012を先に適用する手順と工程別上限は[費用上限](seo-budget.md)・[新規調査](seo-research.md)を参照。runner/OIDCとDraft終了契約は変更しない。
+
 2026-10-20追加: 新規資料検索・取得・AI校閲のv2は[追加契約と段階配備](seo-research.md)を参照。初期無効・実API未確認であり、以下の既存v1の実受入と区別する。
 
 通常CMSの`runner@v1`、ユーザーrole、会話、編集経路は維持する。SEOは独立したService Binding、OIDC audience、workflow、D1 state、actionを使い、確認済みDraft PRだけを結果として返す。実際の記事生成・dispatch・統合・公開は、この実装PRの受入後に別途確認する。
