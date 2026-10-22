@@ -4,8 +4,9 @@ AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤で�
 
 ## 方針
 
-- `CMS_AI_MODEL` は現在 `gpt-6-luna`（OpenAI API直結、Secrets Store binding `OPENAI_API_KEY_STORE` が必要）です。将来は検証済みのGLM以外の`@cf/`文章モデルを明示設定してWorkers AI bindingへ切り替えられます。キー不足や障害時の自動切替はしません。テキストと画像入力を扱います。
-- 推論深度はメッセージごとに`low`、`medium`、`high`から選べます。
+- `CMS_AI_MODEL` は `@cf/deepseek-ai/deepseek-v4.1-flash-1017` です。既存のWorkers AI binding `AI`を使い、テキストと参考画像から会話回答・編集案を生成します。障害時のモデル自動切替やJSON Schemaを外した再送はしません。
+- 推論深度はメッセージごとに`low`、`medium`、`high`、`max`から選べます。DeepSeekでは`medium`を`high`へ対応させます。その他は同名の深度を渡します（[Cloudflare公式仕様](https://developers.cloudflare.com/workers-ai/models/deepseek-v4.1-flash-1017/)）。
+- SEO生成・調査・校閲は別設定`SEO_AI_MODEL=gpt-6-luna`を使い、既存のOpenAI API直結とSecrets Store binding `OPENAI_API_KEY_STORE`を維持します。
 - 質問、相談、修正依頼は同じ会話で扱い、対象URLの入力は求めません。
 - 会話にPNG・JPEG・WebPを1回4枚、各2MiBまで添付・貼り付けできます。画像のみの送信も可能です。画像生成は行いません。
 - 添付は非公開R2へ保存し、Access・サイト権限・会話所有者の検証後にだけ配信します。GitHub Actionsや公開リポジトリへ画像データを渡しません。
@@ -33,7 +34,7 @@ npm run format:check
 npm run deploy:dry-run
 ```
 
-実モデル確認にはremote bindingとOpenAI側の課金設定が必要です。通常の単体テストではfixtureを使います。文章・変更内容は既存の生成APIが一度の推論で返し、権限・許可パス・PR承認はアプリケーションで検証します。
+CMSの実モデル確認にはWorkers AIのremote bindingと有料アクセス、SEOにはOpenAI側の課金設定が必要です。通常の単体テストではfixtureを使います。文章・変更内容は生成APIが一度の推論で返し、権限・許可パス・PR承認はアプリケーションで検証します。
 
 共有runnerはGitHub-hosted Linux runnerのDockerを利用します。依存関係の取得時だけsandboxのnetworkを有効にし、その後の検証コマンドはnetworkなしで実行します。
 

@@ -47,7 +47,8 @@ describe("SEO generation gate", () => {
     vi.stubGlobal("fetch", fetcher);
     const env = {
       SEO_GENERATION_ENABLED: "true",
-      CMS_AI_MODEL: "gpt-6-luna",
+      CMS_AI_MODEL: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+      SEO_AI_MODEL: "gpt-6-luna",
       OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
       CMS_AI_DB: {
         prepare: () => statement,
@@ -109,7 +110,8 @@ it("rejects oversized v2 generation before reserve/fetch without truncation", as
   const batch = vi.fn();
   const env = {
     SEO_GENERATION_ENABLED: "true",
-    CMS_AI_MODEL: "gpt-6-luna",
+    CMS_AI_MODEL: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+    SEO_AI_MODEL: "gpt-6-luna",
     OPENAI_API_KEY_STORE: { get: async () => "fixture" },
     CMS_AI_DB: { batch },
   } as unknown as AppEnv;

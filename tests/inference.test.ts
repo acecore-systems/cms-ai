@@ -10,8 +10,121 @@ import type { Job, Role } from "../src/models.ts";
 import { getSiteById } from "../src/sites.ts";
 
 const site = getSiteById("homepage-hatt")!;
+const deepSeekModel = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
 
 describe("Workers AI inference", () => {
+  it.each([
+    ["low", "low"],
+    ["medium", "high"],
+    ["high", "high"],
+    ["max", "max"],
+  ] as const)(
+    "DeepSeekの編集へ%sを%sとして送りschema付き応答を検証する",
+    async (effort, mappedEffort) => {
+      const change = {
+        content: "<main>after</main>\n",
+        path: "src/pages/index.astro",
+        reason: "依頼された文言を更新します。",
+      };
+      const run = vi.fn().mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                changes: [change],
+                clarification: "",
+                summary: "トップページを更新しました。",
+              }),
+            },
+          },
+        ],
+      });
+      const getKey = vi.fn();
+      const result = await runInference(
+        {
+          AI: { run },
+          CMS_AI_MODEL: deepSeekModel,
+          SEO_AI_MODEL: "gpt-6-luna",
+          OPENAI_API_KEY_STORE: { get: getKey },
+        } as unknown as AppEnv,
+        site,
+        job({ reasoningEffort: effort }),
+        [{ content: "<main>before</main>\n", path: change.path }],
+        [],
+        "見出しはmain内だけを修正してください。",
+      );
+      expect(run).toHaveBeenCalledTimes(1);
+      const [model, input] = run.mock.calls[0];
+      expect(model).toBe(deepSeekModel);
+      expect(input).toMatchObject({
+        max_completion_tokens: 12_000,
+        reasoning_effort: mappedEffort,
+        store: false,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "cms_ai_changes",
+            strict: true,
+            schema: { required: ["summary", "clarification", "changes"] },
+          },
+        },
+      });
+      expect(input.messages.at(-1).content).toContain(
+        "見出しはmain内だけを修正してください。",
+      );
+      expect(result.changes).toEqual([change]);
+      expect(getKey).not.toHaveBeenCalled();
+    },
+  );
+
+  it("DeepSeek失敗時はschemaを外した再送やOpenAIへの切替をしない", async () => {
+    const run = vi.fn().mockRejectedValue(new Error("provider_failed"));
+    const getKey = vi.fn();
+    await expect(
+      runInference(
+        {
+          AI: { run },
+          CMS_AI_MODEL: deepSeekModel,
+          OPENAI_API_KEY_STORE: { get: getKey },
+        } as unknown as AppEnv,
+        site,
+        job(),
+        [{ content: "<main/>\n", path: "src/pages/index.astro" }],
+        [],
+      ),
+    ).rejects.toThrow(/AIの応答/);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(getKey).not.toHaveBeenCalled();
+  });
+
+  it("DeepSeekでも許可範囲外の変更を拒否する", async () => {
+    const run = vi.fn().mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              changes: [
+                { content: "unsafe", path: "package.json", reason: "変更" },
+              ],
+              clarification: "",
+              summary: "変更",
+            }),
+          },
+        },
+      ],
+    });
+    await expect(
+      runInference(
+        { AI: { run }, CMS_AI_MODEL: deepSeekModel } as unknown as AppEnv,
+        site,
+        job(),
+        [{ content: "<main/>\n", path: "src/pages/index.astro" }],
+        [],
+      ),
+    ).rejects.toThrow(/許可された/);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it("SEOの予算確保が失敗した場合はAPI呼出しとfallbackを行わない", async () => {
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);
@@ -19,7 +132,8 @@ describe("Workers AI inference", () => {
       await expect(
         runInference(
           {
-            CMS_AI_MODEL: "gpt-6-luna",
+            CMS_AI_MODEL: deepSeekModel,
+            SEO_AI_MODEL: "gpt-6-luna",
             OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
           } as unknown as AppEnv,
           site,
@@ -30,6 +144,8 @@ describe("Workers AI inference", () => {
           async () => {
             throw new Error("budget");
           },
+          undefined,
+          "seo",
         ),
       ).rejects.toThrow();
       expect(fetcher).not.toHaveBeenCalled();
@@ -48,7 +164,8 @@ describe("Workers AI inference", () => {
       await expect(
         runInference(
           {
-            CMS_AI_MODEL: "gpt-6-luna",
+            CMS_AI_MODEL: deepSeekModel,
+            SEO_AI_MODEL: "gpt-6-luna",
             OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
           } as unknown as AppEnv,
           site,
@@ -62,6 +179,8 @@ describe("Workers AI inference", () => {
             expect(request.max_completion_tokens).toBe(12000);
             order.push("reserved");
           },
+          undefined,
+          "seo",
         ),
       ).rejects.toThrow();
       expect(order).toEqual(["reserved", "request"]);
@@ -91,7 +210,7 @@ describe("Workers AI inference", () => {
     const env = {
       AI: { run },
       CMS_AI_IMAGES: { get },
-      CMS_AI_MODEL: "@cf/example/chat-model",
+      CMS_AI_MODEL: deepSeekModel,
     } as unknown as AppEnv;
     const previous = job({
       id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -108,6 +227,9 @@ describe("Workers AI inference", () => {
       [previous, current],
     );
     const input = run.mock.calls[0][1];
+    expect(run.mock.calls[0][0]).toBe(deepSeekModel);
+    expect(input.reasoning_effort).toBe("high");
+    expect(input.response_format.json_schema.strict).toBe(true);
     expect(input.messages[1].content[1].image_url.url).toBe(
       "data:image/png;base64,AQID",
     );
@@ -162,10 +284,10 @@ describe("Workers AI inference", () => {
       ).toThrow(/許可された/);
     }
   });
-  it("Workers AIへ画像入力・effortと会話履歴を渡す", async () => {
+  it("DeepSeekへeffortと会話履歴を渡す", async () => {
     const calls: Array<{ input: any; model: string; options: any }> = [];
     const env = {
-      CMS_AI_MODEL: "@cf/example/chat-model",
+      CMS_AI_MODEL: deepSeekModel,
       AI: {
         async run(model: string, input: unknown, options: any) {
           calls.push({ input, model, options });
@@ -205,7 +327,7 @@ describe("Workers AI inference", () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].model).toBe("@cf/example/chat-model");
+    expect(calls[0].model).toBe(deepSeekModel);
     expect(calls[0].options).toBe(undefined);
     expect(calls[0].input.reasoning_effort).toBe("high");
     expect(calls[0].input.response_format.type).toBe("json_schema");
@@ -217,7 +339,7 @@ describe("Workers AI inference", () => {
 
   it("chat権限ではモデルが変更を返してもサーバー側で変更を空にする", async () => {
     const env = {
-      CMS_AI_MODEL: "@cf/example/chat-model",
+      CMS_AI_MODEL: deepSeekModel,
       AI: {
         async run() {
           return {

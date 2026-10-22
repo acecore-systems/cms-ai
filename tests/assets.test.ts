@@ -48,12 +48,15 @@ describe("shared client and runner assets", () => {
     expect(workflow).toMatch(/timeout-minutes: 45/);
   });
 
-  it("Worker設定はGPT-6 Lunaと非公開R2を使いautomergeをfalseに固定する", async () => {
+  it("Worker設定はCMSのDeepSeekとSEOのLunaを分離しautomergeをfalseに固定する", async () => {
     const config = await readFile(
       new URL("../wrangler.jsonc", import.meta.url),
       "utf8",
     );
-    expect(config).toMatch(/"CMS_AI_MODEL":\s*"gpt-6-luna"/);
+    expect(config).toMatch(
+      /"CMS_AI_MODEL":\s*"@cf\/deepseek-ai\/deepseek-v4\.1-flash-1017"/,
+    );
+    expect(config).toMatch(/"SEO_AI_MODEL":\s*"gpt-6-luna"/);
     expect(config).toMatch(/CMS_AI_IMAGES/);
     expect(config).toMatch(/CMS_AI_AUTOMERGE_ENABLED.*false/);
   });
