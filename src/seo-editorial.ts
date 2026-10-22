@@ -83,6 +83,7 @@ type EditorialJob = {
   external_sources: 0 | 1;
   research_context: "low" | "high";
   allocation_version: 1 | 2;
+  variable_review: 0 | 1;
   input_allocation_sha256: string | null;
   generation_started: number;
   publication_started: number;
@@ -289,7 +290,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -302,6 +303,7 @@ async function advance(env: AppEnv, runId: string) {
         1,
         "high",
         2,
+        1,
         runId,
         run.candidate_index,
       ),
