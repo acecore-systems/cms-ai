@@ -64,6 +64,7 @@ beforeEach(async () => {
     "0015_seo_october_budget.sql",
     "0016_seo_external_sources.sql",
     "0017_seo_research_context.sql",
+    "0018_seo_allocation_cardinality.sql",
   ])
     sql.exec(
       readFileSync(
@@ -241,6 +242,7 @@ async function claimed() {
 describe("SEO durable editorial boundary", () => {
   it.each([
     "valid",
+    "wiki-pass",
     "missing-manifest",
     "budget-unknown",
     "source-changed",
@@ -254,6 +256,20 @@ describe("SEO durable editorial boundary", () => {
   ])("review rejection receipt: %s", async (variant) => {
     env.SEO_RESEARCH_ENABLED = "true";
     env.OPENAI_API_KEY_STORE = { get: async () => "fixture-secret" };
+    if (variant === "wiki-pass") {
+      files = [
+        {
+          path: "poc/astro-sveltia/src/content/wiki/example.md",
+          content: files[0].content,
+        },
+      ];
+      mocks.identity = {
+        site: seoSite("wiki")!.site,
+        repository: seoSite("wiki")!.site.repository,
+        runId: "100",
+        workflowSha: baseSha,
+      };
+    }
     const reference = "https://docs.example.org/new-guide";
     const infer = mocks.infer.getMockImplementation()!;
     mocks.infer.mockImplementation(async (...args) => {
@@ -297,13 +313,13 @@ describe("SEO durable editorial boundary", () => {
               ],
             }
           : {
-              verdict: "fail",
+              verdict: variant === "wiki-pass" ? "pass" : "fail",
               files: input.files.map((f: any) => ({
                 path: f.path,
                 meaningPreserved: true,
                 naturalLanguage: true,
                 referencesSupported: true,
-                issues: ["原文の条件が脱落"],
+                issues: variant === "wiki-pass" ? [] : ["原文の条件が脱落"],
               })),
             };
       return new Response(
@@ -368,11 +384,25 @@ describe("SEO durable editorial boundary", () => {
     (env.SEO_COORDINATOR as any).rejectReview = rejectReview;
     if (variant === "lost-callback")
       rejectReview.mockResolvedValueOnce({ status: "denied" });
-    const jobId = await claimed();
+    let jobId: string;
+    if (variant === "wiki-pass") {
+      const started = await start([
+        {
+          site: "wiki",
+          url: "https://asv-wiki.acecore.net/article/example/",
+          reason: candidate.reason,
+        },
+      ]);
+      jobId = started.jobId!;
+      await request(jobId);
+      expect((await request(jobId, "claim", { baseSha, files })).status).toBe(
+        "claimed",
+      );
+    } else jobId = await claimed();
     expect((await request(jobId, "research", {})).status).toBe("researched");
     const finalFiles = [];
     let japanese = "";
-    for (let step = 0; step < 9; step++) {
+    for (let step = 0; step < files.length; step++) {
       const result = await request(jobId, "propose", {
         step,
         ...(step === 1 ? { japanese } : {}),
@@ -390,6 +420,22 @@ describe("SEO durable editorial boundary", () => {
       };
       finalFiles.push(file);
       if (step === 0) japanese = file.content;
+    }
+    if (variant === "wiki-pass") {
+      const reviewed = await request(jobId, "review", { files: finalFiles });
+      expect(reviewed.status).toBe("reviewed");
+      expect(mocks.infer).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(
+        sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n,
+      ).toBe(5);
+      const preflight = JSON.parse(
+        objects.get("seo-editorial/" + jobId + "/eligibility-preflight.json")!,
+      );
+      expect(preflight.allocationVersion).toBe(2);
+      expect(preflight.generationAllocation).toHaveLength(1);
+      expect(preflight.generationAllocation[0].maxBytes).toBe(58333);
+      return;
     }
     if (variant === "missing-manifest")
       objects.delete("seo-editorial/" + jobId + "/step-0-call.json");

@@ -35,16 +35,19 @@ export const GENERATION_INPUT_POOL = 9 * limits.generation;
 export function allocateGenerationInputs(
   inputs: { path: string; bytes: number }[],
   version = 1,
+  allocationVersion = 1,
 ) {
+  const count = inputs.length;
   if (
-    inputs.length !== 9 ||
-    new Set(inputs.map((x) => x.path)).size !== 9 ||
+    ![1, 2].includes(allocationVersion) ||
+    (allocationVersion === 1 ? count !== 9 : count < 1 || count > 9) ||
+    new Set(inputs.map((x) => x.path)).size !== count ||
     inputs.some(
       (x) => !x.path || !Number.isSafeInteger(x.bytes) || x.bytes <= 0,
     )
   )
     throw new Error("seo_stage_allocation");
-  const pool = stageBudget(version).pool;
+  const pool = Math.floor((stageBudget(version).pool * count) / 9);
   const used = inputs.reduce((total, x) => total + x.bytes, 0);
   if (used > pool) throw new Error("seo_stage_input_budget");
   const remaining = pool - used;
@@ -54,19 +57,23 @@ export function allocateGenerationInputs(
     path: input.path,
     baselineBytes: input.bytes,
     maxBytes:
-      input.bytes + Math.floor(remaining / 9) + (i < remaining % 9 ? 1 : 0),
+      input.bytes +
+      Math.floor(remaining / count) +
+      (i < remaining % count ? 1 : 0),
   }));
 }
 
 export function assertGenerationAllocation(
   value: ReturnType<typeof allocateGenerationInputs>,
   version = 1,
+  allocationVersion = 1,
 ) {
   if (
     JSON.stringify(
       allocateGenerationInputs(
         value.map((x) => ({ path: x.path, bytes: x.baselineBytes })),
         version,
+        allocationVersion,
       ),
     ) !== JSON.stringify(value)
   )
