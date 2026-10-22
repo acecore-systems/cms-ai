@@ -1,0 +1,15 @@
+# 固定URL取得のcontext拡大
+
+trial1は固定URLのopenとcitationが成立したが、モデルが対応OSを確認できないとしてinsufficientで正常終端した。保存応答にproviderの取得本文そのものはないため、長いナビゲーションによる切落としが原因とは断定しない。別途閲覧した公開ページで本文が存在することと、実APIがその本文を取得したことは区別する。
+
+[OpenAI公式仕様](https://developers.openai.com/api/docs/guides/tools-web-search)のsearch_context_sizeはモデルへ渡す検索内容の量を制御する。highは詳細を必要とする場合の設定だが、全文取得・特定token数・引用数を保証しない。検索context上限は128k。今回unlimitedやtool追加は使用しない。
+
+新jobの固定URLresearch取得だけhighとし、discoveryはlowを維持する。0017でresearch_contextを既定low・変更禁止として追加し、新jobだけhighを保存する。旧requestの既定lowと旧check入力hashはそのまま、high時だけresearch check入力hashにも設定を加える。予算台帳は従来どおり送信request全体hashに束縛する。URL・原文条件・citation・支持判定・既知不足の終端化は不変。
+
+費用式は従来の(128000 + request bytes + 8192) × (tool数+1) × 0.3 + tool数×10000 + 6000 microUSD。high文字列による1byte増は実payloadに計上し、最終requestの16000bytes gateも維持。上限16000での最大予約はlow/high同じで、全13API最大1205876、run1250000・月別上限・出力上限は変わらない。未知のtool設定・unlimited・highで複数toolは拒否する。
+
+## 配備と検証境界
+
+0017をコード配信前に適用し、旧全列不変/default low/immutableを確認する。SEO側のreceipt形式やrunner契約は変わらないためSEO migrationと6site pin更新は不要。実APIは未実行で、highによる改善はまだ実証していない。既存trial1の原本・判定・lockは変更しない。
+
+最新自然候補Wikiは単言語。ローカル実builderではplan6908、baseline review7187、既知generation9930 bytes。しかし現行claim前のgeneration pool配分は9file固定のため1fileはineligibleとなる。これはcontext変更では解消せず、無課金skipを維持する。本文や既存案内リンクの変更は行っていない。単言語成功を9言語翻訳成功とみなさない。

@@ -59,6 +59,7 @@ export type CheckContext = {
   budgetVersion?: number;
   discoveryPolicy?: 2 | 3 | 4;
   siteId?: string;
+  researchContext?: "low" | "high";
 };
 const object = (properties: Record<string, unknown>) => ({
   type: "object",
@@ -421,9 +422,17 @@ export function buildSearchRequest(focused: ReturnType<typeof focusedInput>) {
 export function buildRetrievalRequest(
   focused: ReturnType<typeof focusedInput>,
   discovery: Discovery,
+  researchContext: "low" | "high" = "low",
 ) {
   if (!discovery.selectedUrl) throw new Error("seo_research_insufficient");
+  if (!["low", "high"].includes(researchContext))
+    throw new Error("seo_research_bound");
   const base = buildSearchRequest(focused);
+  if (researchContext === "high")
+    base.tools = base.tools!.map((tool) => ({
+      ...tool,
+      search_context_size: "high",
+    }));
   return {
     ...base,
     max_tool_calls: 1,
@@ -597,11 +606,18 @@ export async function researchArticle(
     context,
     "research",
     discovery
-      ? { sourceSha256: context.sourceSha256, plan, discovery }
+      ? {
+          sourceSha256: context.sourceSha256,
+          plan,
+          discovery,
+          ...(context.researchContext === "high"
+            ? { researchContext: "high" }
+            : {}),
+        }
       : { sourceSha256: context.sourceSha256, plan },
     async (callId) => {
       const request = discovery
-        ? buildRetrievalRequest(focused, discovery)
+        ? buildRetrievalRequest(focused, discovery, context.researchContext)
         : buildSearchRequest(focused);
       const response = await seoResponse(env, {
         runId: context.budgetRunId,

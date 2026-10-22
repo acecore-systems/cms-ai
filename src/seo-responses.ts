@@ -28,12 +28,15 @@ export function responsesUpperCost(
   const bytes = new TextEncoder().encode(JSON.stringify(request)).length;
   if (bytes > 768_000) throw new Error("seo_research_size");
   if (request.tools !== undefined) {
+    const contextSize = (request.tools as any)?.[0]?.search_context_size;
     if (
+      !["low", "high"].includes(contextSize) ||
+      (contextSize === "high" && request.max_tool_calls !== 1) ||
       JSON.stringify(request.tools) !==
         JSON.stringify([
           {
             type: "web_search",
-            search_context_size: "low",
+            search_context_size: contextSize,
             external_web_access: true,
           },
         ]) ||
