@@ -575,6 +575,38 @@ export class SeoRunner {
       reviewedHash = await this.requestHash(JSON.stringify(finalFiles));
       const result = await this.request("review", { files: finalFiles });
       if (
+        result.status === "review_failed" &&
+        payload.policy.researchContract === 2
+      ) {
+        if (!/^[a-f0-9]{64}$/.test(result.offerSha256))
+          throw new Error("seo_review");
+        await this.latestMain(baseSha);
+        const refs = await this.command("git", [
+          "ls-remote",
+          "--heads",
+          "origin",
+          "refs/heads/" + branch,
+        ]);
+        const prs = await this.pageAll(
+          "/pulls?state=all&head=" +
+            encodeURIComponent(this.repository.split("/")[0] + ":" + branch),
+        );
+        if (refs.trim() || prs.length) throw new Error("seo_review");
+        const terminal = await this.request("review-reject", {
+          baseSha,
+          offerSha256: result.offerSha256,
+          refs: [],
+          pullRequests: [],
+        });
+        if (terminal.status !== "review_rejected")
+          throw new Error("seo_review");
+        this.active = false;
+        return {
+          status: "review_rejected",
+          receiptSha256: terminal.receiptSha256,
+        };
+      }
+      if (
         result.status !== "reviewed" ||
         result.receipt?.kind !== "ai_review" ||
         result.receipt.filesSha256 !== reviewedHash

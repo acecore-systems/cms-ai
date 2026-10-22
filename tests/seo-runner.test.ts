@@ -270,6 +270,56 @@ describe("SEO action runtime", () => {
     expect(body).toContain("AI校閲ゲート通過");
     expect(body).toContain("人の母語話者校閲は未実施");
   });
+  it.each(["valid", "existing-pr", "existing-ref", "lost-callback", "unknown"])(
+    "review rejection stays prepublication: %s",
+    async (kind) => {
+      await v2();
+      const prior = request.getMockImplementation()!;
+      request.mockImplementation(async (op = "", body: any) => {
+        if (op === "review")
+          return kind === "unknown"
+            ? { status: "unresolved" }
+            : { status: "review_failed", offerSha256: "b".repeat(64) };
+        if (op === "review-reject")
+          return {
+            status: kind === "lost-callback" ? "unresolved" : "review_rejected",
+            receiptSha256: "c".repeat(64),
+          };
+        const r = await prior(op, body);
+        if (!op) r.policy.researchContract = 2;
+        return r;
+      });
+      const priorGithub = github.getMockImplementation()!;
+      github.mockImplementation(async (path, ...args) =>
+        path.includes("state=all")
+          ? kind === "existing-pr"
+            ? [{ number: 1, state: "closed" }]
+            : []
+          : priorGithub(path, ...args),
+      );
+      const priorExecute = execute.getMockImplementation()!;
+      execute.mockImplementation(async (command, args, ...rest) =>
+        command === "git" &&
+        args.includes("ls-remote") &&
+        kind === "existing-ref" &&
+        request.mock.calls.some((c) => c[0] === "review")
+          ? { stdout: "existing-ref" }
+          : priorExecute(command, args, ...rest),
+      );
+      const result = await runner.executeJob();
+      expect(result.status).toBe(
+        kind === "valid" ? "review_rejected" : "unresolved",
+      );
+      expect(request.mock.calls.filter((c) => c[0] === "propose")).toHaveLength(
+        9,
+      );
+      expect(
+        request.mock.calls.some((c) => ["publish", "finish"].includes(c[0])),
+      ).toBe(false);
+      expect(pushed).toBe(false);
+      expect(github.mock.calls.some((c) => c[1] === "POST")).toBe(false);
+    },
+  );
   it("does not push or create a PR when research fails", async () => {
     await v2();
     const baseRequest = request.getMockImplementation()!;
