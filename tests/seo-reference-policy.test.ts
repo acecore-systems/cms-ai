@@ -333,3 +333,108 @@ it("does not call a fixed-view variant of an already cited document new", async 
     ),
   ).rejects.toThrow("seo_research_insufficient");
 });
+
+it("separates new prompt explanation from unchanged URL/evidence contracts", async () => {
+  const f = await fixture(),
+    focused = focusedInput(source.content, f.hash, f.plan);
+  const d = await parseDiscovery(
+    f.result,
+    source.content,
+    f.plan,
+    JSON.stringify(f.result),
+    4,
+    f.scope,
+    2,
+  );
+  const oldDiscovery = buildDiscoveryRequest(focused, 4, f.scope, 2);
+  expect(buildDiscoveryRequest(focused, 4, f.scope, 2, 1)).toEqual(
+    oldDiscovery,
+  );
+  const next = buildDiscoveryRequest(focused, 4, f.scope, 2, 2);
+  expect(next.instructions).toContain(
+    "NOT a Microsoft Learn-only host allowlist",
+  );
+  expect(next.instructions).toContain("restrictions apply ONLY");
+  expect(next.input).toBe(oldDiscovery.input);
+  expect(next.max_tool_calls).toBe(oldDiscovery.max_tool_calls);
+  const oldRetrieve = buildRetrievalRequest(focused, d, "high");
+  expect(buildRetrievalRequest(focused, d, "high", 1)).toEqual(oldRetrieve);
+  const retrieve = buildRetrievalRequest(focused, d, "high", 2);
+  expect(retrieve.instructions).toContain(
+    "NOT a Microsoft Learn-only host allowlist",
+  );
+  expect(retrieve.input).toBe(oldRetrieve.input);
+  expect(retrieve.tools).toEqual(oldRetrieve.tools);
+  for (const bad of [0, 3]) {
+    expect(() => buildDiscoveryRequest(focused, 4, f.scope, 2, bad)).toThrow(
+      "seo_url_instructions",
+    );
+    expect(() => buildRetrievalRequest(focused, d, "high", bad)).toThrow(
+      "seo_url_instructions",
+    );
+  }
+  const help =
+    "https://help.minecraft.net/hc/en-us/articles/4409236107789-Troubleshoot-Unable-to-Join-Multiplayer-Games-in-Minecraft";
+  expect(referenceUrl(help, 2)).toBe(help);
+  expect(referenceUrl(url, 2)).toBe(url);
+  expect(() =>
+    referenceUrl(help + "?view=minecraft-bedrock-stable", 2),
+  ).toThrow();
+  expect(() => referenceUrl(url + "&token=fixture", 2)).toThrow();
+});
+it("URL instruction migration preserves old values, defaults to old prompts and is immutable", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(
+    "CREATE TABLE seo_editorial_jobs(id TEXT PRIMARY KEY,reference_policy INTEGER,status TEXT); INSERT INTO seo_editorial_jobs VALUES('old',2,'unresolved')",
+  );
+  const old = db.prepare("SELECT * FROM seo_editorial_jobs").all();
+  db.exec(
+    readFileSync(
+      new URL("../migrations/0021_seo_url_instructions.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  expect(
+    db
+      .prepare("SELECT id,reference_policy,status FROM seo_editorial_jobs")
+      .all(),
+  ).toEqual(old);
+  expect(
+    db.prepare("SELECT url_instructions FROM seo_editorial_jobs").get()!
+      .url_instructions,
+  ).toBe(1);
+  expect(() =>
+    db.exec("UPDATE seo_editorial_jobs SET url_instructions=2"),
+  ).toThrow("immutable_url_instructions");
+  db.exec("INSERT INTO seo_editorial_jobs VALUES('new',2,'pending',2)");
+  expect(() =>
+    db.exec("INSERT INTO seo_editorial_jobs VALUES('bad',2,'pending',3)"),
+  ).toThrow();
+  db.close();
+});
+
+it("preserves the real trial4 insufficient shape despite an eligible queryless result", async () => {
+  const f = await fixture();
+  const help =
+    "https://help.minecraft.net/hc/en-us/articles/4409236107789-Troubleshoot-Unable-to-Join-Multiplayer-Games-in-Minecraft";
+  f.result.output[0].action!.sources = [{ type: "url", url: help }];
+  f.result.output[1].content![0].text = JSON.stringify({
+    verdict: "insufficient",
+    selectedUrl: null,
+    reason:
+      "検索結果には公式資料がありますが、既存URLと重複するか、許可されたlearn.microsoft.comのURL形式に該当しません。",
+  });
+  // Redacted real response shape, not a fabricated successful provider response.
+  await expect(
+    parseDiscovery(
+      f.result,
+      source.content,
+      f.plan,
+      JSON.stringify(f.result),
+      4,
+      f.scope,
+      2,
+    ),
+  ).rejects.toThrow("seo_research_insufficient");
+  expect(referenceUrl(help, 2)).toBe(help);
+});

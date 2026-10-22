@@ -357,6 +357,7 @@ export async function finalizeRejection(
           retrievalVersion: job.retrieval_contract,
           researchContext: job.research_context,
           referencePolicy: job.reference_policy,
+          urlInstructions: job.url_instructions,
           discoveryPolicy: job.external_sources ? 4 : job.discovery_policy,
           ...(job.external_sources ? { siteId: job.site_id } : {}),
         },
