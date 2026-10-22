@@ -1,3 +1,4 @@
+import { externalScope } from "./seo-external-sources.ts";
 import { parseDiscovery, type Discovery } from "./seo-discovery.ts";
 import type { AppEnv } from "./env.ts";
 import { sha256 } from "./seo-hash.ts";
@@ -22,6 +23,13 @@ export async function prepareRejection(
   source: string,
 ) {
   if (context.contractVersion !== 2) return fail();
+  const scope =
+    context.discoveryPolicy === 4
+      ? externalScope(context.siteId!, {
+          path: context.articleKey.slice(context.articleKey.indexOf(":") + 1),
+          content: source,
+        })
+      : undefined;
   const split = context.retrievalVersion === 2;
   const table = split ? "seo_all_checks" : "seo_editorial_checks";
   const rows = (
@@ -80,10 +88,10 @@ export async function prepareRejection(
       } else if (row.phase === "discovery" && plan) {
         const savedDiscovery = await read(env, key(context.jobId, row.phase));
         if (
-          ![1, 2, 3].includes(savedDiscovery.value.version) ||
-          (context.discoveryPolicy === 3
-            ? savedDiscovery.value.version !== 3
-            : savedDiscovery.value.version === 3)
+          ![1, 2, 3, 4].includes(savedDiscovery.value.version) ||
+          ((context.discoveryPolicy ?? 2) >= 3
+            ? savedDiscovery.value.version !== context.discoveryPolicy
+            : savedDiscovery.value.version >= 3)
         )
           return fail();
         discovery = await parseDiscovery(
@@ -92,6 +100,7 @@ export async function prepareRejection(
           plan,
           raw.raw,
           savedDiscovery.value.version,
+          scope,
         );
         parsed = discovery;
       } else return fail();
@@ -147,6 +156,7 @@ export async function prepareRejection(
             plan,
             raw.raw,
             context.discoveryPolicy ?? 1,
+            scope,
           );
           return fail();
         } catch (e) {
@@ -343,7 +353,8 @@ export async function finalizeRejection(
           deadline: run.deadline,
           contractVersion: 2,
           retrievalVersion: job.retrieval_contract,
-          discoveryPolicy: job.discovery_policy,
+          discoveryPolicy: job.external_sources ? 4 : job.discovery_policy,
+          ...(job.external_sources ? { siteId: job.site_id } : {}),
         },
         canonical.content,
       )) !== body.offerSha256
