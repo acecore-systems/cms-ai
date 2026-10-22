@@ -78,6 +78,7 @@ type EditorialJob = {
   retrieval_contract: number;
   budget_version: number;
   discovery_policy: 2 | 3;
+  generation_syntax: 1 | 2;
   input_allocation_sha256: string | null;
   generation_started: number;
   publication_started: number;
@@ -284,7 +285,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy) SELECT ?,run_id,?,candidate_index,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -293,6 +294,7 @@ async function advance(env: AppEnv, runId: string) {
         researchEnabled(env, runId) ? 2 : 1,
         CURRENT_BUDGET_VERSION,
         3,
+        2,
         runId,
         run.candidate_index,
       ),
@@ -732,6 +734,7 @@ async function claimJob(
           f.path.startsWith("docs/"),
       );
       const instruction = buildEditorialInstruction({
+        syntaxPolicy: job.generation_syntax,
         step,
         paths,
         locale,
@@ -799,6 +802,7 @@ async function claimJob(
     const preflightRaw = JSON.stringify({
       version: 1,
       researchContract: 2,
+      ...(job.generation_syntax === 2 ? { generationSyntax: 2 } : {}),
       ...(job.discovery_policy === 3 ? { discoveryPolicy: 3 } : {}),
       ...(job.budget_version === 2 ? { budgetVersion: 2 } : {}),
       baseSha: body.baseSha,
@@ -988,6 +992,7 @@ async function propose(
       saved.retrievalContract !== 2 ||
       (saved.budgetVersion ?? 1) !== job.budget_version ||
       (saved.discoveryPolicy ?? 2) !== job.discovery_policy ||
+      (saved.generationSyntax ?? 1) !== job.generation_syntax ||
       saved.sourceSha256 !== job.source_sha256 ||
       saved.baseSha !== job.base_sha ||
       JSON.stringify(saved.generationAllocation?.map((x: any) => x.path)) !==
@@ -1016,6 +1021,7 @@ async function propose(
     ...(research ? { researchBudget: true } : {}),
     ...(generationInputCap !== undefined ? { generationInputCap } : {}),
     instruction: buildEditorialInstruction({
+      syntaxPolicy: job.generation_syntax,
       step: job.next_step,
       paths,
       locale,
@@ -1038,6 +1044,7 @@ async function propose(
     locale ? japanese : null,
     Date.now(),
     research ? evidenceReferences(research) : [],
+    job.generation_syntax,
   );
   if (job.next_step === 1) {
     // Persist formatting before later locales read the accepted Japanese source.

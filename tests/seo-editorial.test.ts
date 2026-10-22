@@ -60,6 +60,7 @@ beforeEach(async () => {
     "0011_seo_month_budget.sql",
     "0012_seo_run_budget.sql",
     "0013_seo_discovery_policy.sql",
+    "0014_seo_generation_syntax.sql",
   ])
     sql.exec(
       readFileSync(

@@ -7,6 +7,7 @@ export function buildEditorialInstruction({
   translationCount,
   reason,
   research,
+  syntaxPolicy = 1,
 }: {
   step: number;
   paths: string[];
@@ -14,12 +15,18 @@ export function buildEditorialInstruction({
   translationCount: number;
   reason: string;
   research: ResearchEvidence | null;
+  syntaxPolicy?: 1 | 2;
 }) {
   const path = paths[step];
   // SEO research only. Keep all source files/guides intact; consolidate repeated
   // controller/metadata rules rather than dropping source context or constraints.
   if (research)
     return [
+      ...(syntaxPolicy === 2
+        ? [
+            "Emit title and description as quoted YAML string scalars. Escape embedded quotes/backslashes correctly; never emit a bare colon followed by space in these values. Preserve the exact text value and all other metadata.",
+          ]
+        : []),
       `Controller stage ${step + 1}/${paths.length}: 1 call = 1 file. Output only the complete file ${path}, locale=${locale || "ja"}.`,
       `The controller revises/formats Japanese, then assigns all ${translationCount} existing translations in separate calls under one budget run ID and absolute deadline. It validates every locale before one Draft PR; budget/deadline/validation failure stops. The guides' all-locales/same-PR requirements are controller responsibilities, not missing permission to edit other paths in this call.`,
       SEO_WRITING_GUIDE,
@@ -41,6 +48,11 @@ export function buildEditorialInstruction({
     ].join("\n");
 
   return [
+    ...(syntaxPolicy === 2
+      ? [
+          "title/descriptionは引用符付きYAML文字列で出力する。引用符とバックスラッシュを適切にescapeし、コロン＋空白を裸の値に含めない。文言の値と他metadataを維持する。",
+        ]
+      : []),
     "実行分担: この呼び出しはcontrollerが管理する記事改訂・翻訳工程の1段階であり、1 call = 1 file。今回の担当は第" +
       (step + 1) +
       "/" +
