@@ -1,3 +1,4 @@
+import { parseDiscovery, type Discovery } from "./seo-discovery.ts";
 import type { AppEnv } from "./env.ts";
 import { sha256 } from "./seo-hash.ts";
 import { parsePlan, focusedInput } from "./seo-research-plan.ts";
@@ -13,7 +14,7 @@ async function read(env: AppEnv, path: string) {
   const object = await env.CMS_AI_IMAGES.get(path);
   if (!object) return fail();
   const raw = await object.text();
-  return { value: JSON.parse(raw), hash: await sha256(raw) };
+  return { value: JSON.parse(raw), hash: await sha256(raw), raw };
 }
 export async function prepareRejection(
   env: AppEnv,
@@ -21,21 +22,27 @@ export async function prepareRejection(
   source: string,
 ) {
   if (context.contractVersion !== 2) return fail();
+  const split = context.retrievalVersion === 2;
+  const table = split ? "seo_all_checks" : "seo_editorial_checks";
   const rows = (
     await env.CMS_AI_DB.prepare(
-      "SELECT c.*,b.status AS budget_status FROM seo_editorial_checks c JOIN seo_budget_calls b ON b.id=c.call_id WHERE c.job_id=? AND b.run_id=? ORDER BY c.phase",
+      `SELECT c.*,b.status AS budget_status FROM ${table} c JOIN seo_budget_calls b ON b.id=c.call_id WHERE c.job_id=? AND b.run_id=? ORDER BY CASE c.phase WHEN 'plan' THEN 0 WHEN 'discovery' THEN 1 WHEN 'research' THEN 2 ELSE 3 END`,
     )
       .bind(context.jobId, context.budgetRunId)
       .all<any>()
   ).results;
   if (
     !rows ||
-    ![1, 2].includes(rows.length) ||
-    rows[0].phase !== "plan" ||
-    (rows.length === 2 && rows[1].phase !== "research")
+    !(split ? [1, 2, 3] : [1, 2]).includes(rows.length) ||
+    rows.some(
+      (r: any, i: number) =>
+        r.phase !==
+        (split ? ["plan", "discovery", "research"] : ["plan", "research"])[i],
+    )
   )
     return fail();
   let plan: any;
+  let discovery: Discovery | undefined;
   const calls = [];
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index],
@@ -60,17 +67,24 @@ export async function prepareRejection(
     )
       return fail();
     if (!last) {
-      plan = parsePlan(
-        responseText(raw.value).value,
-        source,
-        context.sourceSha256,
-        2,
-      );
-      focusedInput(source, context.sourceSha256, plan);
-      const saved = await read(env, key(context.jobId, "plan"));
+      let parsed: any;
+      if (row.phase === "plan") {
+        plan = parsePlan(
+          responseText(raw.value).value,
+          source,
+          context.sourceSha256,
+          2,
+        );
+        focusedInput(source, context.sourceSha256, plan);
+        parsed = plan;
+      } else if (row.phase === "discovery" && plan) {
+        discovery = await parseDiscovery(raw.value, source, plan, raw.raw);
+        parsed = discovery;
+      } else return fail();
+      const saved = await read(env, key(context.jobId, row.phase));
       if (
         saved.hash !== row.result_sha256 ||
-        JSON.stringify(saved.value) !== JSON.stringify(plan)
+        JSON.stringify(saved.value) !== JSON.stringify(parsed)
       )
         return fail();
     } else {
@@ -110,6 +124,18 @@ export async function prepareRejection(
           )
         )
           return fail();
+      } else if (row.phase === "discovery") {
+        if (!plan) return fail();
+        try {
+          await parseDiscovery(raw.value, source, plan, raw.raw);
+          return fail();
+        } catch (e) {
+          if (
+            !(e instanceof Error) ||
+            e.message !== "seo_research_insufficient"
+          )
+            return fail();
+        }
       } else {
         const text = responseMessage(raw.value).text,
           block = /\n```json\r?\n([\s\S]+?)\r?\n```\s*$/.exec(text);
@@ -144,6 +170,7 @@ export async function prepareRejection(
             context.sourceSha256,
             Date.now(),
             plan,
+            discovery,
           );
           return fail();
         } catch (e) {
@@ -167,7 +194,7 @@ export async function prepareRejection(
     });
   }
   const offer = {
-    version: 1,
+    version: split ? 2 : 1,
     runId: context.runId,
     jobId: context.jobId,
     articleKey: context.articleKey,
@@ -295,6 +322,7 @@ export async function finalizeRejection(
           sourceSha256: job.source_sha256,
           deadline: run.deadline,
           contractVersion: 2,
+          retrievalVersion: job.retrieval_contract,
         },
         canonical.content,
       )) !== body.offerSha256

@@ -1,3 +1,9 @@
+import {
+  buildDiscoveryRequest,
+  parseDiscovery,
+  assertDiscovery,
+  type Discovery,
+} from "./seo-discovery.ts";
 import { shareText, SHARED_TEXT_INSTRUCTION } from "./seo-input-text.ts";
 import { SEO_WRITING_GUIDE } from "./seo-editorial-guide.ts";
 import {
@@ -44,6 +50,7 @@ export type CheckContext = {
   sourceSha256: string;
   deadline: number;
   contractVersion?: number;
+  retrievalVersion?: number;
 };
 const object = (properties: Record<string, unknown>) => ({
   type: "object",
@@ -84,21 +91,23 @@ async function live(env: AppEnv, context: CheckContext) {
 async function check(
   env: AppEnv,
   context: CheckContext,
-  phase: "plan" | "research" | "review",
+  phase: "plan" | "discovery" | "research" | "review",
   input: unknown,
   action: (callId: string) => Promise<unknown>,
 ) {
   await live(env, context);
+  const table =
+    phase === "discovery" ? "seo_discovery_checks" : "seo_editorial_checks";
   const hash = await sha256(JSON.stringify(input));
   const callId = "seo-" + crypto.randomUUID();
   const inserted = await env.CMS_AI_DB.prepare(
-    "INSERT INTO seo_editorial_checks(job_id,phase,call_id,input_sha256,created_at) VALUES(?,?,?,?,?) ON CONFLICT(job_id,phase) DO NOTHING",
+    `INSERT INTO ${table}(job_id,phase,call_id,input_sha256,created_at) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING`,
   )
     .bind(context.jobId, phase, callId, hash, Date.now())
     .run();
   if (inserted.meta.changes !== 1) {
     const row = await env.CMS_AI_DB.prepare(
-      "SELECT status,input_sha256,result_sha256 FROM seo_editorial_checks WHERE job_id=? AND phase=?",
+      `SELECT status,input_sha256,result_sha256 FROM ${table} WHERE job_id=? AND phase=?`,
     )
       .bind(context.jobId, phase)
       .first<{ status: string; input_sha256: string; result_sha256: string }>();
@@ -139,7 +148,7 @@ async function check(
     )
       throw new Error("seo_check_evidence");
     const saved = await env.CMS_AI_DB.prepare(
-      "UPDATE seo_editorial_checks SET status='complete',result_sha256=? WHERE job_id=? AND phase=? AND status='started' AND call_id=?",
+      `UPDATE ${table} SET status='complete',result_sha256=? WHERE job_id=? AND phase=? AND status='started' AND call_id=?`,
     )
       .bind(await sha256(serialized), context.jobId, phase, callId)
       .run();
@@ -177,7 +186,7 @@ async function check(
       /* Durable checks.call_id still locates the response if present. */
     }
     await env.CMS_AI_DB.prepare(
-      "UPDATE seo_editorial_checks SET status='unresolved' WHERE job_id=? AND phase=? AND status='started'",
+      `UPDATE ${table} SET status='unresolved' WHERE job_id=? AND phase=? AND status='started'`,
     )
       .bind(context.jobId, phase)
       .run();
@@ -191,8 +200,9 @@ export function parseResearch(
   sourceHash: string,
   now = Date.now(),
   plan?: ResearchPlan,
+  discovery?: Discovery,
 ): ResearchEvidence {
-  if (plan) validatePlannedSearch(result, plan);
+  if (plan && !discovery) validatePlannedSearch(result, plan);
   const { text, annotations } = responseMessage(result);
   // Citations remain in natural prose, outside the machine-readable payload.
   // Neither a JSON URL nor a handwritten citation is provider retrieval evidence.
@@ -231,10 +241,12 @@ export function parseResearch(
   )
     throw new Error("seo_research_evidence");
   const searches = calls.filter((item: any) => item.action?.type === "search");
-  const queries = searches.flatMap(
-    (item: any) =>
-      item.action.queries || (item.action.query ? [item.action.query] : []),
-  );
+  const queries =
+    discovery?.queries ||
+    searches.flatMap(
+      (item: any) =>
+        item.action.queries || (item.action.query ? [item.action.query] : []),
+    );
   if (
     !queries.length ||
     queries.some(
@@ -246,15 +258,26 @@ export function parseResearch(
     )
   )
     throw new Error("seo_research_no_search");
+  if (
+    discovery &&
+    (!plan ||
+      discovery.sourceSha256 !== sourceHash ||
+      calls.length !== 1 ||
+      calls[0].action?.type !== "open_page" ||
+      calls[0].action.url !== discovery.selectedUrl)
+  )
+    throw new Error("seo_research_evidence");
   const opened = new Set(
     calls
       .filter((item: any) => item.action?.type === "open_page")
       .map((item: any) => item.action.url),
   );
   const discovered = new Set(
-    searches
-      .flatMap((item: any) => item.action.sources || [])
-      .map((item: any) => item.url),
+    discovery
+      ? discovery.urls
+      : searches
+          .flatMap((item: any) => item.action.sources || [])
+          .map((item: any) => item.url),
   );
   const cited = new Set(
     annotations
@@ -288,6 +311,7 @@ export function parseResearch(
         ? plan.target?.quote
         : inputs.claims.find((claim) => claim.id === item.claimId)?.markdown;
     if (
+      (discovery && url !== discovery.selectedUrl) ||
       !opened.has(url) ||
       !discovered.has(url) ||
       !cited.has(url) ||
@@ -367,6 +391,37 @@ export function buildSearchRequest(focused: ReturnType<typeof focusedInput>) {
   );
 }
 
+export function buildRetrievalRequest(
+  focused: ReturnType<typeof focusedInput>,
+  discovery: Discovery,
+) {
+  if (!discovery.selectedUrl) throw new Error("seo_research_insufficient");
+  const base = buildSearchRequest(focused);
+  return {
+    ...base,
+    max_tool_calls: 1,
+    instructions:
+      base.instructions
+        .replace(
+          "必ず今回のテーマからキーワード検索を実行し、検索で発見した公式一次資料のページを開いて本文と適用条件を読む。既存URLを開くだけでは検索したと扱わない。",
+          "キーワード検索は前段で完了済み。controllerが実search.sourcesから固定したselectedUrlだけをopen_pageで取得する。再検索・別URL・canonical/mirrorへの置換は禁止。",
+        )
+        .replace(
+          "最大3回のtool callで検索1回と明示open_pageによる取得1〜2回を行う。",
+          "最大1回のtool callでselectedUrlをopen_pageする。",
+        ) +
+      "固定先が公式一次資料でない、取得できない、条件を支持しない場合はinsufficient。別資料で穴埋めしない。",
+    input: JSON.stringify({
+      ...focused,
+      discovery: {
+        responseId: discovery.responseId,
+        responseSha256: discovery.responseSha256,
+        selectedUrl: discovery.selectedUrl,
+      },
+    }),
+  };
+}
+
 export async function researchArticle(
   env: AppEnv,
   context: CheckContext,
@@ -385,7 +440,16 @@ export async function researchArticle(
   )
     .bind(context.jobId)
     .first();
-  if (previousSearch && !previousPlan) throw new Error("seo_check_conflict");
+  const previousDiscovery =
+    context.retrievalVersion === 2
+      ? await env.CMS_AI_DB.prepare(
+          "SELECT call_id FROM seo_discovery_checks WHERE job_id=?",
+        )
+          .bind(context.jobId)
+          .first()
+      : null;
+  if ((previousSearch || previousDiscovery) && !previousPlan)
+    throw new Error("seo_check_conflict");
   const plan = (await check(env, context, "plan", source, async (callId) => {
     const request = buildPlanRequest(source.content, context.contractVersion);
     const response = await seoResponse(env, {
@@ -405,13 +469,64 @@ export async function researchArticle(
   })) as ResearchPlan;
   // Bind the search input to the persisted plan, never ask the model to select again.
   const focused = focusedInput(source.content, context.sourceSha256, plan);
+  let discovery: Discovery | undefined;
+  if (context.retrievalVersion === 2) {
+    discovery = (await check(
+      env,
+      context,
+      "discovery",
+      { sourceSha256: context.sourceSha256, plan },
+      async (callId) => {
+        const response = await seoResponse(env, {
+          runId: context.budgetRunId,
+          callId,
+          articleKey: context.budgetArticleKey,
+          deadline: context.deadline,
+          request: buildDiscoveryRequest(focused),
+          phase: "discovery",
+        });
+        const raw = await env.CMS_AI_IMAGES.get(
+          "seo-responses/" + callId + ".json",
+        );
+        if (!raw) throw new Error("seo_check_evidence");
+        return parseDiscovery(response, source.content, plan, await raw.text());
+      },
+    )) as Discovery;
+    await assertDiscovery(discovery, source.content, plan);
+    // Revalidate against the immutable raw call on replay, not only a result hash.
+    const row = await env.CMS_AI_DB.prepare(
+      "SELECT call_id FROM seo_discovery_checks WHERE job_id=?",
+    )
+      .bind(context.jobId)
+      .first<{ call_id: string }>();
+    const raw =
+      row &&
+      (await env.CMS_AI_IMAGES.get("seo-responses/" + row.call_id + ".json"));
+    const rawText = raw && (await raw.text());
+    if (
+      !rawText ||
+      JSON.stringify(
+        await parseDiscovery(
+          JSON.parse(rawText),
+          source.content,
+          plan,
+          rawText,
+        ),
+      ) !== JSON.stringify(discovery)
+    )
+      throw new Error("seo_check_evidence");
+  }
   return (await check(
     env,
     context,
     "research",
-    { sourceSha256: context.sourceSha256, plan },
+    discovery
+      ? { sourceSha256: context.sourceSha256, plan, discovery }
+      : { sourceSha256: context.sourceSha256, plan },
     async (callId) => {
-      const request = buildSearchRequest(focused);
+      const request = discovery
+        ? buildRetrievalRequest(focused, discovery)
+        : buildSearchRequest(focused);
       const response = await seoResponse(env, {
         runId: context.budgetRunId,
         callId,
@@ -425,6 +540,7 @@ export async function researchArticle(
         context.sourceSha256,
         Date.now(),
         plan,
+        discovery,
       );
     },
   )) as ResearchEvidence;

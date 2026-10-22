@@ -37,14 +37,16 @@ export function responsesUpperCost(
             external_web_access: true,
           },
         ]) ||
-      request.max_tool_calls !== RESEARCH_TOOLS ||
+      ![1, RESEARCH_TOOLS].includes(request.max_tool_calls as number) ||
       request.tool_choice !== "required" ||
       bytes + 8192 > 128_000
     )
       throw new Error("seo_research_bound");
     return Math.ceil(
-      (128_000 + bytes + 8192) * (RESEARCH_TOOLS + 1) * 0.3 +
-        RESEARCH_TOOLS * 10_000 +
+      (128_000 + bytes + 8192) *
+        ((request.max_tool_calls as number) + 1) *
+        0.3 +
+        (request.max_tool_calls as number) * 10_000 +
         6000,
     );
   }
@@ -61,7 +63,7 @@ export async function seoResponse(
     articleKey: string;
     deadline: number;
     request: Record<string, unknown>;
-    phase?: "plan" | "research" | "review";
+    phase?: "plan" | "discovery" | "research" | "review";
   },
 ) {
   if (
@@ -73,7 +75,8 @@ export async function seoResponse(
   let reserved = false;
   try {
     assertStageInput(
-      args.phase || (args.request.tools ? "research" : "review"),
+      (args.phase === "discovery" ? "research" : args.phase) ||
+        (args.request.tools ? "research" : "review"),
       args.request,
     );
     const amount = responsesUpperCost(args.request);
@@ -129,7 +132,9 @@ export async function seoResponse(
       result.usage.output_tokens > 6000 ||
       result.usage.input_tokens * 0.3 +
         result.usage.output_tokens +
-        (args.request.tools ? RESEARCH_TOOLS * 10_000 : 0) >
+        (args.request.tools
+          ? (args.request.max_tool_calls as number) * 10_000
+          : 0) >
         amount
     )
       throw new Error("seo_research_response");

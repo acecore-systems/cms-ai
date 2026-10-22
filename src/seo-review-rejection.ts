@@ -32,6 +32,9 @@ export async function immutableReviewObject(
   return stored.hash;
 }
 export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
+  const split = job.retrieval_contract === 2;
+  const expectedCalls = split ? 13 : 12;
+  const table = split ? "seo_all_checks" : "seo_editorial_checks";
   const paths: string[] = JSON.parse(job.paths_json || "[]");
   if (
     job.research_contract !== 2 ||
@@ -71,7 +74,7 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
       .all<any>()
   ).results;
   if (
-    budgets.length !== 12 ||
+    budgets.length !== expectedCalls ||
     budgets.some(
       (b: any) =>
         b.status !== "complete" ||
@@ -81,14 +84,15 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
     return fail();
   const checks = (
     await env.CMS_AI_DB.prepare(
-      "SELECT * FROM seo_editorial_checks WHERE job_id=? ORDER BY phase",
+      `SELECT * FROM ${table} WHERE job_id=? ORDER BY CASE phase WHEN 'plan' THEN 0 WHEN 'discovery' THEN 1 WHEN 'research' THEN 2 ELSE 3 END`,
     )
       .bind(job.id)
       .all<any>()
   ).results;
   if (
-    checks.length !== 3 ||
-    checks.map((c: any) => c.phase).join() !== "plan,research,review"
+    checks.length !== (split ? 4 : 3) ||
+    checks.map((c: any) => c.phase).join() !==
+      (split ? "plan,discovery,research,review" : "plan,research,review")
   )
     return fail();
   const calls: any[] = [],
@@ -189,9 +193,9 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
       finalSha256: await sha256(final.value[i].content),
     });
   }
-  if (ids.size !== 12 || !ids.has(job.call_id)) return fail();
+  if (ids.size !== expectedCalls || !ids.has(job.call_id)) return fail();
   const offer = {
-    version: 1,
+    version: split ? 2 : 1,
     runId: run.run_id,
     jobId: job.id,
     articleKey: job.article_key,
