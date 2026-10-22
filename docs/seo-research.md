@@ -1,5 +1,24 @@
 # SEOの新規資料調査とAI校閲
 
+## 2026-10-22 入力共有・工程予算再配分（実装検証、未配備）
+
+原文・全9localeの旧文と最終文・共通/対象guide・根拠を落とさず、校閲入力の完全一致する段落だけを共有辞書へ1回保存する。各ファイルは順序付きの文字列と参照で構成し、追加separatorなしで全UTF-8文字列を復元する。送信前にserverで元文字列との完全一致を検証する。改行、空白、コードフェンス、条件、否定、URLを正規化しない。JSONに似た本文は文字列のままであり参照命令として解釈しない。校閲指示は参照部分も含む全旧文・最終文を読むよう明記し、全pathの意味/自然さ/根拠/具体的issues判定を維持する。原本・accepted成果・review-input・final hashの保存形式は変更しない。
+
+researchありの生成指示は重複する工程・metadata説明を統合した英語主体の指示にし、共通guide全文と根拠JSONは保持する。原稿/対象guideを削除・要約せず、成功/エラーの対の手順、目的・条件・否定、語義/性数/一致、コード完全保持、正当なclarificationを維持する。通常CMSとresearchなしの従来指示は変更しない。英語への指示整理と参照表現をモデルが正しく扱えるかは実API未検証であり、ローカル可逆性を品質合格とは呼ばない。
+
+生成だけ45,000 bytesへ内部再配分し、plan/search各16,000・review180,000、出力数・単価・1 USD/run・5 USD/JST月は維持する。`STAGE_INPUT_BYTES`を上限の正本として全12 APIの最大予約989075 microUSDを算定する。残額10925 microUSDは余裕であり追加再試行枠ではない。
+
+claim前preflightは同一の生成job/prompt/schema/provider payload builderで全9段階も計測する。既知原本・対象guide・現指示と未取得の空根拠placeholderだけでも45KBを超える場合、非公開サイズreceiptを保存して既存skip経路で次候補へ進む。claim/有料API予約より前であり、保存失敗は停止する。receiptは全既知filesのhash・全9path/locale/bytes・上限・理由を保持する。research contract1のeligibilityは変更しない。実取得根拠・日本語改訂・翻訳の増大は予測できず、baseline適合は実生成成功の保証ではない。実送信の最終JSON bytesを再検査し、生成45KB/校閲180KB超過は従来どおりfail closedで止める。
+
+保存候補と現mainの全files一致は運用担当者が確認済み。実builderに合成plan/evidence/fetchを用いた計測（有料API0）は次のとおり。baselineは旧文と未改訂最終文が一致して共有率が高いため、実改訂後の校閲サイズは再計測が必須。
+
+| 自然候補                      | 校閲旧→共有後 bytes | 既知生成最大 bytes | 合成根拠込み生成最大 bytes | 合成全工程予約 microUSD | 判断                              |
+| ----------------------------- | ------------------- | ------------------ | -------------------------- | ----------------------- | --------------------------------- |
+| 1/3 Systems Astro SEO         | 227403→146252       | 45702              | 46201                      | 917413                  | 生成上限超過、claim前に無課金skip |
+| 2 Systems AI chat link safety | 208868→128798       | 42462              | 42927                      | 905215                  | 合成計測内、実根拠/改訂増大未確認 |
+
+候補2の合成生成余裕は2073 bytes。既存月予約3653608に最大989075を加えて4642683 microUSDで月5USD内だが、これは後日の実行承認や最新残額の代用ではない。原稿切捨て・任意URL入替・lock解除・未知状態解放は行わない。非公開計測はSEO root `.local/research-input-fit-20261022/`、元保存原本は `.local/research-e2e-20261022/`に保持する。今回サーバー側だけの変更でmigration/OIDC/runner protocol変更はなく、6repoのpin更新は不要。merge/配備/有料canaryは運用担当者の受入後に判断する。
+
 2026年10月20日の利用者指示による追加。通常CMSの会話・生成APIは変更しない。新機能は無効を維持。前回の限定実APIはcompleted/insufficient・open1・citation0で生成前停止した。その後の実APIでは検索・open・引用・claim ID形式は成立したが、選択主張と検索主題の不一致によりinsufficientで停止した。下記の固定plan方式は実API・クラウドE2E未確認。テストで用いる検索応答、出典、校閲結果は合成fixtureであり、実資料の取得成功や記事品質の証明ではない。
 
 ## 生成前の意味・文法点検（2026-10-22）
@@ -112,11 +131,11 @@ plannerは原文段落ID、条件quote（12文字以上）、原文由来anchor�
 | ----------------------------- | --------: | ---------------: |
 | planner、toolsなし、出力6000  |     16000 |            13258 |
 | 検索、3tools、4pass、出力6000 |     16000 |           218631 |
-| 生成、出力12000、9回          |   各40000 |           649728 |
+| 生成、出力12000、9回          |   各45000 |           694728 |
 | AI校閲、toolsなし、出力6000   |    180000 |            62458 |
-| 合計12 API calls              |           |       **944075** |
+| 合計12 API calls              |           |       **989075** |
 
-生成1回は既存保護単価で`40000+8192+12000*2=72192`、検索は上記式で各passに入力bytesを加算。1 USD内に55925 microUSDの差がある。月残額不足・期限・実生成後の入力増大には従来どおり停止するため、全記事完了を保証しない。
+生成1回は既存保護単価で`45000+8192+12000*2=77192`、検索は上記式で各passに入力bytesを加算。1 USD内に10925 microUSDの差がある。月残額不足・期限・実生成後の入力増大には従来どおり停止するため、全記事完了を保証しない。
 
 保存されたSystems記事（9言語＋7559 bytesのguide）を実request builderへ渡し、合成plan/根拠と既存本文でローカル計測した。planner5518 bytes、検索4317 bytes、校閲106134 bytes、生成各21103〜29063 bytesで全上限内。予約合計785066 microUSD（9生成530044）だった。計測receiptは非公開運用記録の`planning-full-sizing.json`/`planning-generation-sizing.json`に保存。新しい生成結果、実検索品質、AI校閲passの証明ではない。
 
@@ -142,7 +161,7 @@ plannerは原文段落ID、条件quote（12文字以上）、原文由来anchor�
 
 ## 原本サイズの事前適格判定
 
-research contract 2 の新jobは、claim・API予約前に既存builderでplan requestと未改訂の全原本を使ったbaseline review requestの最終JSON bytesを計測する。上限はplan 16,000 bytes、review 180,000 bytes。reviewの資料は`not_acquired_size_estimate_only`と明示する空の最小placeholderであり、実証拠や校閲合格ではない。
+research contract 2 の新jobは、claim・API予約前に既存builderでplan requestと未改訂の全原本を使ったbaseline review requestの最終JSON bytesを計測する。上限はplan 16,000 bytes、review 180,000 bytes、全9generation各45,000 bytes。reviewの資料は`not_acquired_size_estimate_only`と明示する空の最小placeholderであり、実証拠や校閲合格ではない。
 
 非公開R2の`seo-editorial/<jobId>/eligibility-preflight.json`へbase/source/bundle SHA、計測bytes・上限・理由を保存する。原本時点で超過する場合は既存skip経路で次の自然候補へ進み、記事lockとAI予約を取得しない。保存に失敗した場合は停止する。候補上限3件、旧contract 1、最終CMS gateは維持する。原文を切り捨てない。
 

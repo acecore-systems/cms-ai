@@ -1,5 +1,11 @@
+import { SITES } from "../src/sites.ts";
+import { STAGE_INPUT_BYTES } from "../src/seo-stage-budget.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { generateSeo, generationReadiness } from "../src/seo-generation.ts";
+import {
+  generateSeo,
+  generationReadiness,
+  buildSeoGenerationRequest,
+} from "../src/seo-generation.ts";
 import type { AppEnv } from "../src/env.ts";
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -25,6 +31,14 @@ describe("SEO generation gate", () => {
     };
     const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
       expect(JSON.parse(String(init.body)).reasoning_effort).toBe("high");
+      const predicted = buildSeoGenerationRequest(
+        SITES.find((s) => s.id === "homepage-hatt")!,
+        "src/content/blog/example.md",
+        ["src/content/blog/example.md"],
+        "参考資料に基づき改訂案を作成",
+        [{ path: "src/content/blog/example.md", content: "original" }],
+      );
+      expect(String(init.body)).toBe(JSON.stringify(predicted));
       order.push("inference");
       return Response.json({
         choices: [{ message: { content: JSON.stringify(result) } }],
@@ -107,7 +121,10 @@ it("rejects oversized v2 generation before reserve/fetch without truncation", as
     allowedPaths: ["src/content/blog/example.md"],
     instruction: "Revise with evidence",
     files: [
-      { path: "src/content/blog/example.md", content: "x".repeat(40000) },
+      {
+        path: "src/content/blog/example.md",
+        content: "x".repeat(STAGE_INPUT_BYTES.generation),
+      },
     ],
     researchBudget: true,
   });

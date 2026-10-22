@@ -1,9 +1,14 @@
 import { assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
-import { runInference, validateSourceFiles } from "./inference.ts";
+import {
+  runInference,
+  validateSourceFiles,
+  buildTextInferencePayload,
+  type SourceFile,
+} from "./inference.ts";
 import type { Job } from "./models.ts";
 import { ProviderFailure } from "./provider-failure.ts";
-import { SITES, isSiteWritablePath } from "./sites.ts";
+import { SITES, isSiteWritablePath, type SiteConfig } from "./sites.ts";
 import {
   SeoBudget,
   sha256,
@@ -92,33 +97,14 @@ export async function generateSeo(env: AppEnv, input: unknown) {
       )
     )
       throw new Error("invalid");
-    const job: Job = {
-      attachments: [],
-      assistantMessage: null,
-      branchName: "",
-      changedPaths: [],
-      clarification: null,
-      conversationId: runId,
-      createdAt: new Date().toISOString(),
-      errorMessage: null,
-      id: callId,
-      instruction:
-        "SEOの改訂案のみを作成する。提供資料を根拠とし、未確認の事実を追加しない。URL・公開日・著者・画像・既存事実を維持する。変更は次の許可pathだけ: " +
-        JSON.stringify(paths) +
-        "\n" +
-        instruction,
-      prUrl: null,
-      // The production Chat Completions endpoint rejected max (400 unsupported_value).
-      // Pin high for SEO; do not retry or silently switch effort after an API call.
-      reasoningEffort: "high",
-      requestedBy: "seo-service",
-      requestedRole: "editor",
-      siteId: site.id,
-      status: "running",
-      summary: null,
-      turnNumber: 1,
-      updatedAt: new Date().toISOString(),
-    };
+    const job = generationJob(
+      site,
+      articlePath,
+      paths,
+      instruction,
+      runId,
+      callId,
+    );
     const result = await runInference(
       env,
       site,
@@ -198,4 +184,54 @@ export async function generateSeo(env: AppEnv, input: unknown) {
       ...diagnostic,
     };
   }
+}
+
+function generationJob(
+  site: SiteConfig,
+  articlePath: string,
+  paths: string[],
+  instruction: string,
+  runId = "preflight",
+  callId = "preflight",
+): Job {
+  return {
+    attachments: [],
+    assistantMessage: null,
+    branchName: "",
+    changedPaths: [],
+    clarification: null,
+    conversationId: runId,
+    createdAt: new Date().toISOString(),
+    errorMessage: null,
+    id: callId,
+    instruction:
+      "SEOの改訂案のみを作成する。提供資料を根拠とし、未確認の事実を追加しない。URL・公開日・著者・画像・既存事実を維持する。変更は次の許可pathだけ: " +
+      JSON.stringify(paths) +
+      "\n" +
+      instruction,
+    prUrl: null,
+    // The production Chat Completions endpoint rejected max (400 unsupported_value).
+    // Pin high for SEO; do not retry or silently switch effort after an API call.
+    reasoningEffort: "high",
+    requestedBy: "seo-service",
+    requestedRole: "editor",
+    siteId: site.id,
+    status: "running",
+    summary: null,
+    turnNumber: 1,
+    updatedAt: new Date().toISOString(),
+  };
+}
+export function buildSeoGenerationRequest(
+  site: SiteConfig,
+  articlePath: string,
+  paths: string[],
+  instruction: string,
+  files: SourceFile[],
+) {
+  return buildTextInferencePayload(
+    site,
+    generationJob(site, articlePath, paths, instruction),
+    files,
+  );
 }

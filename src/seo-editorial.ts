@@ -14,7 +14,7 @@ import {
 import type { AppEnv } from "./env.ts";
 import { dispatchSeoEditorialJob } from "./github.ts";
 import { sha256 } from "./seo-budget.ts";
-import { generateSeo } from "./seo-generation.ts";
+import { generateSeo, buildSeoGenerationRequest } from "./seo-generation.ts";
 import { validateSourceFiles } from "./inference.ts";
 import { json, HttpError, readJsonObject } from "./http.ts";
 import { authenticateRunner, type RunnerIdentity } from "./oidc.ts";
@@ -699,10 +699,50 @@ async function claimJob(
         sources: [],
       }),
     );
+    // Unknown future research/JA growth cannot be forecast. This placeholder is
+    // explicitly unacquired and only rejects already oversized known inputs.
+    const generationEstimateEvidence = {
+      version: 1 as const,
+      checkedAt: "",
+      sourceSha256: sourceHash,
+      responseId: "not_acquired_size_estimate_only",
+      queries: [],
+      sources: [],
+    };
+    const generationInputs = paths.map((path, step) => {
+      const locale = article.translations.find((t) => t.path === path)?.locale;
+      const knownFiles = files.filter(
+        (f) =>
+          f.path === article.source.path ||
+          f.path === path ||
+          f.path.startsWith("docs/"),
+      );
+      const instruction = buildEditorialInstruction({
+        step,
+        paths,
+        locale,
+        translationCount: article.translations.length,
+        reason: candidate.reason,
+        research: generationEstimateEvidence,
+      });
+      const request = buildSeoGenerationRequest(
+        identity.site,
+        article.source.path,
+        [path],
+        instruction,
+        knownFiles,
+      );
+      return { path, locale: locale || "ja", bytes: bytes(request) };
+    });
     const reasons = [
       ...(planBytes > STAGE_INPUT_BYTES.plan ? ["plan_input_exceeded"] : []),
       ...(reviewBytes > STAGE_INPUT_BYTES.review
         ? ["baseline_review_input_exceeded"]
+        : []),
+      ...(generationInputs.some(
+        (input) => input.bytes > STAGE_INPUT_BYTES.generation,
+      )
+        ? ["baseline_generation_input_exceeded"]
         : []),
     ];
     const saved = await env.CMS_AI_IMAGES.put(
@@ -713,11 +753,14 @@ async function claimJob(
         baseSha: body.baseSha,
         sourceSha256: sourceHash,
         sourceBundleSha256: await sha256(JSON.stringify(baseline)),
+        knownInputBundleSha256: await sha256(JSON.stringify(files)),
         planBytes,
         reviewBytes,
+        generationInputs,
         limits: {
           plan: STAGE_INPUT_BYTES.plan,
           review: STAGE_INPUT_BYTES.review,
+          generation: STAGE_INPUT_BYTES.generation,
         },
         evidenceStatus: "not_acquired_size_estimate_only",
         reasons,

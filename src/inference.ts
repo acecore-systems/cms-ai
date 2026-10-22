@@ -58,53 +58,12 @@ export async function runInference(
     buildUserPrompt(site, job, files, validationFeedback),
     imageBudget,
   );
-  const request = {
-    max_completion_tokens: 12_000,
-    store: false,
-    messages: [
-      {
-        content: buildSystemPrompt(site, job),
-        role: "system",
-      },
-      ...(await buildConversationMessages(
-        env,
-        job,
-        conversationJobs,
-        imageBudget,
-      )),
-      {
-        content: currentContent,
-        role: "user",
-      },
-    ],
-    reasoning_effort: job.reasoningEffort,
-    response_format: {
-      json_schema: {
-        additionalProperties: false,
-        properties: {
-          changes: {
-            items: {
-              additionalProperties: false,
-              properties: {
-                content: { type: "string" },
-                path: { type: "string" },
-                reason: { type: "string" },
-              },
-              required: ["path", "content", "reason"],
-              type: "object",
-            },
-            maxItems: MAX_CHANGE_FILES,
-            type: "array",
-          },
-          clarification: { type: "string" },
-          summary: { type: "string" },
-        },
-        required: ["summary", "clarification", "changes"],
-        type: "object",
-      },
-      type: "json_schema",
-    },
-  };
+  const request = buildInferenceRequest(
+    site,
+    job,
+    currentContent,
+    await buildConversationMessages(env, job, conversationJobs, imageBudget),
+  );
   const model = getModel(env);
   if (model === "gpt-6-luna" && !env.OPENAI_API_KEY_STORE) {
     throw new HttpError(503, "OpenAI APIの設定がありません。");
@@ -161,6 +120,69 @@ export async function runInference(
   }
 
   return parsed;
+}
+
+// Shared by actual inference and SEO's no-I/O preflight; schema and prompts
+// have one definition. Normal CMS images/history retain their existing path.
+function buildInferenceRequest(
+  site: SiteConfig,
+  job: Job,
+  currentContent: MessageContent,
+  history: Array<{ role: "assistant" | "user"; content: MessageContent }> = [],
+) {
+  return {
+    max_completion_tokens: 12_000,
+    store: false,
+    messages: [
+      {
+        content: buildSystemPrompt(site, job),
+        role: "system",
+      },
+      ...history,
+      {
+        content: currentContent,
+        role: "user",
+      },
+    ],
+    reasoning_effort: job.reasoningEffort,
+    response_format: {
+      json_schema: {
+        additionalProperties: false,
+        properties: {
+          changes: {
+            items: {
+              additionalProperties: false,
+              properties: {
+                content: { type: "string" },
+                path: { type: "string" },
+                reason: { type: "string" },
+              },
+              required: ["path", "content", "reason"],
+              type: "object",
+            },
+            maxItems: MAX_CHANGE_FILES,
+            type: "array",
+          },
+          clarification: { type: "string" },
+          summary: { type: "string" },
+        },
+        required: ["summary", "clarification", "changes"],
+        type: "object",
+      },
+      type: "json_schema",
+    },
+  };
+}
+export function buildTextInferencePayload(
+  site: SiteConfig,
+  job: Job,
+  files: SourceFile[],
+) {
+  return openAiPayload(
+    "gpt-6-luna",
+    buildInferenceRequest(site, job, buildUserPrompt(site, job, files)),
+    true,
+  );
 }
 
 export function validateSourceFiles(
@@ -455,6 +477,30 @@ function getModel(env: AppEnv) {
   return model;
 }
 
+function openAiPayload(
+  model: string,
+  request: Record<string, unknown>,
+  budgeted: boolean,
+) {
+  const { response_format: responseFormat, ...commonRequest } = request;
+  const schema = (responseFormat as { json_schema?: unknown } | undefined)
+    ?.json_schema;
+  return {
+    ...commonRequest,
+    model,
+    store: false,
+    ...(budgeted ? { service_tier: "default" } : {}),
+    ...(schema
+      ? {
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "cms_ai_changes", schema, strict: true },
+          },
+        }
+      : {}),
+  };
+}
+
 async function runTextModel(
   env: AppEnv,
   model: string,
@@ -472,9 +518,6 @@ async function runTextModel(
       request,
     );
   }
-  const { response_format: responseFormat, ...commonRequest } = request;
-  const schema = (responseFormat as { json_schema?: unknown } | undefined)
-    ?.json_schema;
   let apiKey: string;
   try {
     apiKey = (await env.OPENAI_API_KEY_STORE?.get())?.trim() || "";
@@ -482,20 +525,7 @@ async function runTextModel(
     throw new HttpError(503, "OpenAI APIの設定がありません。");
   }
   if (!apiKey) throw new HttpError(503, "OpenAI APIの設定がありません。");
-  const payload = {
-    ...commonRequest,
-    model,
-    store: false,
-    ...(beforeRequest ? { service_tier: "default" } : {}),
-    ...(schema
-      ? {
-          response_format: {
-            type: "json_schema",
-            json_schema: { name: "cms_ai_changes", schema, strict: true },
-          },
-        }
-      : {}),
-  };
+  const payload = openAiPayload(model, request, Boolean(beforeRequest));
   if (beforeRequest) await beforeRequest(model, payload);
   if (requestDeadline !== undefined && Date.now() >= requestDeadline)
     throw new Error("seo_deadline");
