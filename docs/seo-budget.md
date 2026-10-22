@@ -1,12 +1,14 @@
 # SEO内部生成と費用上限
 
+2026-10-22の利用者明示承認で、JST月上限を5→7 USDへ変更する。1 USD/run、30分、全工程最大985076 microUSDは維持。0011は予算triggerのみを置換し、旧run/call/予約/監査を更新しない。本変更の本番migration・配備は運用担当者の受入後で、以下の過去承認とは区別する。
+
 2026-10-20追加: [新規調査・AI校閲](seo-research.md)は同じ台帳・上限を使い、検索contextと要求入力の各pass分・検索料を別の保守式で予約する。以下の本文生成の単価と通常CMSは変更しない。新機能は初期無効・実API未確認。
 
 2026年10月19日に利用者がSEO分の上限を1実行1米ドル、月5米ドルと確定した。月は日本時間の暦月、API送信前の予約時点で計上する。既存CMSの対話利用とは独立したD1台帳で管理する。これはSEO生成APIの費用上限であり、CloudflareやGitHub等の利用料金を含めない。
 
 `SeoConnection` は従来の接続専用契約を保持する。新しい `SeoGeneration` の名前付きService Bindingだけが改訂案を生成できる。HTTP入口は404、ユーザーのCMS権限やGitHub保存認証は流用しない。生成の許可は `SEO_GENERATION_ENABLED` で停止できる。GitHub dispatch・PR・統合・公開の機能はこのentrypointにない。
 
-`0004_seo_budget.sql` を配置前に適用する。runとcallを別IDで記録し、同一callは再送しない。runは最初の受信から30分、対象記事は1つに固定する。SQL triggerでrun合計100万micro USD、月合計500万micro USDを超える予約を拒否する。同時実行もDBで制御し、エラー・不明結果・モデル返却の検証失敗で予約を戻さない。予約額は実請求額ではなく保守的な上限額。台帳は通常のコンテンツ保存期限で削除しない。
+既存0004適用環境には `0011_seo_month_budget.sql` を新コード配備前に適用する。runとcallを別IDで記録し、同一callは再送しない。runは最初の受信から30分、対象記事は1つに固定する。SQL triggerでrun合計100万micro USD、月合計700万micro USDを超える予約を拒否する。同時実行もDBで制御し、エラー・不明結果・モデル返却の検証失敗で予約を戻さない。予約額は実請求額ではなく保守的な上限額。台帳は通常のコンテンツ保存期限で削除しない。
 
 既存OpenAI Secrets Storeを内部で再利用し、`gpt-6-luna`、Standard (`service_tier=default`)、テキスト入力、最大出力12,000 tokensに固定する。モデル切替・画像・外部ツール・cache write・自動再試行を使わない。確定JSONのUTF-8 bytes + 8,192を入力tokensの保守的上限として、入力1米ドル/100万tokens、出力2米ドル/100万tokensで予約する。これは10月19日に確認した[公式Standard料金](https://developers.openai.com/api/docs/pricing)のlong-context入力0.20米ドル・出力0.75米ドルより高い保護単価である。2026年11月19日00:00 UTCからは料金再確認まで生成を停止する。変更後の料金や追加機能をこの見積りへ無条件に適用しない。
 

@@ -86,7 +86,7 @@ describe("SEO generation gate", () => {
     });
     expect(generationReadiness(env).budget).toMatchObject({
       runMicros: 1_000_000,
-      monthMicros: 5_000_000,
+      monthMicros: 7_000_000,
     });
     expect(fetcher).not.toHaveBeenCalled();
   });

@@ -489,7 +489,13 @@ export async function researchArticle(
           "seo-responses/" + callId + ".json",
         );
         if (!raw) throw new Error("seo_check_evidence");
-        return parseDiscovery(response, source.content, plan, await raw.text());
+        return parseDiscovery(
+          response,
+          source.content,
+          plan,
+          await raw.text(),
+          2,
+        );
       },
     )) as Discovery;
     await assertDiscovery(discovery, source.content, plan);
@@ -511,6 +517,7 @@ export async function researchArticle(
           source.content,
           plan,
           rawText,
+          discovery.version,
         ),
       ) !== JSON.stringify(discovery)
     )

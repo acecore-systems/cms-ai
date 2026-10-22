@@ -1,4 +1,5 @@
 import { referenceUrl } from "./seo-evidence.ts";
+import { selectedDiscoveryUrl } from "./seo-publishers.ts";
 import { sha256 } from "./seo-hash.ts";
 import { responseRequest } from "./seo-responses.ts";
 import {
@@ -8,7 +9,7 @@ import {
 } from "./seo-research-plan.ts";
 
 export type Discovery = {
-  version: 1;
+  version: 1 | 2;
   sourceSha256: string;
   planSha256: string;
   responseId: string;
@@ -35,6 +36,7 @@ export async function parseDiscovery(
   source: string,
   plan: ResearchPlan,
   rawResponse: string,
+  version: 1 | 2 = 1,
 ): Promise<Discovery> {
   if (JSON.stringify(JSON.parse(rawResponse)) !== JSON.stringify(result))
     throw new Error("seo_check_evidence");
@@ -78,14 +80,14 @@ export async function parseDiscovery(
   }
   if (!urls.length) throw new Error("seo_research_insufficient");
   return {
-    version: 1,
+    version,
     sourceSha256: plan.sourceSha256,
     planSha256: await sha256(JSON.stringify(plan)),
     responseId: result.id,
     responseSha256: await sha256(rawResponse),
     queries: calls[0].action.queries || [calls[0].action.query],
     urls,
-    selectedUrl: urls[0] || null,
+    selectedUrl: selectedDiscoveryUrl(urls, version),
   };
 }
 
@@ -96,7 +98,7 @@ export async function assertDiscovery(
 ) {
   const focused = focusedInput(source, plan.sourceSha256, plan);
   if (
-    value.version !== 1 ||
+    ![1, 2].includes(value.version) ||
     value.sourceSha256 !== plan.sourceSha256 ||
     value.planSha256 !== (await sha256(JSON.stringify(plan))) ||
     !/^resp_[A-Za-z0-9_-]+$/.test(value.responseId) ||
@@ -112,7 +114,7 @@ export async function assertDiscovery(
         source.includes(url) ||
         focused.existingUrls.includes(url),
     ) ||
-    value.selectedUrl !== (value.urls[0] || null)
+    value.selectedUrl !== selectedDiscoveryUrl(value.urls, value.version)
   )
     throw new Error("seo_check_evidence");
 }
