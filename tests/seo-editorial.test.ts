@@ -62,6 +62,7 @@ beforeEach(async () => {
     "0013_seo_discovery_policy.sql",
     "0014_seo_generation_syntax.sql",
     "0015_seo_october_budget.sql",
+    "0016_seo_external_sources.sql",
   ])
     sql.exec(
       readFileSync(
@@ -1616,6 +1617,7 @@ it.each([
 );
 it.each([
   "empty",
+  "self-selected",
   "unsafe-only",
   "existing-only",
   "incomplete",
@@ -1669,18 +1671,20 @@ it.each([
                 type: "search",
                 queries: input.plan.queries,
                 sources:
-                  kind === "unsafe-only"
-                    ? [{ type: "url", url: "http://127.0.0.1/private" }]
-                    : kind === "existing-only"
-                      ? [
-                          {
-                            type: "url",
-                            url: "https://docs.example.org/existing",
-                          },
-                        ]
-                      : kind === "malformed-source"
-                        ? [{ title: "Missing URL" }]
-                        : [],
+                  kind === "self-selected"
+                    ? [{ type: "url", url: "https://asv.acecore.net/" }]
+                    : kind === "unsafe-only"
+                      ? [{ type: "url", url: "http://127.0.0.1/private" }]
+                      : kind === "existing-only"
+                        ? [
+                            {
+                              type: "url",
+                              url: "https://docs.example.org/existing",
+                            },
+                          ]
+                        : kind === "malformed-source"
+                          ? [{ title: "Missing URL" }]
+                          : [],
               },
             },
             {
@@ -1691,8 +1695,12 @@ it.each([
                 {
                   type: "output_text",
                   text: JSON.stringify({
-                    verdict: "insufficient",
-                    selectedUrl: null,
+                    verdict:
+                      kind === "self-selected" ? "selected" : "insufficient",
+                    selectedUrl:
+                      kind === "self-selected"
+                        ? "https://asv.acecore.net/"
+                        : null,
                     reason: "No suitable source in synthetic search",
                   }),
                   annotations: [],

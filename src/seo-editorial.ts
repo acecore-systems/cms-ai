@@ -1,3 +1,4 @@
+import { externalScope } from "./seo-external-sources.ts";
 import { stageBudget, CURRENT_BUDGET_VERSION } from "./seo-stage-budget.ts";
 import {
   immutableReviewObject,
@@ -79,6 +80,7 @@ type EditorialJob = {
   budget_version: number;
   discovery_policy: 2 | 3;
   generation_syntax: 1 | 2;
+  external_sources: 0 | 1;
   input_allocation_sha256: string | null;
   generation_started: number;
   publication_started: number;
@@ -285,7 +287,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -295,6 +297,7 @@ async function advance(env: AppEnv, runId: string) {
         CURRENT_BUDGET_VERSION,
         3,
         2,
+        1,
         runId,
         run.candidate_index,
       ),
@@ -703,7 +706,14 @@ async function claimJob(
     const bytes = (request: unknown) =>
       new TextEncoder().encode(JSON.stringify(request)).length;
     const planBytes = bytes(
-      buildPlanRequest(article.source.content, 2, job.discovery_policy),
+      buildPlanRequest(
+        article.source.content,
+        2,
+        job.external_sources ? 4 : job.discovery_policy,
+        job.external_sources
+          ? externalScope(job.site_id, article.source)
+          : undefined,
+      ),
     );
     const reviewBytes = bytes(
       buildReviewRequest(article, files, baseline, {
@@ -804,7 +814,9 @@ async function claimJob(
       version: 1,
       researchContract: 2,
       ...(job.generation_syntax === 2 ? { generationSyntax: 2 } : {}),
-      ...(job.discovery_policy === 3 ? { discoveryPolicy: 3 } : {}),
+      ...(job.discovery_policy === 3
+        ? { discoveryPolicy: job.external_sources ? 4 : 3 }
+        : {}),
       ...(job.budget_version === 2 ? { budgetVersion: 2 } : {}),
       baseSha: body.baseSha,
       sourceSha256: sourceHash,
@@ -898,7 +910,8 @@ function checkContext(job: EditorialJob, run: Run): CheckContext {
     contractVersion: job.research_contract,
     retrievalVersion: job.retrieval_contract,
     budgetVersion: job.budget_version,
-    discoveryPolicy: job.discovery_policy,
+    discoveryPolicy: job.external_sources ? 4 : job.discovery_policy,
+    ...(job.external_sources ? { siteId: job.site_id } : {}),
   };
 }
 
@@ -992,7 +1005,8 @@ async function propose(
       !saved ||
       saved.retrievalContract !== 2 ||
       (saved.budgetVersion ?? 1) !== job.budget_version ||
-      (saved.discoveryPolicy ?? 2) !== job.discovery_policy ||
+      (saved.discoveryPolicy ?? 2) !==
+        (job.external_sources ? 4 : job.discovery_policy) ||
       (saved.generationSyntax ?? 1) !== job.generation_syntax ||
       saved.sourceSha256 !== job.source_sha256 ||
       saved.baseSha !== job.base_sha ||
