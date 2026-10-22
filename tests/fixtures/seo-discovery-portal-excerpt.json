@@ -1,0 +1,8 @@
+{
+  "note": "Sanitized excerpt of saved 2026-10-22 discovery: only two real search URLs and final text. Not a complete provider response; not v3 success evidence. No encrypted reasoning, IDs, usage or credentials.",
+  "urls": [
+    "https://hangar.papermc.io/GeyserMC/Floodgate",
+    "https://geysermc.org/wiki/floodgate/linking/"
+  ],
+  "text": "検索結果のみ取得しました。公式一次資料候補として、PaperMC Hangar の Floodgate 掲載ページが表示されました。ページ本文は確認していません。([hangar.papermc.io](https://hangar.papermc.io/GeyserMC/Floodgate?utm_source=openai))"
+}

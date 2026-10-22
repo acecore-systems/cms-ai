@@ -77,6 +77,7 @@ type EditorialJob = {
   research_contract: number;
   retrieval_contract: number;
   budget_version: number;
+  discovery_policy: 2 | 3;
   input_allocation_sha256: string | null;
   generation_started: number;
   publication_started: number;
@@ -283,7 +284,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version) SELECT ?,run_id,?,candidate_index,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy) SELECT ?,run_id,?,candidate_index,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -291,6 +292,7 @@ async function advance(env: AppEnv, runId: string) {
         researchEnabled(env, runId) ? 2 : 1,
         researchEnabled(env, runId) ? 2 : 1,
         CURRENT_BUDGET_VERSION,
+        3,
         runId,
         run.candidate_index,
       ),
@@ -698,7 +700,9 @@ async function claimJob(
     const baseline = paths.map((path) => files.find((f) => f.path === path)!);
     const bytes = (request: unknown) =>
       new TextEncoder().encode(JSON.stringify(request)).length;
-    const planBytes = bytes(buildPlanRequest(article.source.content, 2));
+    const planBytes = bytes(
+      buildPlanRequest(article.source.content, 2, job.discovery_policy),
+    );
     const reviewBytes = bytes(
       buildReviewRequest(article, files, baseline, {
         version: 1,
@@ -795,6 +799,7 @@ async function claimJob(
     const preflightRaw = JSON.stringify({
       version: 1,
       researchContract: 2,
+      ...(job.discovery_policy === 3 ? { discoveryPolicy: 3 } : {}),
       ...(job.budget_version === 2 ? { budgetVersion: 2 } : {}),
       baseSha: body.baseSha,
       sourceSha256: sourceHash,
@@ -888,6 +893,7 @@ function checkContext(job: EditorialJob, run: Run): CheckContext {
     contractVersion: job.research_contract,
     retrievalVersion: job.retrieval_contract,
     budgetVersion: job.budget_version,
+    discoveryPolicy: job.discovery_policy,
   };
 }
 
@@ -981,6 +987,7 @@ async function propose(
       !saved ||
       saved.retrievalContract !== 2 ||
       (saved.budgetVersion ?? 1) !== job.budget_version ||
+      (saved.discoveryPolicy ?? 2) !== job.discovery_policy ||
       saved.sourceSha256 !== job.source_sha256 ||
       saved.baseSha !== job.base_sha ||
       JSON.stringify(saved.generationAllocation?.map((x: any) => x.path)) !==
