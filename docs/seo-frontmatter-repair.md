@@ -1,0 +1,9 @@
+# SEO生成の単一行YAML文字列を保護する
+
+新jobのgeneration_syntax=2では、title/descriptionを引用符付き文字列で出力するよう指示する。万一、単一の未引用titleまたはdescriptionの値にコロン＋空白が入りYAML解析が失敗した場合、その値を変更せずJSON文字列として引用する。
+
+修復するのは、既存の編集可能な文字列field・単一行・1候補・該当行のBLOCK_AS_IMPLICIT_KEYエラー1件だけの場合である。複数行、重複key、コメントや曖昧なYAML記号、他field、2候補、他の構文エラーは修復しない。本文・他metadata・文言の言い換えは行わず、再解析後に既存のmetadata/code/link/number等の全受入検証を実行する。provider原応答は従来どおり非公開で保存し、書き換えない。
+
+0014をコード配信前に適用する。新列の既定値は1で既存jobを保持し、変更禁止triggerを設ける。新jobのみ2で作成し、claim前のサイズ見積と実生成要求が同じ指示を使う。旧jobのrequest・受入済み原本は再解釈しない。通常CMSとrunner protocolは変更しないため6site pin更新は不要。
+
+保存済み失敗proposalの再現ではtitleの文字列値と本文を保持したまま受入検証に通ることを確認する。これはローカル再現であり、旧jobの再開や自動9言語校閲の成功ではない。実行時のサイズ上限、1.25 USD/run・7 USD/JST月、期限、品質ゲートは維持する。

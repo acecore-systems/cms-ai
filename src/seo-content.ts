@@ -194,6 +194,7 @@ function proposalMarkdown(
   content: string,
   original: Record<string, unknown>,
   editable: Set<string>,
+  syntaxPolicy = 1,
 ) {
   try {
     return { content, parsed: markdown(content) };
@@ -203,6 +204,38 @@ function proposalMarkdown(
     );
     if (!match) throw new Error("seo_frontmatter");
     const lines = match[2].split("\n");
+    if (syntaxPolicy === 2) {
+      const document = parseDocument(match[2], { uniqueKeys: true });
+      const candidates = lines.flatMap((line, index) => {
+        const m = /^(title|description): ([^\s].*)$/.exec(line);
+        if (
+          !m ||
+          !editable.has(m[1]) ||
+          typeof original[m[1]] !== "string" ||
+          !/: /.test(m[2]) ||
+          /^[\-?:,\[\]{}#&*!|>'"%@`]/.test(m[2]) ||
+          /[#\[\]{}\t\x00-\x1f]/.test(m[2]) ||
+          m[2].trim() !== m[2] ||
+          (index + 1 < lines.length && /^\s+\S/.test(lines[index + 1]))
+        )
+          return [];
+        return [{ index, key: m[1], value: m[2] }];
+      });
+      if (
+        candidates.length === 1 &&
+        document.errors.length === 1 &&
+        document.errors[0].code === "BLOCK_AS_IMPLICIT_KEY" &&
+        document.errors[0].linePos?.[0].line === candidates[0].index + 1
+      ) {
+        const c = candidates[0];
+        const fixed = [...lines];
+        fixed[c.index] = c.key + ": " + JSON.stringify(c.value);
+        const repaired = match[1] + fixed.join("\n") + match[3] + match[4];
+        const parsed = markdown(repaired); // all other YAML errors still reject
+        if (parsed.data[c.key] !== c.value) throw new Error("seo_frontmatter");
+        return { content: repaired, parsed };
+      }
+    }
     const scalar = (line: string) => {
       const field = /^([A-Za-z][A-Za-z0-9]*): [^\s|>!&*[{]/.exec(line)?.[1];
       if (!field || typeof original[field] !== "string") return null;
@@ -246,6 +279,7 @@ export async function acceptEditorialChange(
   japanese: string | null,
   now = Date.now(),
   verifiedUrls: readonly string[] = [],
+  syntaxPolicy = 1,
 ) {
   if (original.path !== proposed.path || !proposed.content.trim())
     throw new Error("seo_change_path");
@@ -255,7 +289,12 @@ export async function acceptEditorialChange(
   editable.delete("updatedAt");
   if (japanese && identity.target.spec.translationHash === "frontmatter")
     editable.add("sourceHash");
-  const normalized = proposalMarkdown(proposed.content, before.data, editable);
+  const normalized = proposalMarkdown(
+    proposed.content,
+    before.data,
+    editable,
+    syntaxPolicy,
+  );
   const after = normalized.parsed;
   const dateField = identity.target.spec.updateField;
   // The model does not own the site's update timestamp. Restore its original
