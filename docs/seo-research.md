@@ -1,5 +1,15 @@
 # SEOの新規資料調査とAI校閲
 
+## 2026-10-22: 月7 USDと一次資料の優先選定（実装・本番未反映）
+
+利用者の新承認により月上限を7 USDへ変更する。1 USD/run・全工程最大985076 microUSD・最大3候補/1記事・30分・Draft終了は維持。CMS0011を先に適用して旧全行不変を確認し、その後コードを配置する。既存5 USDの履歴は当時の条件として残す。CLIは独自の月上限を持たず、共通`SEO_BUDGET`とCMS D1予約を利用する。
+
+新規Discovery v2は`src/seo-publishers.ts`の確認済みhost/pathを優先する。登録はPlaywright `/docs/`、Astro docs、Geyser `/wiki/`、Google Search `/search/docs/`・`/search/blog/`。根拠URLと確認日をコードに保持する。hostは完全一致、pathは末尾slashを含む境界で照合し、投稿欄・似たhost・任意subdomain・URL正規化での昇格を認めない。候補集合・順序・raw応答hashは保持し、同rankは検索順。登録がなければ先頭safe URLを使うが、そのURLを公式と認定しない。
+
+これは選択順だけであり、実検索URLの完全一致、既存URL除外、指定URLのopen/citation、後段の公式一次資料・主張・全条件の支持確認を変えない。URL書換え・mirror同一視・追加APIはない。Discovery v1は旧先頭方式で再照合し、v2だけ優先規則を適用する。拒否receiptの版・call数・runner protocolは不変、SEO migrationと6site pin更新は不要。空/unsafe/既存URL-only検索の正常不足は従来のreceipt経路を維持する。
+
+最新自然3候補は保存原本による親計測で全件input cap不適合。月上限変更は候補適格化や有料実試験成功を意味しない。入力可逆共有の改善は別途検討し、本文・条件の省略やcap拡大を本変更に含めない。事前有料試行は最大1回で、10月26日分985076 microUSDを残すか実行前に運用担当者が最新台帳で確認する。51call/4083341の時点では7Mから2916659残り、最大2回後946507となる。この算術は新たな実行許可・最新残高の代用ではない。
+
 ## 2026-10-22: 検索結果URLの固定取得（未配備・実API未確認）
 
 新規jobだけ `retrieval_contract=2` を使う。既存のplanで主張を固定した後、検索専用callを1回実行し、実 `search.sources` の順に安全・記事未掲載のURLを抽出する。最初のURLを原文応答bytesのSHA256・plan hashとともに非公開R2へ固定する。別callはそのURLだけをopenし、同一URLの実citation・主張/条件支持・公式一次資料判定を要求する。mirror/canonicalを同一視せず、検索集合外のURLは拒否する。先頭URLの公式性をサーバーが保証する設計ではなく、後段が確認できなければinsufficientとなる。外部文書は命令として扱わない。

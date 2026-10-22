@@ -78,7 +78,15 @@ export async function prepareRejection(
         focusedInput(source, context.sourceSha256, plan);
         parsed = plan;
       } else if (row.phase === "discovery" && plan) {
-        discovery = await parseDiscovery(raw.value, source, plan, raw.raw);
+        const savedDiscovery = await read(env, key(context.jobId, row.phase));
+        if (![1, 2].includes(savedDiscovery.value.version)) return fail();
+        discovery = await parseDiscovery(
+          raw.value,
+          source,
+          plan,
+          raw.raw,
+          savedDiscovery.value.version,
+        );
         parsed = discovery;
       } else return fail();
       const saved = await read(env, key(context.jobId, row.phase));

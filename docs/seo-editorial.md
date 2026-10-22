@@ -88,7 +88,7 @@ runnerの失敗結果は`{status:"unresolved",diagnostic:{stage,code}}`をAction
 
 ## 予算・期限・永続state
 
-全モデル呼び出しは既存`generateSeo`と`SeoBudget`を使い、同一予算run ID・canonical article path・親の絶対deadlineを共有する。初回API呼び出しから30分に設定し直さない。1回1 USD、JST暦月5 USD、1記事、候補3件の範囲を超えない。全9言語が予算へ収まることは保証せず、上限到達時は部分翻訳PRを作らない。
+全モデル呼び出しは既存`generateSeo`と`SeoBudget`を使い、同一予算run ID・canonical article path・親の絶対deadlineを共有する。初回API呼び出しから30分に設定し直さない。1回1 USD、JST暦月7 USD、1記事、候補3件の範囲を超えない。全9言語が予算へ収まることは保証せず、上限到達時は部分翻訳PRを作らない。
 
 失敗・不明APIの予約は保持する。モデルfallback、生成/翻訳の自動再送、期限延長はない。現在の保守的単価の有効期限は`seo-budget.ts`の`RATE_VALID_UNTIL`（2026-11-19 UTC）で、期限後は再確認まで生成を止める。
 

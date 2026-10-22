@@ -66,6 +66,30 @@ it("binds selected exact URL and ordered results to original response bytes, not
     selected.responseSha256,
   );
 });
+it("replays v1 unchanged while v2 prefers a registered publisher from the exact raw set", async () => {
+  const { plan, value } = await fixture();
+  const official = "https://playwright.dev/docs/intro";
+  value.output[0].action.sources.push({ type: "url", url: official });
+  const raw = JSON.stringify(value);
+  const old = await parseDiscovery(value, source, plan, raw, 1);
+  const current = await parseDiscovery(value, source, plan, raw, 2);
+  expect(old.selectedUrl).toBe("https://docs.example.org/new");
+  expect(current.selectedUrl).toBe(official);
+  expect(current.urls).toEqual(old.urls);
+  expect(current.responseSha256).toBe(old.responseSha256);
+  await expect(assertDiscovery(old, source, plan)).resolves.toBeUndefined();
+  await expect(assertDiscovery(current, source, plan)).resolves.toBeUndefined();
+  await expect(
+    assertDiscovery({ ...old, version: 2 }, source, plan),
+  ).rejects.toThrow();
+  await expect(
+    assertDiscovery(
+      { ...current, selectedUrl: "https://playwright.dev/docs/other" },
+      source,
+      plan,
+    ),
+  ).rejects.toThrow();
+});
 it.each(["mirror", "not-opened", "second-search", "no-citation"])(
   "rejects retrieval outside the fixed discovery contract: %s",
   async (kind) => {

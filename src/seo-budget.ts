@@ -4,7 +4,7 @@ export { sha256 } from "./seo-hash.ts";
 // User-approved ceiling, in millionths of USD. Failed/unknown calls retain their reservation.
 export const SEO_BUDGET = {
   runMicros: 1_000_000,
-  monthMicros: 5_000_000,
+  monthMicros: 7_000_000,
 } as const;
 // Conservative rates above standard long-context rates verified 2026-10-19.
 // Text only; no cache writes, tools, images, priority tier or model fallback.

@@ -23,6 +23,12 @@ beforeEach(() => {
       "utf8",
     ),
   );
+  sql.exec(
+    readFileSync(
+      new URL("../migrations/0011_seo_month_budget.sql", import.meta.url),
+      "utf8",
+    ),
+  );
   const prepare = (query: string) => ({
     bind: (...args: (string | number)[]) => ({
       run: async () => ({
@@ -54,6 +60,45 @@ beforeEach(() => {
 });
 afterEach(() => sql.close());
 describe("SEO persistent budget", () => {
+  it("upgrades the monthly trigger without changing prior complete/unknown reservations or deadlines", async () => {
+    sql.exec("DROP TRIGGER seo_budget_cap");
+    const original = readFileSync(
+      new URL("../migrations/0004_seo_budget.sql", import.meta.url),
+      "utf8",
+    );
+    sql.exec(original.slice(original.indexOf("CREATE TRIGGER seo_budget_cap")));
+    for (let i = 1; i <= 5; i++) {
+      await budget.reserve(id(i), id(i + 10), "a", hash, 1_000_000, now);
+      await budget.finish(id(i + 10), i === 1 ? "unresolved" : "complete");
+    }
+    const runs = sql.prepare("SELECT * FROM seo_budget_runs ORDER BY id").all();
+    const calls = sql
+      .prepare("SELECT * FROM seo_budget_calls ORDER BY id")
+      .all();
+    await expect(
+      budget.reserve(id(6), id(16), "a", hash, 1, now),
+    ).rejects.toThrow("seo_month_budget_exhausted");
+    sql.exec(
+      readFileSync(
+        new URL("../migrations/0011_seo_month_budget.sql", import.meta.url),
+        "utf8",
+      ),
+    );
+    expect(
+      sql.prepare("SELECT * FROM seo_budget_runs ORDER BY id").all(),
+    ).toEqual(runs);
+    expect(
+      sql.prepare("SELECT * FROM seo_budget_calls ORDER BY id").all(),
+    ).toEqual(calls);
+    await budget.reserve(id(6), id(16), "a", hash, 1_000_000, now);
+    await budget.reserve(id(7), id(17), "a", hash, 1_000_000, now);
+    await expect(
+      budget.reserve(id(8), id(18), "a", hash, 1, now),
+    ).rejects.toThrow("seo_month_budget_exhausted");
+    await expect(
+      budget.reserve(id(1), id(19), "a", hash, 1, now),
+    ).rejects.toThrow("seo_run_budget_exhausted");
+  });
   it("uses the supplied absolute deadline and cannot extend it across API calls", async () => {
     await budget.reserve(id(1), id(11), "a", hash, 100, now, now + 60_000);
     await budget.reserve(
@@ -95,16 +140,16 @@ describe("SEO persistent budget", () => {
     ).rejects.toThrow();
     await budget.reserve(id(1), id(14), "a", hash, 400_000, now);
   });
-  it("enforces $5/month across runs and uses JST month boundaries", async () => {
-    for (let i = 1; i <= 5; i++)
+  it("enforces $7/month across runs and uses JST month boundaries", async () => {
+    for (let i = 1; i <= 7; i++)
       await budget.reserve(id(i), id(i + 10), "a", hash, 1_000_000, now);
     await expect(
-      budget.reserve(id(6), id(16), "a", hash, 1, now),
+      budget.reserve(id(8), id(18), "a", hash, 1, now),
     ).rejects.toThrow();
     const next = Date.parse("2026-10-31T15:00:00Z");
     expect(jstMonth(next - 1)).toBe("2026-10");
     expect(jstMonth(next)).toBe("2026-11");
-    await budget.reserve(id(6), id(16), "a", hash, 1_000_000, next);
+    await budget.reserve(id(8), id(18), "a", hash, 1_000_000, next);
   });
   it("cannot reuse a call, switch article, or extend a run deadline", async () => {
     await budget.reserve(id(1), id(11), "a", hash, 10, now);
