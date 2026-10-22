@@ -1,3 +1,4 @@
+import { referenceInstructions } from "./seo-url-instructions.ts";
 import {
   externalScope,
   externalExistingUrls,
@@ -36,7 +37,6 @@ import {
 import {
   evidenceReferences,
   referenceUrl,
-  LEARN_VIEW_URL_INSTRUCTION,
   type ResearchEvidence,
 } from "./seo-evidence.ts";
 import {
@@ -60,6 +60,7 @@ export type CheckContext = {
   budgetVersion?: number;
   discoveryPolicy?: 2 | 3 | 4;
   referencePolicy?: 1 | 2;
+  urlInstructions?: 1 | 2;
   siteId?: string;
   researchContext?: "low" | "high";
 };
@@ -428,10 +429,12 @@ export function buildRetrievalRequest(
   focused: ReturnType<typeof focusedInput>,
   discovery: Discovery,
   researchContext: "low" | "high" = "low",
+  urlInstructions = 1,
 ) {
   if (!discovery.selectedUrl) throw new Error("seo_research_insufficient");
   if (!["low", "high"].includes(researchContext))
     throw new Error("seo_research_bound");
+  const instruction = referenceInstructions(urlInstructions);
   const base = buildSearchRequest(focused);
   if (discovery.referencePolicy === 2)
     base.instructions =
@@ -440,7 +443,7 @@ export function buildRetrievalRequest(
         "fragment/認証つきURLは禁止。queryはURL policy2の固定文書viewだけ許可。",
       ) +
       " " +
-      LEARN_VIEW_URL_INSTRUCTION;
+      instruction;
   if (researchContext === "high")
     base.tools = base.tools!.map((tool) => ({
       ...tool,
@@ -549,6 +552,7 @@ export async function researchArticle(
         sourceSha256: context.sourceSha256,
         plan,
         ...(context.referencePolicy === 2 ? { referencePolicy: 2 } : {}),
+        ...(context.urlInstructions === 2 ? { urlInstructions: 2 } : {}),
         ...(scope ? { externalScope: scope } : {}),
       },
       async (callId) => {
@@ -563,6 +567,7 @@ export async function researchArticle(
             context.discoveryPolicy,
             scope,
             context.referencePolicy,
+            context.urlInstructions,
           ),
           phase: "discovery",
         });
@@ -628,6 +633,7 @@ export async function researchArticle(
           sourceSha256: context.sourceSha256,
           plan,
           discovery,
+          ...(context.urlInstructions === 2 ? { urlInstructions: 2 } : {}),
           ...(context.researchContext === "high"
             ? { researchContext: "high" }
             : {}),
@@ -635,7 +641,12 @@ export async function researchArticle(
       : { sourceSha256: context.sourceSha256, plan },
     async (callId) => {
       const request = discovery
-        ? buildRetrievalRequest(focused, discovery, context.researchContext)
+        ? buildRetrievalRequest(
+            focused,
+            discovery,
+            context.researchContext,
+            context.urlInstructions,
+          )
         : buildSearchRequest(focused);
       const response = await seoResponse(env, {
         runId: context.budgetRunId,

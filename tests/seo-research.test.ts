@@ -113,6 +113,7 @@ beforeEach(async () => {
     "0018_seo_allocation_cardinality.sql",
     "0019_seo_variable_review.sql",
     "0020_seo_reference_policy.sql",
+    "0021_seo_url_instructions.sql",
   ])
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),
@@ -1098,4 +1099,83 @@ it("fixes one complete exact factual sentence and retains surrounding proposals 
       2,
     ),
   ).toThrow();
+});
+
+it("binds split discovery and retrieval replay to the immutable URL instruction version without resending", async () => {
+  sql.prepare("DELETE FROM seo_editorial_jobs WHERE id=?").run(context.jobId);
+  sql
+    .prepare(
+      "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,retrieval_contract,reference_policy,url_instructions) VALUES(?,?,?,0,2,2,2,2)",
+    )
+    .run(context.jobId, context.runId, "homepage-cherry");
+  context.retrievalVersion = 2;
+  context.discoveryPolicy = 3;
+  context.referencePolicy = 2;
+  context.urlInstructions = 2;
+  fetchMock.mockImplementation(async (_url, options) => {
+    const request = JSON.parse(options.body),
+      input = JSON.parse(request.input);
+    if (input.claims) return new Response(JSON.stringify(plannerProvider()));
+    const result: any = provider();
+    if (!input.discovery) {
+      result.output = result.output.filter(
+        (x: any) => x.type !== "web_search_call" || x.action.type === "search",
+      );
+      const search = result.output.find(
+        (x: any) => x.type === "web_search_call",
+      );
+      search.action.sources = [{ type: "url", url }];
+      result.output.find((x: any) => x.type === "message").content[0].text =
+        JSON.stringify({
+          verdict: "selected",
+          selectedUrl: url,
+          reason: "Synthetic official candidate, not live evidence.",
+        });
+    } else
+      result.output = result.output.filter(
+        (x: any) =>
+          x.type !== "web_search_call" || x.action.type === "open_page",
+      );
+    return new Response(JSON.stringify(result));
+  });
+  await research();
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  const row = sql
+    .prepare("SELECT input_sha256 FROM seo_discovery_checks")
+    .get()!;
+  const plan = JSON.parse(objects.get("seo-editorial/job/plan.json")!);
+  const discovery = JSON.parse(
+    objects.get("seo-editorial/job/discovery.json")!,
+  );
+  expect(row.input_sha256).toBe(
+    await sha256(
+      JSON.stringify({
+        sourceSha256: context.sourceSha256,
+        plan,
+        referencePolicy: 2,
+        urlInstructions: 2,
+      }),
+    ),
+  );
+  expect(
+    sql
+      .prepare(
+        "SELECT input_sha256 FROM seo_editorial_checks WHERE phase='research'",
+      )
+      .get()!.input_sha256,
+  ).toBe(
+    await sha256(
+      JSON.stringify({
+        sourceSha256: context.sourceSha256,
+        plan,
+        discovery,
+        urlInstructions: 2,
+      }),
+    ),
+  );
+  await research();
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  context.urlInstructions = 1;
+  await expect(research()).rejects.toThrow("seo_check_conflict");
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 });
