@@ -414,7 +414,10 @@ describe("SEO durable editorial boundary", () => {
       return;
     }
     expect(review.status).toBe("review_failed");
-    if (variant === "late") vi.setSystemTime(now + 31 * 60000);
+    if (variant === "late") {
+      clock.mockReturnValue(now + 31 * 60000);
+      expect(Date.now()).toBeGreaterThan(now + 30 * 60000);
+    }
     if (variant === "receipt-store-failure") {
       const normal = env.CMS_AI_IMAGES.put.bind(env.CMS_AI_IMAGES);
       env.CMS_AI_IMAGES.put = vi.fn(async (k: any, ...args: any[]) =>
@@ -442,7 +445,7 @@ describe("SEO durable editorial boundary", () => {
       const budget = sql
         .prepare("SELECT * FROM seo_budget_calls ORDER BY id")
         .all();
-      if (variant === "lost-callback") vi.setSystemTime(now + 31 * 60000);
+      if (variant === "lost-callback") clock.mockReturnValue(now + 31 * 60000);
       expect(await editorialStatus(env, { runId })).toMatchObject({
         status: "review_rejected",
       });
