@@ -2,6 +2,16 @@
 
 2026年10月20日の利用者指示による追加。通常CMSの会話・生成APIは変更しない。新機能は無効を維持。前回の限定実APIはcompleted/insufficient・open1・citation0で生成前停止した。その後の実APIでは検索・open・引用・claim ID形式は成立したが、選択主張と検索主題の不一致によりinsufficientで停止した。下記の固定plan方式は実API・クラウドE2E未確認。テストで用いる検索応答、出典、校閲結果は合成fixtureであり、実資料の取得成功や記事品質の証明ではない。
 
+## 生成前の意味・文法点検（2026-10-22）
+
+SEO専用生成指示で、原文の事実・条件・否定・手順と目的を出力前に対応確認し、成功時とエラー時など対になる確認を両方保持する。翻訳では改訂済み日本語との意味対応に加え、冠詞・名詞の性数・主語と動詞の一致・語義を点検する。原文にない手順や目的を補わず、不明な場合のclarificationも維持する。以前の校閲が検出した手順脱落・文法問題の予防指示であり、実際の校閲passを保証しない。
+
+独立AI校閲の判定、失敗応答と具体的issuesの非公開保存、再送禁止は変更しない。追加API呼出し・予算上限変更・runner protocol変更はなく、6サイトのrunner pin更新は不要。合成応答による回帰成功と、実際の研究・生成・AI校閲・Draft PR成功を区別する。
+
+限定実行前には最新の自然候補のmain・9原稿・guide・PR重複・lockと、実builderのrequest bytesを再確認する。原本だけでbaseline review上限180000 bytesを超える場合は既存のclaim前preflightでskipし、有料調査を開始しない。合成plan/資料を用いたrequest計測はサイズ検証だけであり、資料取得・主張支持・翻訳品質の証拠ではない。全候補が不適格ならURL差替え、本文切捨てによって実試行へ進めない。
+
+校閲failは依然としてunresolvedとなり、自動でglobal受付を解放しない。生成前の確定insufficient用callbackを校閲拒否へ流用してはならない。現時点ではSEO側の専用管理監査による照合が必要であり、通常週次を完全無人で継続するための校閲拒否終端化は別の未実装事項として残る。
+
 ## 実行と根拠
 
 新規jobの作成時にprotocolを固定する。`SEO_RESEARCH_ENABLED=true`、または完全一致する`SEO_RESEARCH_CANARY_RUN_ID=editorial-UUID`のjobだけv2。既存jobと初期無効時はv1を保持する。Service Bindingのstart/status、OIDC audience・repository・workflow、main/source hash、claimとDraft終了の契約は維持する。
