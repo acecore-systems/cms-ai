@@ -40,7 +40,7 @@
     },
   ],
   "vars": {
-    "SEO_RESEARCH_ENABLED": "false",
+    "SEO_RESEARCH_ENABLED": "true",
     "SEO_RESEARCH_CANARY_RUN_ID": "",
     "SEO_EDITORIAL_ENABLED": "true",
     "SEO_GENERATION_ENABLED": "true",
