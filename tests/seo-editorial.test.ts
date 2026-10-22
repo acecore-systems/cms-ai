@@ -1466,6 +1466,7 @@ describe("baseline eligibility before paid work", () => {
     const jobId = started.jobId!;
     await request(jobId);
     files[1].content += "Large translation. ".repeat(6000);
+    files[2].content += "Another translation. ".repeat(5000);
     expect(await request(jobId, "claim", { baseSha, files })).toEqual({
       status: "skipped",
     });
@@ -1483,6 +1484,32 @@ describe("baseline eligibility before paid work", () => {
     expect(receipt.evidenceStatus).toBe("not_acquired_size_estimate_only");
     expect(receipt.reviewBytes).toBeGreaterThan(receipt.limits.review);
   });
+  it("skips a known oversized single translation before claim even when shared review fits", async () => {
+    const started = await start([
+      candidate,
+      { ...candidate, url: "https://asv.acecore.net/en/stories/next/" },
+    ]);
+    const id = started.jobId!;
+    await request(id);
+    files[8].content += "Known large translation. ".repeat(2200);
+    expect((await request(id, "claim", { baseSha, files })).status).toBe(
+      "skipped",
+    );
+    const receipt = JSON.parse(
+      objects.get(`seo-editorial/${id}/eligibility-preflight.json`)!,
+    );
+    expect(receipt.reviewBytes).toBeLessThan(receipt.limits.review);
+    expect(receipt.generationInputs).toHaveLength(9);
+    expect(receipt.generationInputs[8].bytes).toBeGreaterThan(45000);
+    expect(receipt.reasons).toEqual(["baseline_generation_input_exceeded"]);
+    expect(receipt.evidenceStatus).toBe("not_acquired_size_estimate_only");
+    expect(claim).not.toHaveBeenCalled();
+    expect(mocks.infer).not.toHaveBeenCalled();
+    expect(
+      sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n,
+    ).toBe(0);
+    expect(row().candidate_index).toBe(1);
+  });
   it("keeps fitting candidates and never calls the placeholder actual evidence", async () => {
     const id = await claimed();
     const receipt = JSON.parse(
@@ -1490,6 +1517,10 @@ describe("baseline eligibility before paid work", () => {
     );
     expect(receipt.status).toBe("baseline_fits_not_reviewed");
     expect(receipt.reasons).toEqual([]);
+    expect(receipt.generationInputs).toHaveLength(9);
+    expect(
+      receipt.generationInputs.every((input: any) => input.bytes <= 45000),
+    ).toBe(true);
     expect(claim).toHaveBeenCalledOnce();
   });
   it("does not change v1 eligibility", async () => {

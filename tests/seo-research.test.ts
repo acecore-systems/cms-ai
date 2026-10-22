@@ -22,7 +22,7 @@ import {
   type CheckContext,
 } from "../src/seo-checks.ts";
 import { responseRequest, responsesUpperCost } from "../src/seo-responses.ts";
-import { SeoBudget, RATE_VALID_UNTIL } from "../src/seo-budget.ts";
+import { SeoBudget, RATE_VALID_UNTIL, upperCost } from "../src/seo-budget.ts";
 import { referenceUrl } from "../src/seo-evidence.ts";
 import { acceptEditorialChange, sourceIdentity } from "../src/seo-content.ts";
 import { sha256 } from "../src/seo-hash.ts";
@@ -896,7 +896,7 @@ it("stops an insufficient plan before search and preserves its private paid resp
       .responseStored,
   ).toBe(true);
 });
-it("proves 944075 microUSD for every bounded serialized request and rejects one extra byte", () => {
+it("proves 989075 microUSD for every bounded serialized request and rejects one extra byte", () => {
   const make = (search: boolean, bytes: number) => {
     const r = responseRequest("bounded", {}, search ? null : {}, search);
     r.input = "";
@@ -916,8 +916,23 @@ it("proves 944075 microUSD for every bounded serialized request and rejects one 
       "seo_stage_input_budget",
     );
   }
-  total += 9 * (STAGE_INPUT_BYTES.generation + 8192 + 12000 * 2);
-  expect(total).toBe(944075);
+  const generation = {
+    model: "gpt-6-luna",
+    service_tier: "default",
+    max_completion_tokens: 12000,
+    input: "",
+  };
+  generation.input = "x".repeat(
+    STAGE_INPUT_BYTES.generation -
+      new TextEncoder().encode(JSON.stringify(generation)).length,
+  );
+  assertStageInput("generation", generation);
+  total += 9 * upperCost("gpt-6-luna", generation, now);
+  generation.input += "x";
+  expect(() => assertStageInput("generation", generation)).toThrow(
+    "seo_stage_input_budget",
+  );
+  expect(total).toBe(989075);
   expect(total).toBe(FULL_RESEARCH_RUN_MICROS);
 });
 it("rejects an oversized real planner input before credentials, reservation or fetch instead of truncating", async () => {
