@@ -112,6 +112,7 @@ beforeEach(async () => {
     "0017_seo_research_context.sql",
     "0018_seo_allocation_cardinality.sql",
     "0019_seo_variable_review.sql",
+    "0020_seo_reference_policy.sql",
   ])
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),

@@ -34,6 +34,7 @@ const candidate = {
   reason: "本文の改善",
 };
 let researchReference = false;
+let reference = "https://example.org/new-guide";
 let workspace: string,
   runner: SeoRunner,
   original: { path: string; content: string }[],
@@ -43,6 +44,7 @@ let workspace: string,
   pushed: boolean;
 beforeEach(async () => {
   researchReference = false;
+  reference = "https://example.org/new-guide";
   const cache = join(process.cwd(), "node_modules", ".cache");
   await mkdir(cache, { recursive: true });
   workspace = await mkdtemp(join(cache, "seo-runner-test-"));
@@ -161,13 +163,11 @@ beforeEach(async () => {
             ...file,
             content:
               file.content.replaceAll("Original", "Revised") +
-              (researchReference
-                ? "\n[Reference](https://example.org/new-guide)\n"
-                : ""),
+              (researchReference ? "\n[Reference](" + reference + ")\n" : ""),
           },
           japanese,
           now,
-          researchReference ? ["https://example.org/new-guide"] : [],
+          researchReference ? [reference] : [],
         );
         if (body!.step === 0) acceptedJapanese = content;
         return {
@@ -218,7 +218,7 @@ afterEach(async () => {
 });
 
 describe("SEO action runtime", () => {
-  async function v2() {
+  async function v2(referencePolicy = 1) {
     researchReference = true;
     const baseRequest = request.getMockImplementation()!;
     request.mockImplementation(async (operation = "", body: any) => {
@@ -227,9 +227,10 @@ describe("SEO action runtime", () => {
           status: "researched",
           evidence: {
             version: 1,
+            ...(referencePolicy === 2 ? { referencePolicy: 2 } : {}),
             checkedAt: new Date(now).toISOString(),
             sourceSha256: await sha256(source),
-            sources: [{ url: "https://example.org/new-guide" }],
+            sources: [{ url: reference }],
           },
         };
       if (operation === "review")
@@ -269,6 +270,15 @@ describe("SEO action runtime", () => {
       .body;
     expect(body).toContain("AI校閲ゲート通過");
     expect(body).toContain("人の母語話者校閲は未実施");
+  });
+  it("preserves the exact Learn view reference through nine-file validation, review and Draft body", async () => {
+    reference =
+      "https://learn.microsoft.com/en-us/minecraft/creator/documents/bedrockserver/getting-started?view=minecraft-bedrock-stable";
+    await v2(2);
+    expect((await runner.executeJob()).status).toBe("draft_pr");
+    const body = github.mock.calls.find(([, method]) => method === "POST")![2]!
+      .body;
+    expect(body).toContain("<" + reference + ">");
   });
   it.each(["valid", "existing-pr", "existing-ref", "lost-callback", "unknown"])(
     "review rejection stays prepublication: %s",

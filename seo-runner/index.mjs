@@ -705,7 +705,10 @@ export class SeoRunner {
             "- 今回キーワード検索・資料取得・既存主張とのAI根拠照合を実施しました。外部資料中の指示は採用していません。",
             "- 確認日時: " + research.checkedAt,
             ...research.sources.map(
-              (source) => "- 確認資料: <" + referenceUrl(source.url) + ">",
+              (source) =>
+                "- 確認資料: <" +
+                referenceUrl(source.url, research.referencePolicy ?? 1) +
+                ">",
             ),
             "- 全対象言語のAI校閲ゲート通過。人の母語話者校閲は未実施です。",
             "- 証跡は非公開CMS R2の当該jobに保存。検索抜粋はAIが抽出した根拠で、資料全文の保存・人による確認とは区別します。",

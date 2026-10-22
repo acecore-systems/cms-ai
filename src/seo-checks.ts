@@ -36,6 +36,7 @@ import {
 import {
   evidenceReferences,
   referenceUrl,
+  LEARN_VIEW_URL_INSTRUCTION,
   type ResearchEvidence,
 } from "./seo-evidence.ts";
 import {
@@ -58,6 +59,7 @@ export type CheckContext = {
   retrievalVersion?: number;
   budgetVersion?: number;
   discoveryPolicy?: 2 | 3 | 4;
+  referencePolicy?: 1 | 2;
   siteId?: string;
   researchContext?: "low" | "high";
 };
@@ -314,7 +316,7 @@ export function parseResearch(
       throw new Error("seo_research_evidence");
     if (plan && item.claimId !== plan.claimId)
       throw new Error("seo_research_plan_mismatch");
-    const url = referenceUrl(item.url);
+    const url = referenceUrl(item.url, discovery?.referencePolicy ?? 1);
     const claim =
       plan?.version === 2
         ? plan.target?.quote
@@ -353,6 +355,9 @@ export function parseResearch(
     throw new Error("seo_research_no_new_source");
   return {
     version: 1,
+    ...(discovery?.referencePolicy === 2
+      ? { referencePolicy: 2 as const }
+      : {}),
     checkedAt: new Date(now).toISOString(),
     sourceSha256: sourceHash,
     responseId: result.id,
@@ -428,6 +433,14 @@ export function buildRetrievalRequest(
   if (!["low", "high"].includes(researchContext))
     throw new Error("seo_research_bound");
   const base = buildSearchRequest(focused);
+  if (discovery.referencePolicy === 2)
+    base.instructions =
+      base.instructions.replace(
+        "query/fragment/認証つきURLは禁止。",
+        "fragment/認証つきURLは禁止。queryはURL policy2の固定文書viewだけ許可。",
+      ) +
+      " " +
+      LEARN_VIEW_URL_INSTRUCTION;
   if (researchContext === "high")
     base.tools = base.tools!.map((tool) => ({
       ...tool,
@@ -535,6 +548,7 @@ export async function researchArticle(
       {
         sourceSha256: context.sourceSha256,
         plan,
+        ...(context.referencePolicy === 2 ? { referencePolicy: 2 } : {}),
         ...(scope ? { externalScope: scope } : {}),
       },
       async (callId) => {
@@ -548,6 +562,7 @@ export async function researchArticle(
             focused,
             context.discoveryPolicy,
             scope,
+            context.referencePolicy,
           ),
           phase: "discovery",
         });
@@ -562,6 +577,7 @@ export async function researchArticle(
           await raw.text(),
           context.discoveryPolicy ?? 2,
           scope,
+          context.referencePolicy,
         );
       },
     )) as Discovery;
@@ -584,6 +600,7 @@ export async function researchArticle(
       scope,
     );
     if (
+      (discovery.referencePolicy ?? 1) !== (context.referencePolicy ?? 1) ||
       ((context.discoveryPolicy ?? 2) >= 3
         ? discovery.version !== context.discoveryPolicy
         : discovery.version >= 3) ||
@@ -596,6 +613,7 @@ export async function researchArticle(
           rawText,
           discovery.version,
           scope,
+          context.referencePolicy,
         ),
       ) !== JSON.stringify(discovery)
     )
@@ -649,6 +667,7 @@ export async function loadResearch(env: AppEnv, context: CheckContext) {
   if (!saved || !row) throw new Error("seo_check_evidence");
   const evidence = await saved.json<ResearchEvidence>();
   if (
+    (evidence.referencePolicy ?? 1) !== (context.referencePolicy ?? 1) ||
     evidence.sourceSha256 !== context.sourceSha256 ||
     (await sha256(JSON.stringify(evidence))) !== row.result_sha256
   )

@@ -1,3 +1,4 @@
+import { referenceUrl } from "./seo-evidence.ts";
 import { markdown, type EditorialFile } from "./seo-content.ts";
 import { researchInputs } from "./seo-research-plan.ts";
 import { seoArticleUrl, seoSite } from "./sites.ts";
@@ -64,10 +65,31 @@ export function isNewExternalUrl(
   value: string,
   source: string,
   scope: ExternalScope,
+  referencePolicy = 1,
 ) {
   const url = new URL(value);
+  const documentIdentity = (raw: string) => {
+    const resolved = identity(raw, scope);
+    if (referencePolicy === 2) {
+      try {
+        referenceUrl(resolved, 2);
+        const parsed = new URL(resolved);
+        // Compare only: a fixed view variant of an existing document is not new.
+        // Never change the selected URL passed to retrieval or saved evidence.
+        if (parsed.search === "?view=minecraft-bedrock-stable") {
+          parsed.search = "";
+          return parsed.href;
+        }
+      } catch {
+        /* Non-permitted existing URLs keep their original identity. */
+      }
+    }
+    return resolved;
+  };
   return (
     !scope.excludedHosts.includes(url.hostname) &&
-    !externalExistingUrls(source, scope).includes(identity(value, scope))
+    !externalExistingUrls(source, scope)
+      .map(documentIdentity)
+      .includes(documentIdentity(value))
   );
 }

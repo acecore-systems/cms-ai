@@ -101,6 +101,7 @@ export async function prepareRejection(
           raw.raw,
           savedDiscovery.value.version,
           scope,
+          context.referencePolicy,
         );
         parsed = discovery;
       } else return fail();
@@ -157,6 +158,7 @@ export async function prepareRejection(
             raw.raw,
             context.discoveryPolicy ?? 1,
             scope,
+            context.referencePolicy,
           );
           return fail();
         } catch (e) {
@@ -189,7 +191,7 @@ export async function prepareRejection(
             typeof s.excerpt !== "string" ||
             s.excerpt.length < 20 ||
             s.excerpt.length > 800 ||
-            source.includes(referenceUrl(s.url))
+            source.includes(referenceUrl(s.url, context.referencePolicy ?? 1))
           )
             return fail();
         }
@@ -354,6 +356,7 @@ export async function finalizeRejection(
           contractVersion: 2,
           retrievalVersion: job.retrieval_contract,
           researchContext: job.research_context,
+          referencePolicy: job.reference_policy,
           discoveryPolicy: job.external_sources ? 4 : job.discovery_policy,
           ...(job.external_sources ? { siteId: job.site_id } : {}),
         },

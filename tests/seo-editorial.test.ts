@@ -68,6 +68,7 @@ beforeEach(async () => {
     "0017_seo_research_context.sql",
     "0018_seo_allocation_cardinality.sql",
     "0019_seo_variable_review.sql",
+    "0020_seo_reference_policy.sql",
   ])
     sql.exec(
       readFileSync(
@@ -106,7 +107,7 @@ beforeEach(async () => {
           if (legacyReview)
             for (const item of statements) {
               if (item.query.startsWith("INSERT INTO seo_editorial_jobs"))
-                item.args[item.args.length - 3] = 0;
+                item.args[item.args.length - 4] = 0;
             }
           const values = statements.map((item) => ({
             meta: {
