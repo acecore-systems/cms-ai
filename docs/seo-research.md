@@ -1,5 +1,23 @@
 # SEOの新規資料調査とAI校閲
 
+## 2026-10-22: 検索結果URLの固定取得（未配備・実API未確認）
+
+新規jobだけ `retrieval_contract=2` を使う。既存のplanで主張を固定した後、検索専用callを1回実行し、実 `search.sources` の順に安全・記事未掲載のURLを抽出する。最初のURLを原文応答bytesのSHA256・plan hashとともに非公開R2へ固定する。別callはそのURLだけをopenし、同一URLの実citation・主張/条件支持・公式一次資料判定を要求する。mirror/canonicalを同一視せず、検索集合外のURLは拒否する。先頭URLの公式性をサーバーが保証する設計ではなく、後段が確認できなければinsufficientとなる。外部文書は命令として扱わない。
+
+空検索・unsafe-only・既存URL-onlyは保存済みcompleted discovery原本で再検証し、plan+discoveryの2callによる既知不足receiptを作る。正常な取得不足は3call、校閲拒否は13call。receipt.version=2で区別し、旧version1は従来の1〜2/12callを保持する。不完全応答・未知結果・hash不整合ではunresolvedと予約を保持する。各callは別ID/manifest/原本を持ち、再入で未確定callを再送しない。成功Evidence.versionは従来どおり1、runnerのresearchContractは2のまま。runnerはoffer/receiptのhashだけを扱い内部call数を解釈しないため6repo pin変更不要。
+
+生成は全文・全guideを同じbuilderへ渡し、claim時に9原稿の既知入力合計を405000 bytesのpoolへ固定配分する。余りは9段階へ均等に割り当て、端数は正本path順で配分する。各上限・原本hash・path順を含むpreflight全体のhashをD1へ固定し、送信前にR2 hash/path順と実payloadサイズを照合する。改訂/根拠増大で上限を超えた場合は停止し、後から他段階の枠を借りない。旧jobは45KB固定を維持する。
+
+最大はplan13258 + discovery107316 + retrieval107316 + generation694728 + review62458 = **985076 microUSD**（13call、各call切上げ）。plan/research各16000、review180000 bytesは維持。1USD/run・5USD/JST月は不変。claim前に月残額が全工程最大未満なら0API/0lockでskipし、各実callの原子的予約でも再確認する。最新実残額の確認は運用担当者が行う。
+
+保存された自然Astro SEO候補ではplan14420/review145753、生成RU45702→配分51496 bytes、各locale約5794 bytesの余裕。合成根拠の全工程912109 microUSD、実API0。新候補astro-i18n-blog-translationはplan19166/review257332かつ生成pool超過でskip。合成計測は実根拠/改訂後の適合やE2E成功を保証しない。
+
+配備順: SEO migration0012 → SEO互換コード → CMS migration0010 → CMSコード。各migration前後に旧全行を比較する。CMSの新列/台帳を自動Build配信前に追加する必要がある。research=false/canary空を維持し、旧run/監査/lockへ遡及適用しない。新契約job発生後は旧コードへ巻戻さず無効化で停止する。限定実試験は運用担当者の別途受入後のみ。
+
+[公式web search資料](https://developers.openai.com/api/docs/guides/tools-web-search)のsearch/open_page/url_citationに基づく。固定openの遵守や新資料の支持品質は実API未確認であり、違反時の拒否をローカルfixtureで確認する。
+
+以下は以前の契約・計測記録。
+
 ## 2026-10-22 入力共有・工程予算再配分（実装検証、未配備）
 
 原文・全9localeの旧文と最終文・共通/対象guide・根拠を落とさず、校閲入力の完全一致する段落だけを共有辞書へ1回保存する。各ファイルは順序付きの文字列と参照で構成し、追加separatorなしで全UTF-8文字列を復元する。送信前にserverで元文字列との完全一致を検証する。改行、空白、コードフェンス、条件、否定、URLを正規化しない。JSONに似た本文は文字列のままであり参照命令として解釈しない。校閲指示は参照部分も含む全旧文・最終文を読むよう明記し、全pathの意味/自然さ/根拠/具体的issues判定を維持する。原本・accepted成果・review-input・final hashの保存形式は変更しない。

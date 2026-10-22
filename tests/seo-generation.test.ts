@@ -134,3 +134,74 @@ it("rejects oversized v2 generation before reserve/fetch without truncation", as
   expect(batch).not.toHaveBeenCalled();
   expect(fetcher).not.toHaveBeenCalled();
 });
+it.each(["exact", "one-byte-over", "legacy"])(
+  "enforces persisted locale cap against actual provider bytes: %s",
+  async (kind) => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-22T00:00:00Z"));
+    const path = "src/content/blog/example.md",
+      files = [{ path, content: "original ".repeat(5500) }];
+    const instruction = "Preserve every source byte while improving prose";
+    const predicted = buildSeoGenerationRequest(
+      SITES.find((s) => s.id === "homepage-hatt")!,
+      path,
+      [path],
+      instruction,
+      files,
+    );
+    const bytes = Buffer.byteLength(JSON.stringify(predicted));
+    expect(bytes).toBeGreaterThan(45000);
+    const fetcher = vi.fn(async (_url, init) => {
+      expect(init.body).toBe(JSON.stringify(predicted));
+      return Response.json({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                changes: [
+                  { path, content: files[0].content, reason: "fixture" },
+                ],
+                summary: "fixture",
+                clarification: "",
+              }),
+            },
+          },
+        ],
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const batch = vi.fn(async () => [
+      { meta: { changes: 1 } },
+      { meta: { changes: 1 } },
+    ]);
+    const env = {
+      SEO_GENERATION_ENABLED: "true",
+      SEO_AI_MODEL: "gpt-6-luna",
+      OPENAI_API_KEY_STORE: { get: async () => "fixture" },
+      CMS_AI_DB: {
+        batch,
+        prepare: () => ({
+          bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }),
+        }),
+      },
+      CMS_AI_IMAGES: { put: async () => ({}) },
+    } as unknown as AppEnv;
+    const result = await generateSeo(env, {
+      runId: "seo-00000000-0000-4000-8000-000000000001",
+      callId: "seo-00000000-0000-4000-8000-000000000002",
+      siteId: "homepage-hatt",
+      articlePath: path,
+      allowedPaths: [path],
+      instruction,
+      files,
+      researchBudget: true,
+      ...(kind === "legacy"
+        ? {}
+        : { generationInputCap: bytes - (kind === "one-byte-over" ? 1 : 0) }),
+    });
+    expect(result.status).toBe(
+      kind === "exact" ? "proposal_created" : "stopped",
+    );
+    expect(batch).toHaveBeenCalledTimes(kind === "exact" ? 1 : 0);
+    expect(fetcher).toHaveBeenCalledTimes(kind === "exact" ? 1 : 0);
+  },
+);

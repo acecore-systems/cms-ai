@@ -13,7 +13,7 @@ import {
 } from "./seo-rejection.ts";
 import type { AppEnv } from "./env.ts";
 import { dispatchSeoEditorialJob } from "./github.ts";
-import { sha256 } from "./seo-budget.ts";
+import { sha256, jstMonth, SEO_BUDGET } from "./seo-budget.ts";
 import { generateSeo, buildSeoGenerationRequest } from "./seo-generation.ts";
 import { validateSourceFiles } from "./inference.ts";
 import { json, HttpError, readJsonObject } from "./http.ts";
@@ -35,7 +35,12 @@ import {
   assertReview,
   type CheckContext,
 } from "./seo-checks.ts";
-import { STAGE_INPUT_BYTES } from "./seo-stage-budget.ts";
+import {
+  allocateGenerationInputs,
+  assertGenerationAllocation,
+  SPLIT_RESEARCH_RUN_MICROS,
+  STAGE_INPUT_BYTES,
+} from "./seo-stage-budget.ts";
 import { evidenceReferences } from "./seo-evidence.ts";
 import { buildEditorialInstruction } from "./seo-editorial-instruction.ts";
 
@@ -71,6 +76,8 @@ type EditorialJob = {
   callback_recorded: number;
   protocol_version: number;
   research_contract: number;
+  retrieval_contract: number;
+  input_allocation_sha256: string | null;
   generation_started: number;
   publication_started: number;
 };
@@ -276,10 +283,11 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract) SELECT ?,run_id,?,candidate_index,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract) SELECT ?,run_id,?,candidate_index,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
+        researchEnabled(env, runId) ? 2 : 1,
         researchEnabled(env, runId) ? 2 : 1,
         researchEnabled(env, runId) ? 2 : 1,
         runId,
@@ -684,6 +692,7 @@ async function claimJob(
   ];
   // Local size estimates only: no evidence acquisition, lock or API reservation.
   // Keep legacy jobs on their original contract.
+  let allocationHash: string | null = null;
   if (job.research_contract === 2) {
     const baseline = paths.map((path) => files.find((f) => f.path === path)!);
     const bytes = (request: unknown) =>
@@ -734,48 +743,84 @@ async function claimJob(
       );
       return { path, locale: locale || "ja", bytes: bytes(request) };
     });
+    let generationAllocation:
+      ReturnType<typeof allocateGenerationInputs> | undefined;
+    if (job.retrieval_contract === 2) {
+      try {
+        generationAllocation = allocateGenerationInputs(generationInputs);
+      } catch {
+        /* ineligible, no paid call */
+      }
+    }
+    const monthly =
+      job.retrieval_contract === 2
+        ? await env.CMS_AI_DB.prepare(
+            "SELECT COALESCE(SUM(reserved_micros),0) AS held FROM seo_budget_calls WHERE month_jst=?",
+          )
+            .bind(jstMonth(Date.now()))
+            .first<{ held: number }>()
+        : null;
+    if (
+      job.retrieval_contract === 2 &&
+      (!monthly || !Number.isSafeInteger(monthly.held) || monthly.held < 0)
+    )
+      throw new Error("seo_budget_state_conflict");
     const reasons = [
+      ...(monthly &&
+      monthly.held + SPLIT_RESEARCH_RUN_MICROS > SEO_BUDGET.monthMicros
+        ? ["monthly_budget_insufficient"]
+        : []),
       ...(planBytes > STAGE_INPUT_BYTES.plan ? ["plan_input_exceeded"] : []),
       ...(reviewBytes > STAGE_INPUT_BYTES.review
         ? ["baseline_review_input_exceeded"]
         : []),
-      ...(generationInputs.some(
-        (input) => input.bytes > STAGE_INPUT_BYTES.generation,
+      ...((
+        job.retrieval_contract === 2
+          ? !generationAllocation
+          : generationInputs.some(
+              (input) => input.bytes > STAGE_INPUT_BYTES.generation,
+            )
       )
         ? ["baseline_generation_input_exceeded"]
         : []),
     ];
+    const preflightRaw = JSON.stringify({
+      version: 1,
+      researchContract: 2,
+      baseSha: body.baseSha,
+      sourceSha256: sourceHash,
+      sourceBundleSha256: await sha256(JSON.stringify(baseline)),
+      knownInputBundleSha256: await sha256(JSON.stringify(files)),
+      planBytes,
+      reviewBytes,
+      generationInputs,
+      ...(generationAllocation
+        ? { generationAllocation, retrievalContract: 2 }
+        : {}),
+      limits: {
+        plan: STAGE_INPUT_BYTES.plan,
+        review: STAGE_INPUT_BYTES.review,
+        generation: STAGE_INPUT_BYTES.generation,
+      },
+      evidenceStatus: "not_acquired_size_estimate_only",
+      reasons,
+      status: reasons.length ? "ineligible" : "baseline_fits_not_reviewed",
+    });
     const saved = await env.CMS_AI_IMAGES.put(
       baseKey(job) + "/eligibility-preflight.json",
-      JSON.stringify({
-        version: 1,
-        researchContract: 2,
-        baseSha: body.baseSha,
-        sourceSha256: sourceHash,
-        sourceBundleSha256: await sha256(JSON.stringify(baseline)),
-        knownInputBundleSha256: await sha256(JSON.stringify(files)),
-        planBytes,
-        reviewBytes,
-        generationInputs,
-        limits: {
-          plan: STAGE_INPUT_BYTES.plan,
-          review: STAGE_INPUT_BYTES.review,
-          generation: STAGE_INPUT_BYTES.generation,
-        },
-        evidenceStatus: "not_acquired_size_estimate_only",
-        reasons,
-        status: reasons.length ? "ineligible" : "baseline_fits_not_reviewed",
-      }),
+      preflightRaw,
       { onlyIf: { etagDoesNotMatch: "*" } },
     );
     if (!saved) throw new Error("snapshot");
+    allocationHash =
+      job.retrieval_contract === 2 ? await sha256(preflightRaw) : null;
     if (reasons.length) {
       await skipJob(env, job);
       return { status: "skipped" };
     }
   }
   const changed = await env.CMS_AI_DB.prepare(
-    "UPDATE seo_editorial_jobs SET status='claiming',source_sha256=?,base_sha=?,article_key=?,article_path=?,paths_json=? WHERE id=? AND status='inspecting'",
+    "UPDATE seo_editorial_jobs SET status='claiming',source_sha256=?,base_sha=?,article_key=?,article_path=?,paths_json=?,input_allocation_sha256=? WHERE id=? AND status='inspecting'",
   )
     .bind(
       sourceHash,
@@ -783,6 +828,7 @@ async function claimJob(
       article.articleKey,
       article.source.path,
       JSON.stringify(paths),
+      allocationHash,
       job.id,
     )
     .run();
@@ -824,6 +870,7 @@ function checkContext(job: EditorialJob, run: Run): CheckContext {
     sourceSha256: job.source_sha256!,
     deadline: run.deadline,
     contractVersion: job.research_contract,
+    retrievalVersion: job.retrieval_contract,
   };
 }
 
@@ -900,6 +947,31 @@ async function propose(
     job.protocol_version === 2
       ? await loadResearch(env, checkContext(job, run))
       : null;
+  let generationInputCap: number | undefined;
+  if (job.retrieval_contract === 2) {
+    const object = await env.CMS_AI_IMAGES.get(
+      baseKey(job) + "/eligibility-preflight.json",
+    );
+    const raw = object ? await object.text() : null;
+    if (
+      !raw ||
+      !job.input_allocation_sha256 ||
+      (await sha256(raw)) !== job.input_allocation_sha256
+    )
+      throw new Error("seo_check_evidence");
+    const saved = JSON.parse(raw);
+    if (
+      !saved ||
+      saved.retrievalContract !== 2 ||
+      saved.sourceSha256 !== job.source_sha256 ||
+      saved.baseSha !== job.base_sha ||
+      JSON.stringify(saved.generationAllocation?.map((x: any) => x.path)) !==
+        JSON.stringify(paths)
+    )
+      throw new Error("seo_check_evidence");
+    assertGenerationAllocation(saved.generationAllocation);
+    generationInputCap = saved.generationAllocation[job.next_step].maxBytes;
+  }
   const callId = "seo-" + crypto.randomUUID();
   const changed = await env.CMS_AI_DB.prepare(
     "UPDATE seo_editorial_jobs SET status='generating',generation_started=1,call_id=? WHERE id=? AND status IN ('claimed','generated') AND next_step=?",
@@ -916,6 +988,7 @@ async function propose(
     allowedPaths: [path],
     files: context,
     ...(research ? { researchBudget: true } : {}),
+    ...(generationInputCap !== undefined ? { generationInputCap } : {}),
     instruction: buildEditorialInstruction({
       step: job.next_step,
       paths,

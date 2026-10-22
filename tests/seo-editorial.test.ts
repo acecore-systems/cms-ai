@@ -56,6 +56,7 @@ beforeEach(async () => {
     "0007_seo_research_plan.sql",
     "0008_seo_rejection.sql",
     "0009_seo_review_rejection.sql",
+    "0010_seo_discovery.sql",
   ])
     sql.exec(
       readFileSync(
@@ -305,16 +306,13 @@ describe("SEO durable editorial boundary", () => {
                   {
                     type: "web_search_call",
                     status: "completed",
-                    action: {
-                      type: "search",
-                      queries: input.plan.queries,
-                      sources: [{ url: reference }],
-                    },
-                  },
-                  {
-                    type: "web_search_call",
-                    status: "completed",
-                    action: { type: "open_page", url: reference },
+                    action: input.discovery
+                      ? { type: "open_page", url: reference }
+                      : {
+                          type: "search",
+                          queries: input.plan.queries,
+                          sources: [{ type: "url", url: reference }],
+                        },
                   },
                 ]
               : []),
@@ -440,7 +438,7 @@ describe("SEO durable editorial boundary", () => {
     expect(
       sql.prepare("SELECT count(*) n FROM seo_review_rejections").get()!.n,
     ).toBe(safe ? 1 : 0);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(mocks.infer).toHaveBeenCalledTimes(9);
     if (safe) {
       const budget = sql
@@ -541,16 +539,13 @@ describe("SEO durable editorial boundary", () => {
                   {
                     type: "web_search_call",
                     status: "completed",
-                    action: {
-                      type: "search",
-                      queries: input.plan.queries,
-                      sources: [{ url: reference }],
-                    },
-                  },
-                  {
-                    type: "web_search_call",
-                    status: "completed",
-                    action: { type: "open_page", url: reference },
+                    action: input.discovery
+                      ? { type: "open_page", url: reference }
+                      : {
+                          type: "search",
+                          queries: input.plan.queries,
+                          sources: [{ type: "url", url: reference }],
+                        },
                   },
                 ]
               : []),
@@ -619,7 +614,7 @@ describe("SEO durable editorial boundary", () => {
         })
       ).status,
     ).toBe("publishing");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(mocks.infer).toHaveBeenCalledTimes(9);
     expect(sql.prepare("SELECT count(*) n FROM seo_budget_runs").get()?.n).toBe(
       1,
@@ -630,7 +625,7 @@ describe("SEO durable editorial boundary", () => {
           "SELECT count(*) n FROM seo_budget_calls WHERE status='complete'",
         )
         .get()?.n,
-    ).toBe(12);
+    ).toBe(13);
     expect(
       Number(
         sql
@@ -1336,7 +1331,7 @@ it("refuses raw-response mutation after offering a rejection", async () => {
 });
 
 it.each(["insufficient", "verified-empty", "contract-violation"])(
-  "classifies two completed calls without confusing rejection and invalid output: %s",
+  "classifies three completed calls without confusing rejection and invalid output: %s",
   async (kind) => {
     env.SEO_RESEARCH_ENABLED = "true";
     env.OPENAI_API_KEY_STORE = { get: async () => "fixture" };
@@ -1373,11 +1368,18 @@ it.each(["insufficient", "verified-empty", "contract-violation"])(
                 {
                   type: "web_search_call",
                   status: "completed",
-                  action: {
-                    type: "search",
-                    queries: input.plan.queries,
-                    sources: [],
-                  },
+                  action: input.discovery
+                    ? { type: "open_page", url: input.discovery.selectedUrl }
+                    : {
+                        type: "search",
+                        queries: input.plan.queries,
+                        sources: [
+                          {
+                            type: "url",
+                            url: "https://docs.example.org/new-guide",
+                          },
+                        ],
+                      },
                 },
               ]
             : []),
@@ -1425,10 +1427,11 @@ it.each(["insufficient", "verified-empty", "contract-violation"])(
       );
       expect(receipt.calls.map((c: any) => [c.phase, c.verdict])).toEqual([
         ["plan", "ready"],
+        ["discovery", "ready"],
         ["research", "insufficient"],
       ]);
     }
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
     expect(mocks.infer).not.toHaveBeenCalled();
   },
 );
@@ -1492,6 +1495,9 @@ describe("baseline eligibility before paid work", () => {
     ]);
     const id = started.jobId!;
     await request(id);
+    sql.exec(
+      "DROP TRIGGER seo_retrieval_contract_immutable; UPDATE seo_editorial_jobs SET retrieval_contract=1",
+    );
     files[8].content += "Known large translation. ".repeat(2200);
     expect((await request(id, "claim", { baseSha, files })).status).toBe(
       "skipped",
@@ -1575,3 +1581,180 @@ it.each([
     );
   },
 );
+it.each([
+  "empty",
+  "unsafe-only",
+  "existing-only",
+  "incomplete",
+  "malformed-source",
+  "lost-callback",
+])("discovery-only terminal boundary: %s", async (kind) => {
+  env.SEO_RESEARCH_ENABLED = "true";
+  env.OPENAI_API_KEY_STORE = { get: async () => "fixture" };
+  files[0].content += "\n[Existing](https://docs.example.org/existing)\n";
+  const callback = vi.fn(async () => ({ status: "recorded" }));
+  if (kind === "lost-callback")
+    callback.mockResolvedValueOnce({ status: "denied" });
+  (env.SEO_COORDINATOR as any).rejectResearch = callback;
+  const fetcher = vi.fn(async (_url, options) => {
+    const input = JSON.parse(JSON.parse(options.body).input);
+    const planning = !!input.claims;
+    const quote = planning
+      ? input.claims[0].contextParts.find((p: any) => p.selectable).quote
+      : "";
+    return Response.json({
+      id: "resp_discovery_fixture",
+      status: !planning && kind === "incomplete" ? "incomplete" : "completed",
+      usage: { input_tokens: 100, output_tokens: 100 },
+      output: planning
+        ? [
+            {
+              type: "message",
+              status: "completed",
+              role: "assistant",
+              content: [
+                {
+                  type: "output_text",
+                  annotations: [],
+                  text: JSON.stringify({
+                    verdict: "ready",
+                    claimId: input.claims[0].id,
+                    targetQuote: quote,
+                    conditions: [quote],
+                    anchors: ["Original"],
+                    queries: ["Original official documentation"],
+                  }),
+                },
+              ],
+            },
+          ]
+        : [
+            {
+              type: "web_search_call",
+              status: "completed",
+              action: {
+                type: "search",
+                queries: input.plan.queries,
+                sources:
+                  kind === "unsafe-only"
+                    ? [{ type: "url", url: "http://127.0.0.1/private" }]
+                    : kind === "existing-only"
+                      ? [
+                          {
+                            type: "url",
+                            url: "https://docs.example.org/existing",
+                          },
+                        ]
+                      : kind === "malformed-source"
+                        ? [{ title: "Missing URL" }]
+                        : [],
+              },
+            },
+          ],
+    });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const id = await claimed();
+  const result = await request(id, "research", {});
+  const safe = !["incomplete", "malformed-source"].includes(kind);
+  expect(result.status).toBe(safe ? "research_insufficient" : "unresolved");
+  expect(
+    sql
+      .prepare(
+        "SELECT count(*) n FROM seo_editorial_checks WHERE phase='research'",
+      )
+      .get()!.n,
+  ).toBe(0);
+  if (safe) {
+    const body = {
+      baseSha,
+      offerSha256: result.offerSha256,
+      refs: [],
+      pullRequests: [],
+    };
+    expect((await request(id, "research-reject", body)).status).toBe(
+      kind === "lost-callback" ? "unresolved" : "research_rejected",
+    );
+    const receipt = JSON.parse(
+      String(
+        sql.prepare("SELECT receipt_json FROM seo_research_rejections").get()!
+          .receipt_json,
+      ),
+    );
+    expect(receipt.version).toBe(2);
+    expect(receipt.calls.map((c: any) => [c.phase, c.verdict])).toEqual([
+      ["plan", "ready"],
+      ["discovery", "insufficient"],
+    ]);
+    const budgets = sql
+      .prepare("SELECT * FROM seo_budget_calls ORDER BY id")
+      .all();
+    clock.mockReturnValue(now + 31 * 60000);
+    expect((await editorialStatus(env, { runId })).status).toBe(
+      "research_rejected",
+    );
+    expect(
+      sql.prepare("SELECT * FROM seo_budget_calls ORDER BY id").all(),
+    ).toEqual(budgets);
+    expect(
+      sql
+        .prepare(
+          "SELECT callback_recorded,next_step,generation_started,publication_started FROM seo_editorial_jobs",
+        )
+        .get(),
+    ).toEqual({
+      callback_recorded: 1,
+      next_step: 0,
+      generation_started: 0,
+      publication_started: 0,
+    });
+  } else expect(callback).not.toHaveBeenCalled();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(mocks.infer).not.toHaveBeenCalled();
+});
+
+it("binds the fixed generation allocation to persisted bytes and rejects tampering before any generation", async () => {
+  env.SEO_RESEARCH_ENABLED = "true";
+  const id = await claimed();
+  const path = `seo-editorial/${id}/eligibility-preflight.json`;
+  const raw = objects.get(path)!;
+  expect(
+    sql.prepare("SELECT input_allocation_sha256 FROM seo_editorial_jobs").get()!
+      .input_allocation_sha256,
+  ).toBe(await sha256(raw));
+  expect(() =>
+    sql.exec("UPDATE seo_editorial_jobs SET input_allocation_sha256=NULL"),
+  ).toThrow("immutable_input_allocation");
+  const value = JSON.parse(raw);
+  value.generationAllocation[0].maxBytes++;
+  objects.set(path, JSON.stringify(value));
+  expect((await request(id, "propose", { step: 0 })).status).toBe("unresolved");
+  expect(mocks.infer).not.toHaveBeenCalled();
+});
+
+it("skips before claim when the complete new run would exceed remaining monthly budget", async () => {
+  env.SEO_RESEARCH_ENABLED = "true";
+  const id = await inspecting();
+  for (let i = 0; i < 5; i++) {
+    sql
+      .prepare(
+        "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline) VALUES(?,'other',?,?)",
+      )
+      .run("other" + i, now, now + 60000);
+    sql
+      .prepare(
+        "INSERT INTO seo_budget_calls(id,run_id,month_jst,request_sha256,reserved_micros,created_at,status) VALUES(?,?,'2026-10',?,850000,?,'complete')",
+      )
+      .run("other" + i, "other" + i, "b".repeat(64), now);
+  }
+  const before = sql.prepare("SELECT * FROM seo_budget_calls").all();
+  expect((await request(id, "claim", { baseSha, files })).status).toBe(
+    "skipped",
+  );
+  expect(
+    JSON.parse(objects.get(`seo-editorial/${id}/eligibility-preflight.json`)!)
+      .reasons,
+  ).toContain("monthly_budget_insufficient");
+  expect(claim).not.toHaveBeenCalled();
+  expect(sql.prepare("SELECT * FROM seo_budget_calls").all()).toEqual(before);
+});
