@@ -61,6 +61,7 @@ beforeEach(async () => {
     "0012_seo_run_budget.sql",
     "0013_seo_discovery_policy.sql",
     "0014_seo_generation_syntax.sql",
+    "0015_seo_october_budget.sql",
   ])
     sql.exec(
       readFileSync(
@@ -1783,7 +1784,7 @@ it("binds the fixed generation allocation to persisted bytes and rejects tamperi
 it("skips before claim when the complete new run would exceed remaining monthly budget", async () => {
   env.SEO_RESEARCH_ENABLED = "true";
   const id = await inspecting();
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 11; i++) {
     sql
       .prepare(
         "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline) VALUES(?,'other',?,?)",
