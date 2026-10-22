@@ -55,6 +55,7 @@ beforeEach(async () => {
     "0006_seo_research.sql",
     "0007_seo_research_plan.sql",
     "0008_seo_rejection.sql",
+    "0009_seo_review_rejection.sql",
   ])
     sql.exec(
       readFileSync(
@@ -229,6 +230,254 @@ async function claimed() {
 }
 
 describe("SEO durable editorial boundary", () => {
+  it.each([
+    "valid",
+    "missing-manifest",
+    "budget-unknown",
+    "source-changed",
+    "publication",
+    "lost-callback",
+    "late",
+    "bad-offer",
+    "pr-exists",
+    "malformed-review",
+    "receipt-store-failure",
+  ])("review rejection receipt: %s", async (variant) => {
+    env.SEO_RESEARCH_ENABLED = "true";
+    env.OPENAI_API_KEY_STORE = { get: async () => "fixture-secret" };
+    const reference = "https://docs.example.org/new-guide";
+    const infer = mocks.infer.getMockImplementation()!;
+    mocks.infer.mockImplementation(async (...args) => {
+      const result = await infer(...args);
+      result.changes[0].content += "\n[Reference](" + reference + ")\n";
+      return result;
+    });
+    const fetchMock = vi.fn(async (_url, options) => {
+      const payload = JSON.parse(options.body);
+      const input = JSON.parse(payload.input);
+      const research = !!payload.tools;
+      const value = input.claims
+        ? {
+            verdict: "ready",
+            claimId: input.claims[0].id,
+            targetQuote: input.claims[0].contextParts.find(
+              (p: any) => p.selectable,
+            ).quote,
+            conditions: [
+              input.claims[0].contextParts.find((p: any) => p.selectable).quote,
+            ],
+            anchors: ["Original"],
+            queries: ["Original article guide"],
+          }
+        : research
+          ? {
+              verdict: "verified",
+              sources: [
+                {
+                  url: reference,
+                  title: "Guide",
+                  claimId: "claim-1",
+                  excerpt:
+                    "Primary source supporting the original article statement.",
+                  assessment: "supports",
+                },
+              ],
+            }
+          : {
+              verdict: "fail",
+              files: input.files.map((f: any) => ({
+                path: f.path,
+                meaningPreserved: true,
+                naturalLanguage: true,
+                referencesSupported: true,
+                issues: ["原文の条件が脱落"],
+              })),
+            };
+      return new Response(
+        JSON.stringify({
+          id: "resp_fixture",
+          status: "completed",
+          usage: { input_tokens: 1000, output_tokens: 200 },
+          output: [
+            ...(research
+              ? [
+                  {
+                    type: "web_search_call",
+                    status: "completed",
+                    action: {
+                      type: "search",
+                      queries: input.plan.queries,
+                      sources: [{ url: reference }],
+                    },
+                  },
+                  {
+                    type: "web_search_call",
+                    status: "completed",
+                    action: { type: "open_page", url: reference },
+                  },
+                ]
+              : []),
+            {
+              type: "message",
+              status: "completed",
+              role: "assistant",
+              content: [
+                {
+                  type: "output_text",
+                  text: research
+                    ? "Verified claim [1].\n```json\n" +
+                      JSON.stringify(value) +
+                      "\n```"
+                    : JSON.stringify(value),
+                  annotations: research
+                    ? [
+                        {
+                          type: "url_citation",
+                          url: reference,
+                          start_index: 15,
+                          end_index: 18,
+                        },
+                      ]
+                    : [],
+                },
+              ],
+            },
+          ],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const rejectReview = vi.fn(async () => ({ status: "recorded" }));
+    (env.SEO_COORDINATOR as any).rejectReview = rejectReview;
+    if (variant === "lost-callback")
+      rejectReview.mockResolvedValueOnce({ status: "denied" });
+    const jobId = await claimed();
+    expect((await request(jobId, "research", {})).status).toBe("researched");
+    const finalFiles = [];
+    let japanese = "";
+    for (let step = 0; step < 9; step++) {
+      const result = await request(jobId, "propose", {
+        step,
+        ...(step === 1 ? { japanese } : {}),
+      });
+      expect(
+        result.status,
+        "step=" +
+          step +
+          " diagnostic=" +
+          objects.get("seo-editorial/" + jobId + "/failure.json"),
+      ).toBe("proposal_created");
+      const file = {
+        path: result.file.path,
+        content: await format(result.file.content, portalFormat),
+      };
+      finalFiles.push(file);
+      if (step === 0) japanese = file.content;
+    }
+    if (variant === "missing-manifest")
+      objects.delete("seo-editorial/" + jobId + "/step-0-call.json");
+    if (variant === "budget-unknown")
+      sql.exec(
+        "UPDATE seo_budget_calls SET status='unresolved' WHERE id=(SELECT call_id FROM seo_editorial_checks WHERE phase='plan')",
+      );
+    if (variant === "source-changed")
+      objects.set(
+        "seo-editorial/" + jobId + "/source.json",
+        JSON.stringify([]),
+      );
+    if (variant === "publication")
+      sql.exec("UPDATE seo_editorial_jobs SET publication_started=1");
+    if (variant === "malformed-review") {
+      const normal = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (...args) => {
+        const r = await normal(...args);
+        const v = await r.json();
+        v.output[0].content[0].text = JSON.stringify({
+          verdict: "fail",
+          files: [],
+        });
+        return Response.json(v);
+      });
+    }
+    const review = await request(jobId, "review", { files: finalFiles });
+    if (
+      [
+        "missing-manifest",
+        "budget-unknown",
+        "source-changed",
+        "publication",
+        "malformed-review",
+      ].includes(variant)
+    ) {
+      expect(review.status).toBe("unresolved");
+      expect(rejectReview).not.toHaveBeenCalled();
+      return;
+    }
+    expect(review.status).toBe("review_failed");
+    if (variant === "late") {
+      clock.mockReturnValue(now + 31 * 60000);
+      expect(Date.now()).toBeGreaterThan(now + 30 * 60000);
+    }
+    if (variant === "receipt-store-failure") {
+      const normal = env.CMS_AI_IMAGES.put.bind(env.CMS_AI_IMAGES);
+      env.CMS_AI_IMAGES.put = vi.fn(async (k: any, ...args: any[]) =>
+        k.endsWith("/review-rejection.json") ? null : normal(k, ...args),
+      ) as any;
+    }
+    const body = {
+      baseSha,
+      offerSha256:
+        variant === "bad-offer" ? "e".repeat(64) : review.offerSha256,
+      refs: [],
+      pullRequests: variant === "pr-exists" ? [1] : [],
+    };
+    const result = await request(jobId, "review-reject", body);
+    const safe = ["valid", "lost-callback"].includes(variant);
+    expect(result.status).toBe(
+      variant === "valid" ? "review_rejected" : "unresolved",
+    );
+    expect(
+      sql.prepare("SELECT count(*) n FROM seo_review_rejections").get()!.n,
+    ).toBe(safe ? 1 : 0);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(mocks.infer).toHaveBeenCalledTimes(9);
+    if (safe) {
+      const budget = sql
+        .prepare("SELECT * FROM seo_budget_calls ORDER BY id")
+        .all();
+      if (variant === "lost-callback") clock.mockReturnValue(now + 31 * 60000);
+      expect(await editorialStatus(env, { runId })).toMatchObject({
+        status: "review_rejected",
+      });
+      expect((await request(jobId, "review-reject", body)).status).toBe(
+        "review_rejected",
+      );
+      expect(
+        (
+          await request(jobId, "publish", {
+            filesSha256: await sha256(JSON.stringify(finalFiles)),
+          })
+        ).status,
+      ).toBe("unresolved");
+      expect(
+        sql.prepare("SELECT * FROM seo_budget_calls ORDER BY id").all(),
+      ).toEqual(budget);
+      expect(
+        sql
+          .prepare(
+            "SELECT next_step,publication_started FROM seo_editorial_jobs",
+          )
+          .get(),
+      ).toEqual({ next_step: 9, publication_started: 0 });
+      for (const query of [
+        "DELETE FROM seo_review_rejections",
+        "UPDATE seo_editorial_jobs SET next_step=0",
+        "UPDATE seo_budget_calls SET status='reserved'",
+      ])
+        expect(() => sql.exec(query)).toThrow();
+      expect(complete).not.toHaveBeenCalled();
+    }
+  });
   it("integrates fresh search, nine accepted files, final-byte AI review and publish under one durable budget/deadline", async () => {
     env.SEO_RESEARCH_ENABLED = "true";
     env.OPENAI_API_KEY_STORE = { get: async () => "fixture-secret" };

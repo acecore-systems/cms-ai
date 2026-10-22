@@ -521,6 +521,20 @@ export async function reviewArticle(
   // The final file bytes, not merely generated step contents, are bound to review.
   const filesSha256 = await sha256(JSON.stringify(finalFiles));
   return (await check(env, context, "review", finalFiles, async (callId) => {
+    if (context.contractVersion === 2) {
+      const raw = JSON.stringify(finalFiles),
+        path = key(context, "review-input");
+      if (
+        !(await env.CMS_AI_IMAGES.put(path, raw, {
+          onlyIf: { etagDoesNotMatch: "*" },
+        }))
+      )
+        throw new Error("seo_check_evidence");
+      const stored = await env.CMS_AI_IMAGES.get(path);
+      if (!stored || (await stored.text()) !== raw)
+        throw new Error("seo_check_evidence");
+    }
+
     const request = buildReviewRequest(
       identity,
       originals,

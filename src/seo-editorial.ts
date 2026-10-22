@@ -1,4 +1,11 @@
 import {
+  immutableReviewObject,
+  prepareReviewRejection,
+  finalizeReviewRejection,
+  notifyReviewRejection,
+  reviewRejectionRow,
+} from "./seo-review-rejection.ts";
+import {
   prepareRejection,
   finalizeRejection,
   notifyRejection,
@@ -304,6 +311,8 @@ async function advance(env: AppEnv, runId: string) {
 }
 
 async function notify(env: AppEnv, run: Run, job: EditorialJob) {
+  const reviewRejection = await notifyReviewRejection(env, job);
+  if (reviewRejection !== null) return reviewRejection;
   const rejection = await notifyRejection(env, job);
   if (rejection !== null) return rejection;
   if (
@@ -379,10 +388,18 @@ export async function editorialStatus(env: AppEnv, input: unknown) {
       };
     return {
       status:
-        run.job_id && (await rejectionRow(env, run.job_id))
-          ? "research_rejected"
-          : run.status,
+        run.job_id && (await reviewRejectionRow(env, run.job_id))
+          ? "review_rejected"
+          : run.job_id && (await rejectionRow(env, run.job_id))
+            ? "research_rejected"
+            : run.status,
       ...(run.article_key ? { articleKey: run.article_key } : {}),
+      ...(run.job_id && (await reviewRejectionRow(env, run.job_id))
+        ? {
+            receiptSha256: (await reviewRejectionRow(env, run.job_id))!
+              .receipt_sha256,
+          }
+        : {}),
       ...(run.job_id && (await rejectionRow(env, run.job_id))
         ? {
             receiptSha256: (await rejectionRow(env, run.job_id))!
@@ -426,7 +443,7 @@ async function authorizedJob(
 // Dedicated OIDC boundary. No Access/user/CMS role can invoke these operations.
 export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
   const match =
-    /^\/seo-runner\/jobs\/([a-f0-9-]{36})(?:\/(claim|research|research-reject|review|propose|publish|finish|skip|unresolved))?$/.exec(
+    /^\/seo-runner\/jobs\/([a-f0-9-]{36})(?:\/(claim|research|research-reject|review-reject|review|propose|publish|finish|skip|unresolved))?$/.exec(
       new URL(request.url).pathname,
     );
   if (!match) return json({ status: "not_found" }, 404);
@@ -467,6 +484,15 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
       },
     });
   try {
+    if (operation === "review-reject")
+      return json(
+        await finalizeReviewRejection(
+          env,
+          job,
+          run,
+          await readJsonObject(request),
+        ),
+      );
     if (operation === "research-reject")
       return json(
         await finalizeRejection(env, job, run, await readJsonObject(request)),
@@ -538,15 +564,28 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
         Object.keys(body).join() !== "files"
       )
         throw new Error("state");
-      const receipt = await reviewArticle(
-        env,
-        context,
-        article,
-        originals,
-        await snapshot(env, job),
-        body.files as EditorialFile[],
-      );
-      return json({ status: "reviewed", receipt });
+      try {
+        const receipt = await reviewArticle(
+          env,
+          context,
+          article,
+          originals,
+          await snapshot(env, job),
+          body.files as EditorialFile[],
+        );
+        return json({ status: "reviewed", receipt });
+      } catch (error) {
+        if (
+          job.research_contract === 2 &&
+          error instanceof Error &&
+          error.message === "seo_ai_review_failed"
+        )
+          return json({
+            status: "review_failed",
+            offerSha256: await prepareReviewRejection(env, job, run),
+          });
+        throw error;
+      }
     }
     if (operation === "propose")
       return json(
@@ -873,6 +912,23 @@ async function propose(
     { onlyIf: { etagDoesNotMatch: "*" } },
   );
   if (!saved) throw new Error("snapshot");
+  if (job.research_contract === 2) {
+    const proposal = await env.CMS_AI_IMAGES.get(
+      "seo-proposals/" + callId + ".json",
+    );
+    if (!proposal) throw new Error("snapshot");
+    await immutableReviewObject(
+      env,
+      baseKey(job) + "/step-" + job.next_step + "-call.json",
+      {
+        step: job.next_step,
+        path,
+        callId,
+        proposalSha256: await sha256(await proposal.text()),
+        acceptedSha256: await sha256(JSON.stringify({ path, content })),
+      },
+    );
+  }
   const finished = await env.CMS_AI_DB.prepare(
     "UPDATE seo_editorial_jobs SET status='generated',next_step=next_step+1 WHERE id=? AND status='generating' AND call_id=?",
   )

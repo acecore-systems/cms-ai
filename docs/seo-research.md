@@ -10,7 +10,7 @@ SEO専用生成指示で、原文の事実・条件・否定・手順と目的�
 
 限定実行前には最新の自然候補のmain・9原稿・guide・PR重複・lockと、実builderのrequest bytesを再確認する。原本だけでbaseline review上限180000 bytesを超える場合は既存のclaim前preflightでskipし、有料調査を開始しない。合成plan/資料を用いたrequest計測はサイズ検証だけであり、資料取得・主張支持・翻訳品質の証拠ではない。全候補が不適格ならURL差替え、本文切捨てによって実試行へ進めない。
 
-校閲failは依然としてunresolvedとなり、自動でglobal受付を解放しない。生成前の確定insufficient用callbackを校閲拒否へ流用してはならない。現時点ではSEO側の専用管理監査による照合が必要であり、通常週次を完全無人で継続するための校閲拒否終端化は別の未実装事項として残る。
+本番の旧runnerでは校閲failがunresolvedとなり、専用管理監査による照合を要する。下記の新しい校閲拒否終端は配備受入待ち。生成前の確定insufficient用callbackは流用しない。
 
 ## 実行と根拠
 
@@ -151,3 +151,13 @@ baseline適合は生成後の容量を保証しない。実資料や改訂によ
 ### コードフェンスの保護
 
 実canaryで、言語指定のない開始フェンスへ`text`を補完した提案を`seo_code_changed`で拒否した。コード本文が同じでも開始フェンス・言語指定を含む完全一致が必要である。新規研究あり／なし両方の生成指示へ、この契約を明示する。guardの緩和や保存提案の書換えは行わない。保存実応答のローカル再現と拒否回帰を確認したが、指示追加はモデル遵守を保証せず、実生成での成功は未確認である。
+
+## 確定した校閲拒否の通常終端
+
+新runnerは9言語すべての受入・サイト検証後、AI校閲が明示的にfailと具体的issuesを返した場合だけ専用`review-reject`へ進む。CMSはplan/search/generation9/reviewの全12callがcompleteであること、保存原本・proposal・step-call manifest・9成果・校閲対象最終bytes・raw responseのhashを再照合し、非公開R2へimmutable receiptを書き込み再取得する。既存jobでmanifestが欠ける場合、校閲の形式違反・timeout・保存失敗・不明結果の場合はunresolvedを維持する。レビューを再送して合格させる機能ではない。
+
+runnerは同一OIDC run/base、最新main、自動branchのrefと全状態PRの不存在を確認する。publish前のこの経路はcommit/push/PR作成へ進まない。CMSの`seo_review_rejections`とSEOの`runtime_review_rejections`は独立したappend-onlyテーブル。CMS jobはunresolved/accepted9/publication_started0のまま、SEOはexact snapshot CASでglobal runのみ元collection_statusへ終端化する。全article lock・期限・hold・予算・根拠・旧管理監査は保持する。finished_atが既にあれば保持、未記録なら固定decisionTimeを記録する。CMS statusはcallback記録後に`review_rejected`とreceipt hashを返し、WorkflowはSEO側receipt一致を確認する。
+
+同receiptの再照合は冪等、異なるreceipt・late draft callback・run再開は拒否する。失われたcallback応答は既存statusの同receipt再照合で扱い、AI callを追加しない。保証対象は9言語・新manifestが揃うcontract2だけ。それ以外は従来のunresolvedとして運用担当者が確認する。
+
+配置は既存全行比較付きでSEO migration0011→SEO専用callback対応Worker→CMS migration0009→CMS対応Worker→6サイトの新runner固定SHAの順。CMSはmain統合による自動Workers Buildより先にmigration0009を適用する。research=false/canary空・通常Cron・既存予算を維持して段階配置する。旧runnerは新offerを成功と扱わず停止するため、全6pinのreadback前に有効化しない。schemaをdown-migrateせず、障害時は新researchを無効にして保存receiptだけを照合する。今回のPRでは配備・migration適用・実API・実runtime receiptは未確認。
