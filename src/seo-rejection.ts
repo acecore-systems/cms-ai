@@ -353,6 +353,7 @@ export async function finalizeRejection(
           deadline: run.deadline,
           contractVersion: 2,
           retrievalVersion: job.retrieval_contract,
+          researchContext: job.research_context,
           discoveryPolicy: job.external_sources ? 4 : job.discovery_policy,
           ...(job.external_sources ? { siteId: job.site_id } : {}),
         },

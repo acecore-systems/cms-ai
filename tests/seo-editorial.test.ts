@@ -63,6 +63,7 @@ beforeEach(async () => {
     "0014_seo_generation_syntax.sql",
     "0015_seo_october_budget.sql",
     "0016_seo_external_sources.sql",
+    "0017_seo_research_context.sql",
   ])
     sql.exec(
       readFileSync(
@@ -263,6 +264,10 @@ describe("SEO durable editorial boundary", () => {
     const fetchMock = vi.fn(async (_url, options) => {
       const payload = JSON.parse(options.body);
       const input = JSON.parse(payload.input);
+      if (payload.tools)
+        expect(payload.tools[0].search_context_size).toBe(
+          input.discovery ? "high" : "low",
+        );
       const research = !!payload.tools;
       const value = input.claims
         ? {

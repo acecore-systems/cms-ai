@@ -137,6 +137,22 @@ it("bounds actual serialized payloads and each call rounding at 1205876 for budg
     generation;
   expect(total).toBe(stageBudget(2).maximum);
   expect(total).toBe(1205876);
+  const highSearch = fill(
+    {
+      ...search,
+      tools: [
+        {
+          type: "web_search",
+          search_context_size: "high",
+          external_web_access: true,
+        },
+      ],
+    },
+    stageBudget(2).limits.research,
+  );
+  expect(responsesUpperCost(highSearch, now)).toBe(
+    responsesUpperCost(search, now),
+  );
   expect(total).toBeLessThan(1250000);
   expect(FULL_RESEARCH_RUN_MICROS).toBe(989075);
   expect(() =>

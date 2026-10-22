@@ -353,3 +353,91 @@ it("keeps legacy planner payload unchanged and only adds named-entity guidance f
   expect({ ...current, instructions: old.instructions }).toEqual(old);
   expect(current.instructions).toContain("固有名詞");
 });
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
+import { responsesUpperCost } from "../src/seo-responses.ts";
+
+it("only retrieval high changes a single tool setting; old default and discovery remain low", async () => {
+  const { plan, value } = await fixture();
+  const discovery = await parseDiscovery(
+    value,
+    source,
+    plan,
+    JSON.stringify(value),
+  );
+  const focused = focusedInput(source, discovery.sourceSha256, plan);
+  const old = buildRetrievalRequest(focused, discovery);
+  expect(buildRetrievalRequest(focused, discovery, "low")).toEqual(old);
+  const high = buildRetrievalRequest(focused, discovery, "high");
+  expect(high.tools?.[0].search_context_size).toBe("high");
+  expect(buildDiscoveryRequest(focused).tools?.[0].search_context_size).toBe(
+    "low",
+  );
+  const restored = structuredClone(high);
+  restored.tools![0].search_context_size = "low";
+  expect(JSON.stringify(restored)).toBe(JSON.stringify(old));
+  const now = Date.parse("2026-10-23T00:00:00Z");
+  // high is one byte longer than low; same 128k bound and one-tool ceiling.
+  expect(
+    responsesUpperCost(high, now) - responsesUpperCost(old, now),
+  ).toBeLessThanOrEqual(1);
+  expect(high.max_tool_calls).toBe(1);
+  expect(() => responsesUpperCost({ ...high, max_tool_calls: 3 }, now)).toThrow(
+    "seo_research_bound",
+  );
+  expect(() =>
+    responsesUpperCost(
+      {
+        ...high,
+        tools: [{ ...high.tools![0], return_token_budget: "unlimited" }],
+      },
+      now,
+    ),
+  ).toThrow("seo_research_bound");
+  expect(() =>
+    responsesUpperCost(
+      {
+        ...high,
+        tools: [{ ...high.tools![0], search_context_size: "medium" }],
+      },
+      now,
+    ),
+  ).toThrow("seo_research_bound");
+});
+it("context migration preserves every old value and makes old low/new high immutable", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(
+      "CREATE TABLE seo_editorial_jobs(id TEXT, status TEXT); INSERT INTO seo_editorial_jobs VALUES('old','unresolved')",
+    );
+    db.exec(
+      readFileSync(
+        new URL("../migrations/0017_seo_research_context.sql", import.meta.url),
+        "utf8",
+      ),
+    );
+    expect(db.prepare("SELECT * FROM seo_editorial_jobs").get()).toEqual({
+      id: "old",
+      status: "unresolved",
+      research_context: "low",
+    });
+    db.exec("INSERT INTO seo_editorial_jobs VALUES('new','pending','high')");
+    expect(() =>
+      db.exec(
+        "UPDATE seo_editorial_jobs SET research_context='high' WHERE id='old'",
+      ),
+    ).toThrow("immutable_research_context");
+    expect(() =>
+      db.exec(
+        "UPDATE seo_editorial_jobs SET research_context='low' WHERE id='new'",
+      ),
+    ).toThrow("immutable_research_context");
+    expect(() =>
+      db.exec(
+        "INSERT INTO seo_editorial_jobs VALUES('bad','pending','medium')",
+      ),
+    ).toThrow();
+  } finally {
+    db.close();
+  }
+});
