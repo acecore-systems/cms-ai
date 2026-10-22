@@ -1,11 +1,21 @@
+import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { it, expect } from "vitest";
-import { parseDiscovery, assertDiscovery } from "../src/seo-discovery.ts";
+import {
+  parseDiscovery,
+  assertDiscovery,
+  buildDiscoveryRequest,
+} from "../src/seo-discovery.ts";
 import {
   parsePlan,
   researchInputs,
   factualSentences,
 } from "../src/seo-research-plan.ts";
-import { parseResearch, buildRetrievalRequest } from "../src/seo-checks.ts";
+import {
+  parseResearch,
+  buildRetrievalRequest,
+  buildPlanRequest,
+} from "../src/seo-checks.ts";
 import { focusedInput } from "../src/seo-research-plan.ts";
 import { sha256 } from "../src/seo-hash.ts";
 const source =
@@ -161,3 +171,185 @@ it.each(["mirror", "not-opened", "second-search", "no-citation"])(
     ).toThrow();
   },
 );
+
+const message = (text: string) => ({
+  type: "message",
+  status: "completed",
+  role: "assistant",
+  content: [{ type: "output_text", text, annotations: [] }],
+});
+it("v3 chooses relevance from the exact set instead of overriding with publisher rank; raw replay is mandatory", async () => {
+  const { plan, value } = await fixture();
+  const hangar = "https://hangar.papermc.io/GeyserMC/Floodgate",
+    linking = "https://geysermc.org/wiki/floodgate/linking/";
+  value.output[0].action.sources = [
+    { type: "url", url: hangar },
+    { type: "url", url: linking },
+  ];
+  const result = {
+    ...value,
+    output: [
+      ...value.output,
+      message(
+        JSON.stringify({
+          verdict: "selected",
+          selectedUrl: hangar,
+          reason:
+            "Synthetic relevance selection: account-free participation, not linking",
+        }),
+      ),
+    ],
+  };
+  const raw = JSON.stringify(result, null, 2);
+  expect((await parseDiscovery(result, source, plan, raw, 2)).selectedUrl).toBe(
+    linking,
+  );
+  const selected = await parseDiscovery(result, source, plan, raw, 3);
+  expect(selected.selectedUrl).toBe(hangar);
+  await expect(
+    assertDiscovery(selected, source, plan, raw),
+  ).resolves.toBeUndefined();
+  await expect(assertDiscovery(selected, source, plan)).rejects.toThrow();
+  await expect(
+    assertDiscovery({ ...selected, selectedUrl: linking }, source, plan, raw),
+  ).rejects.toThrow();
+  await expect(
+    assertDiscovery(
+      { ...selected, selectionReason: "changed" },
+      source,
+      plan,
+      raw,
+    ),
+  ).rejects.toThrow();
+});
+it.each([
+  "outside",
+  "existing",
+  "unsafe",
+  "missing",
+  "extra",
+  "fenced",
+  "prefix",
+  "suffix",
+  "multiple",
+  "omitted",
+  "empty-reason",
+  "bad-insufficient",
+  "duplicate",
+])("v3 rejects ambiguous or invalid selection: %s", async (kind) => {
+  const { plan, value } = await fixture();
+  let v: any = {
+    verdict: "selected",
+    selectedUrl: "https://docs.example.org/new",
+    reason: "Relevant candidate",
+  };
+  if (kind === "outside") v.selectedUrl = "https://mirror.example.org/new";
+  if (kind === "existing") v.selectedUrl = "https://docs.example.org/existing";
+  if (kind === "unsafe") v.selectedUrl = "http://127.0.0.1/";
+  if (kind === "missing") delete v.selectedUrl;
+  if (kind === "extra") v.supports = true;
+  if (kind === "empty-reason") v.reason = " ";
+  if (kind === "bad-insufficient") v.verdict = "insufficient";
+  let text = JSON.stringify(v);
+  if (kind === "fenced") text = "```json\n" + text + "\n```";
+  if (kind === "prefix") text = "Selected: " + text;
+  if (kind === "suffix") text += " {}";
+  if (kind === "duplicate")
+    text = text.replace('{"verdict":', '{"verdict":"insufficient","verdict":');
+  const output: any[] = [
+    ...value.output,
+    ...(kind === "omitted" ? [] : [message(text)]),
+    ...(kind === "multiple" ? [message(text)] : []),
+  ];
+  const r = { ...value, output };
+  await expect(
+    parseDiscovery(r, source, plan, JSON.stringify(r), 3),
+  ).rejects.toThrow();
+});
+it("v3 explicit insufficiency is a known rejection; old search builders remain unchanged", async () => {
+  const { plan, value } = await fixture();
+  const r = {
+    ...value,
+    output: [
+      ...value.output,
+      message(
+        JSON.stringify({
+          verdict: "insufficient",
+          selectedUrl: null,
+          reason: "Topic mismatch",
+        }),
+      ),
+    ],
+  };
+  await expect(
+    parseDiscovery(r, source, plan, JSON.stringify(r), 3),
+  ).rejects.toThrow("seo_research_insufficient");
+  const focused = focusedInput(source, plan.sourceSha256, plan);
+  expect(buildDiscoveryRequest(focused, 1)).toEqual(
+    buildDiscoveryRequest(focused, 2),
+  );
+  expect(buildDiscoveryRequest(focused, 3).max_tool_calls).toBe(1);
+  expect(buildDiscoveryRequest(focused, 3).instructions).not.toEqual(
+    buildDiscoveryRequest(focused, 2).instructions,
+  );
+});
+
+it("keeps the sanitized actual Portal text incompatible with v3 instead of manufacturing a verified response", async () => {
+  const excerpt = JSON.parse(
+    readFileSync(
+      new URL("./fixtures/seo-discovery-portal-excerpt.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const { plan, value } = await fixture();
+  value.output[0].action.sources = excerpt.urls.map((url: string) => ({
+    type: "url",
+    url,
+  }));
+  const result = { ...value, output: [...value.output, message(excerpt.text)] },
+    raw = JSON.stringify(result);
+  expect(excerpt.text).toContain("Hangar");
+  expect((await parseDiscovery(result, source, plan, raw, 2)).selectedUrl).toBe(
+    "https://geysermc.org/wiki/floodgate/linking/",
+  );
+  await expect(parseDiscovery(result, source, plan, raw, 3)).rejects.toThrow();
+});
+it("migration retains every old job column, defaults to policy2 and makes policy immutable", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(
+    "CREATE TABLE seo_editorial_jobs(id TEXT PRIMARY KEY,status TEXT,nullable TEXT); INSERT INTO seo_editorial_jobs VALUES('old','unresolved',NULL)",
+  );
+  const before = db.prepare("SELECT * FROM seo_editorial_jobs").all();
+  db.exec(
+    readFileSync(
+      new URL("../migrations/0013_seo_discovery_policy.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  expect(
+    db.prepare("SELECT id,status,nullable FROM seo_editorial_jobs").all(),
+  ).toEqual(before);
+  expect(
+    db.prepare("SELECT discovery_policy FROM seo_editorial_jobs").get()!
+      .discovery_policy,
+  ).toBe(2);
+  expect(() =>
+    db.exec("UPDATE seo_editorial_jobs SET discovery_policy=3 WHERE id='old'"),
+  ).toThrow("immutable_discovery_policy");
+  db.exec(
+    "INSERT INTO seo_editorial_jobs(id,status,discovery_policy) VALUES('new','pending',3)",
+  );
+  expect(() =>
+    db.exec("UPDATE seo_editorial_jobs SET discovery_policy=2 WHERE id='new'"),
+  ).toThrow();
+  db.close();
+});
+
+it("keeps legacy planner payload unchanged and only adds named-entity guidance for policy3", () => {
+  expect(buildPlanRequest(source, 2)).toEqual(buildPlanRequest(source, 2, 2));
+  const old = buildPlanRequest(source, 2, 2),
+    current = buildPlanRequest(source, 2, 3);
+  expect(current.instructions.startsWith(old.instructions)).toBe(true);
+  expect({ ...current, instructions: old.instructions }).toEqual(old);
+  expect(current.instructions).toContain("固有名詞");
+});

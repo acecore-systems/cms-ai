@@ -59,6 +59,7 @@ beforeEach(async () => {
     "0010_seo_discovery.sql",
     "0011_seo_month_budget.sql",
     "0012_seo_run_budget.sql",
+    "0013_seo_discovery_policy.sql",
   ])
     sql.exec(
       readFileSync(
@@ -325,11 +326,18 @@ describe("SEO durable editorial boundary", () => {
               content: [
                 {
                   type: "output_text",
-                  text: research
-                    ? "Verified claim [1].\n```json\n" +
-                      JSON.stringify(value) +
-                      "\n```"
-                    : JSON.stringify(value),
+                  text:
+                    research && !input.discovery
+                      ? JSON.stringify({
+                          verdict: "selected",
+                          selectedUrl: reference,
+                          reason: "Synthetic relevant primary source candidate",
+                        })
+                      : research
+                        ? "Verified claim [1].\n```json\n" +
+                          JSON.stringify(value) +
+                          "\n```"
+                        : JSON.stringify(value),
                   annotations: research
                     ? [
                         {
@@ -558,11 +566,18 @@ describe("SEO durable editorial boundary", () => {
               content: [
                 {
                   type: "output_text",
-                  text: research
-                    ? "Verified claim [1].\n```json\n" +
-                      JSON.stringify(value) +
-                      "\n```"
-                    : JSON.stringify(value),
+                  text:
+                    research && !input.discovery
+                      ? JSON.stringify({
+                          verdict: "selected",
+                          selectedUrl: reference,
+                          reason: "Synthetic relevant primary source candidate",
+                        })
+                      : research
+                        ? "Verified claim [1].\n```json\n" +
+                          JSON.stringify(value) +
+                          "\n```"
+                        : JSON.stringify(value),
                   annotations: research
                     ? [
                         {
@@ -1394,9 +1409,15 @@ it.each(["insufficient", "verified-empty", "contract-violation"])(
                 type: "output_text",
                 text: planning
                   ? JSON.stringify(value)
-                  : "No suitable primary source was established.\n```json\n" +
-                    JSON.stringify(value) +
-                    "\n```",
+                  : !input.discovery
+                    ? JSON.stringify({
+                        verdict: "selected",
+                        selectedUrl: "https://docs.example.org/new-guide",
+                        reason: "Synthetic candidate",
+                      })
+                    : "No suitable primary source was established.\n```json\n" +
+                      JSON.stringify(value) +
+                      "\n```",
                 annotations: [],
               },
             ],
@@ -1659,6 +1680,22 @@ it.each([
                         ? [{ title: "Missing URL" }]
                         : [],
               },
+            },
+            {
+              type: "message",
+              status: "completed",
+              role: "assistant",
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({
+                    verdict: "insufficient",
+                    selectedUrl: null,
+                    reason: "No suitable source in synthetic search",
+                  }),
+                  annotations: [],
+                },
+              ],
             },
           ],
     });

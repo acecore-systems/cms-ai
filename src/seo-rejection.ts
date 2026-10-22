@@ -79,7 +79,13 @@ export async function prepareRejection(
         parsed = plan;
       } else if (row.phase === "discovery" && plan) {
         const savedDiscovery = await read(env, key(context.jobId, row.phase));
-        if (![1, 2].includes(savedDiscovery.value.version)) return fail();
+        if (
+          ![1, 2, 3].includes(savedDiscovery.value.version) ||
+          (context.discoveryPolicy === 3
+            ? savedDiscovery.value.version !== 3
+            : savedDiscovery.value.version === 3)
+        )
+          return fail();
         discovery = await parseDiscovery(
           raw.value,
           source,
@@ -135,7 +141,13 @@ export async function prepareRejection(
       } else if (row.phase === "discovery") {
         if (!plan) return fail();
         try {
-          await parseDiscovery(raw.value, source, plan, raw.raw);
+          await parseDiscovery(
+            raw.value,
+            source,
+            plan,
+            raw.raw,
+            context.discoveryPolicy ?? 1,
+          );
           return fail();
         } catch (e) {
           if (
@@ -331,6 +343,7 @@ export async function finalizeRejection(
           deadline: run.deadline,
           contractVersion: 2,
           retrievalVersion: job.retrieval_contract,
+          discoveryPolicy: job.discovery_policy,
         },
         canonical.content,
       )) !== body.offerSha256

@@ -1,5 +1,19 @@
 # SEOの新規資料調査とAI校閲
 
+## 2026-10-23: 主張に対応する検索候補選択（Discovery v3、実API未確認）
+
+保存済みPortal実行では検索応答がHangarのFloodgateを候補として挙げたが、controllerのhost優先が別論点のGeyserMC linkingを選んだ。原因を資料不存在と一般化しない。新jobのdiscovery policy3は同じ検索callの最終JSONから、固定claimと全requiredConditionsに最も関係する一次資料候補1URLを選ぶ。選択理由は関連性の説明だけで、支持証拠・公式性確認・実取得の代わりにしない。後続の固定open/citationと支持判定を維持する。
+
+最終応答は単一message/単一output_textのJSON objectだけを受け付け、verdict(selected/insufficient)、selectedUrl、reason以外のkey、重複key、複数message、fence/説明混入、省略を拒否する。URLはraw search.sourcesの安全・未掲載集合へ完全一致しなければ拒否する。URL正規化、mirror置換、host優先fallback、既存URL除外解除は行わない。未確認の候補はinsufficient/nullとし、completed原本・manifest・予算を再照合できた場合だけ既存の2call正常拒否経路へ進む。3call研究拒否・13call校閲拒否も既存契約を使い、unknownは保持する。
+
+planは新policy3だけ、原文にある一意の製品名・固有名詞anchorを一般語より優先し、重要条件を保持した公式言語のqueryを指示する。query完全一致・原文quote・否定条件は変更しない。API追加・出力/cap変更はなく、最大13call/1205876 microUSD、1.25 USD/run・7 USD/JST月、30分、9言語、Draft終了は維持する。
+
+**CMS0013_seo_discovery_policy.sqlをコード配備前に適用**する。旧jobの全既存列を維持し、追加discovery_policy列はdefault2、新jobだけ3を明示保存する。列はimmutable。旧v1/v2成果は旧選定規則・旧plan/discovery promptで再照合し、保存成果をv3へ読み替えない。新policyはpreflight hashにも含める。v3再生は保存raw responseのhash・全検索集合・最終JSONと保存選択/理由の完全一致を要求する。旧jobとの版混在を拒否する。SEO receipt版・call数・SQL・runner/OIDCは不変で、SEO migrationと6site pin更新は不要。
+
+最新candidate2 Portal minecraft-java-bedrock-crossplay（main b456acaa）の全9原稿・guideを使った実builder計測ではplan10751/review93100 bytes、生成既知合計262346 bytes。合成根拠込み802637 microUSD。全9言語の段落変更＋本文10%増量でも校閲155824 bytes、生成配分の最小余裕27500 bytes、全文復元一致。候補0は生成pool超過、候補1はサイズ適合でも共有translation-stateのPR競合を別途確認する必要がある。サイズ適合は取得・品質・Draft成功の保証ではない。
+
+実応答の最小fixtureには公開URL2件と最終文だけを収録し、秘密・ID・暗号推論は含めない。その旧自然文を新v3の合格JSONと偽装せず拒否する回帰と、別の合成v3選択を区別する。新方式の有料実行・本番配備は本PRでは行わない。親の最新原稿・PR/lock・月予算・10月26日枠の受入後に判断する。
+
 ## 2026-10-23: 新規jobの1.25 USD配分（実装検証、本番適用前）
 
 利用者の明示承認で1.25 USD/run・7 USD/JST月を採用する。原文、全9locale、guide、条件、出力12000 tokens、URL完全一致・公式性・引用・支持判定・AI校閲を維持し、入力packing試作は採用しない。既存の本番payload builderを変更せず、`budget_version=2`のjobだけplan32000、discovery/research各16000、review500000 bytes、生成9段階の固定pool525000 bytesを使う。最大3候補・1記事・30分・Draft終了は不変。
