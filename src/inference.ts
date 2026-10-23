@@ -1,3 +1,8 @@
+import {
+  deepseekPayload,
+  deepseekUpperCost,
+  validateDeepseekResponse,
+} from "./seo-deepseek.ts";
 import type { AppEnv } from "./env.ts";
 import { providerFailure } from "./provider-failure.ts";
 import { imageContent, type MessageContent } from "./images.ts";
@@ -61,6 +66,7 @@ export async function runInference(
   ) => Promise<void>,
   requestDeadline?: number,
   purpose: "cms" | "seo" = "cms",
+  seoProvider?: { model: string; onResponse?: (raw: unknown) => Promise<void> },
 ): Promise<InferenceResult> {
   const files = validateSourceFiles(site, sourceFiles);
   // Bound all image data per inference and prioritize the current turn.
@@ -77,7 +83,11 @@ export async function runInference(
     currentContent,
     await buildConversationMessages(env, job, conversationJobs, imageBudget),
   );
-  const model = getModel(env, purpose);
+  if (seoProvider && purpose !== "seo") throw Error("seo_model_not_allowed");
+  const model =
+    purpose === "seo"
+      ? (seoProvider?.model ?? "gpt-6-luna")
+      : getModel(env, purpose);
   if (model === "gpt-6-luna" && !env.OPENAI_API_KEY_STORE) {
     throw new HttpError(503, "OpenAI APIの設定がありません。");
   }
@@ -90,6 +100,8 @@ export async function runInference(
       request,
       beforeRequest,
       requestDeadline,
+      purpose === "seo" && seoProvider?.model === DEEPSEEK_MODEL,
+      seoProvider?.onResponse,
     );
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -608,7 +620,7 @@ function openAiPayload(
   };
 }
 
-async function runTextModel(
+export async function runTextModel(
   env: AppEnv,
   model: string,
   request: Record<string, unknown>,
@@ -617,9 +629,37 @@ async function runTextModel(
     request: Record<string, unknown>,
   ) => Promise<void>,
   requestDeadline?: number,
+  seoDeepseek = false,
+  onResponse?: (raw: unknown) => Promise<void>,
 ): Promise<unknown> {
   if (isWorkersAiTextModel(model)) {
-    if (beforeRequest) throw new Error("seo_model_not_allowed");
+    if (beforeRequest) {
+      if (
+        !seoDeepseek ||
+        model !== DEEPSEEK_MODEL ||
+        !Number.isSafeInteger(requestDeadline) ||
+        Date.now() >= requestDeadline!
+      )
+        throw Error("seo_model_not_allowed");
+      const input = deepseekPayload(request);
+      deepseekUpperCost(input);
+      await beforeRequest(model, input);
+      if (Date.now() >= requestDeadline!) throw Error("seo_deadline");
+      const raw = await (
+        env.AI.run as (
+          model: string,
+          input: unknown,
+          options: unknown,
+        ) => Promise<unknown>
+      )(model, input, {
+        signal: AbortSignal.timeout(
+          Math.max(1, Math.min(120000, requestDeadline! - Date.now())),
+        ),
+      });
+      if (onResponse) await onResponse(raw);
+      return validateDeepseekResponse(raw, input, requestDeadline!);
+    }
+    if (seoDeepseek) throw Error("seo_budget_required");
     // DeepSeek uses the Chat Completions schema envelope, unlike legacy
     // Workers AI models. Keep the CMS's existing effort choices compatible.
     const { model: _model, ...chatRequest } = openAiPayload(

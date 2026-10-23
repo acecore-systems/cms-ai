@@ -1,3 +1,4 @@
+import { seoTextResponse } from "./seo-text-response.ts";
 import { assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
 import { SeoBudget, sha256, RATE_VALID_UNTIL } from "./seo-budget.ts";
@@ -79,6 +80,8 @@ export async function seoResponse(
   env: AppEnv,
   args: {
     runId: string;
+    jobId?: string;
+    modelVersion?: 1 | 2;
     budgetVersion?: number;
     recovery?: number;
     reviewOutput?: number;
@@ -89,11 +92,19 @@ export async function seoResponse(
     phase?: "plan" | "discovery" | "research" | "review";
   },
 ) {
-  if (
-    String(env.SEO_GENERATION_ENABLED) !== "true" ||
-    env.SEO_AI_MODEL !== "gpt-6-luna"
-  )
+  if (String(env.SEO_GENERATION_ENABLED) !== "true")
     throw new Error("seo_research_disabled");
+  if (
+    args.modelVersion === 2 &&
+    (args.phase === "plan" || args.phase === "review")
+  ) {
+    if (!args.jobId) throw Error("seo_model_missing");
+    return seoTextResponse(env, {
+      ...args,
+      jobId: args.jobId,
+      phase: args.phase,
+    });
+  }
   const budget = new SeoBudget(env.CMS_AI_DB);
   let reserved = false;
   try {
@@ -125,6 +136,13 @@ export async function seoResponse(
       Date.now(),
       args.deadline,
       args.budgetVersion,
+      args.modelVersion === 2
+        ? {
+            jobId: args.jobId!,
+            phase: args.phase ?? "research",
+            model: "gpt-6-luna",
+          }
+        : undefined,
     );
     reserved = true;
     if (Date.now() >= args.deadline)

@@ -7,6 +7,7 @@ import { seoConnectionContract } from "./seo-contract.ts";
 import { generateSeo, generationReadiness } from "./seo-generation.ts";
 import {
   startEditorial,
+  fallbackReport,
   editorialStatus,
   editorialReport,
 } from "./seo-editorial.ts";
@@ -52,6 +53,33 @@ export class SeoEditorial extends WorkerEntrypoint<AppEnv> {
   }
   async start(input: unknown) {
     return startEditorial(this.env, input);
+  }
+  async startAttempt(input: {
+    version: 1;
+    rootRunId: string;
+    ordinal: number;
+    previousReceiptSha256: string | null;
+    runId: string;
+    deadline: number;
+    candidates: unknown[];
+  }) {
+    const {
+      version,
+      rootRunId,
+      ordinal,
+      previousReceiptSha256,
+      runId,
+      deadline,
+      candidates,
+    } = input;
+    return startEditorial(
+      this.env,
+      { runId, deadline, candidates },
+      { version, rootRunId, ordinal, previousReceiptSha256 },
+    );
+  }
+  async trialReport(input: { runId: string }) {
+    return fallbackReport(this.env, input);
   }
   async report(input: unknown) {
     return editorialReport(this.env, input);

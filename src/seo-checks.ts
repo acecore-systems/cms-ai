@@ -53,6 +53,7 @@ import {
 } from "./seo-responses.ts";
 
 export type CheckContext = {
+  modelVersion?: 1 | 2;
   jobId: string;
   runId: string;
   budgetRunId: string;
@@ -559,6 +560,8 @@ export async function researchArticle(
         context.recovery,
       );
       const response = await seoResponse(env, {
+        jobId: context.jobId,
+        modelVersion: context.modelVersion,
         runId: context.budgetRunId,
         budgetVersion: context.budgetVersion,
         recovery: context.recovery,
@@ -603,6 +606,8 @@ export async function researchArticle(
       },
       async (callId) => {
         const response = await seoResponse(env, {
+          jobId: context.jobId,
+          modelVersion: context.modelVersion,
           runId: context.budgetRunId,
           budgetVersion: context.budgetVersion,
           recovery: context.recovery,
@@ -698,6 +703,8 @@ export async function researchArticle(
           )
         : buildSearchRequest(focused);
       const response = await seoResponse(env, {
+        jobId: context.jobId,
+        modelVersion: context.modelVersion,
         runId: context.budgetRunId,
         budgetVersion: context.budgetVersion,
         recovery: context.recovery,
@@ -853,6 +860,8 @@ export async function reviewArticle(
       context.reviewOutput,
     );
     const response = await seoResponse(env, {
+      jobId: context.jobId,
+      modelVersion: context.modelVersion,
       runId: context.budgetRunId,
       budgetVersion: context.budgetVersion,
       reviewOutput: context.reviewOutput,

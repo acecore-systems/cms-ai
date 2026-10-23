@@ -1,3 +1,4 @@
+import { deepseekPayload } from "./seo-deepseek.ts";
 import { validateSourceFiles } from "./inference.ts";
 import { prepareEditorialTransport } from "./seo-metadata-preservation.ts";
 import type { SiteConfig } from "./sites.ts";
@@ -9,6 +10,7 @@ import { buildSeoGenerationRequest } from "./seo-generation.ts";
 import { allocateGenerationInputs, stageBudget } from "./seo-stage-budget.ts";
 
 export type InputPreflightOptions = {
+  model_version?: 1 | 2;
   site_id: string;
   research_recovery: 1 | 2;
   external_sources: number;
@@ -55,7 +57,16 @@ export function inputPreflight(
   ];
   const baseline = paths.map((path) => files.find((f) => f.path === path)!);
   const bytes = (request: unknown) =>
-    new TextEncoder().encode(JSON.stringify(request)).length;
+    new TextEncoder().encode(
+      JSON.stringify(
+        options.model_version === 2
+          ? deepseekPayload(
+              request as Record<string, unknown>,
+              "input" in (request as object),
+            )
+          : request,
+      ),
+    ).length;
   const planBytes = planInputBytes(article.source, options);
   const reviewBytes = bytes(
     buildReviewRequest(
@@ -181,18 +192,22 @@ export function planInputBytes(
 ) {
   return new TextEncoder().encode(
     JSON.stringify(
-      buildPlanRequest(
-        source.content,
-        2,
-        options.research_recovery === 2
-          ? 5
-          : options.external_sources
-            ? 4
-            : options.discovery_policy,
-        options.external_sources
-          ? externalScope(options.site_id, source)
-          : undefined,
-        options.research_recovery,
+      (options.model_version === 2
+        ? (r: Record<string, unknown>) => deepseekPayload(r, true)
+        : (r: Record<string, unknown>) => r)(
+        buildPlanRequest(
+          source.content,
+          2,
+          options.research_recovery === 2
+            ? 5
+            : options.external_sources
+              ? 4
+              : options.discovery_policy,
+          options.external_sources
+            ? externalScope(options.site_id, source)
+            : undefined,
+          options.research_recovery,
+        ),
       ),
     ),
   ).length;
