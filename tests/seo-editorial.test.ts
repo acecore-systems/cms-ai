@@ -1,3 +1,4 @@
+import { prepareCodePreservation } from "../src/seo-code-preservation.ts";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -72,6 +73,7 @@ beforeEach(async () => {
     "0021_seo_url_instructions.sql",
     "0022_seo_research_recovery.sql",
     "0023_seo_discovery_instructions.sql",
+    "0024_seo_code_preservation.sql",
   ])
     sql.exec(
       readFileSync(
@@ -110,7 +112,7 @@ beforeEach(async () => {
           if (legacyReview)
             for (const item of statements) {
               if (item.query.startsWith("INSERT INTO seo_editorial_jobs"))
-                item.args[item.args.length - 7] = 0;
+                item.args[item.args.length - 8] = 0;
             }
           const values = statements.map((item) => ({
             meta: {
@@ -259,6 +261,73 @@ async function claimed() {
 }
 
 describe("SEO durable editorial boundary", () => {
+  it.each(["valid", "foreign"])(
+    "version2 pt transport %s preserves the raw proposal and original locale code",
+    async (variant) => {
+      for (const file of files)
+        file.content +=
+          "\n\n```ts\nconst message = " +
+          JSON.stringify(file.path.includes("/pt/") ? "Português" : "日本語") +
+          ";\n```\n";
+      const jobId = await claimed();
+      expect(
+        sql
+          .prepare(
+            "SELECT code_preservation FROM seo_editorial_jobs WHERE id=?",
+          )
+          .get(jobId)!.code_preservation,
+      ).toBe(2);
+      let japanese = "";
+      for (let step = 0; step <= 4; step++) {
+        if (step === 4 && variant === "foreign") {
+          const infer = mocks.infer.getMockImplementation()!;
+          mocks.infer.mockImplementationOnce(async (...args) => {
+            const result = await infer(...args);
+            result.changes[0].content = result.changes[0].content.replace(
+              "CMS_SEO_CODE_V1_F1_B0",
+              "CMS_SEO_CODE_V1_F0_B0",
+            );
+            return result;
+          });
+        }
+        const result = await request(jobId, "propose", {
+          step,
+          ...(step === 1 ? { japanese } : {}),
+        });
+        if (step === 4 && variant === "foreign") {
+          expect(result.status).toBe("unresolved");
+          expect(
+            JSON.parse(objects.get("seo-editorial/" + jobId + "/failure.json")!)
+              .code,
+          ).toBe("seo_code_transport");
+          expect(objects.has("seo-editorial/" + jobId + "/step-4.json")).toBe(
+            false,
+          );
+        } else {
+          expect(result.status).toBe("proposal_created");
+          expect(result.file.content).not.toContain("CMS_SEO_CODE_V1_");
+          if (step === 0) japanese = result.file.content;
+          if (step === 4)
+            expect(result.file.content).toContain(
+              'const message = "Português";',
+            );
+        }
+      }
+      expect(mocks.infer).toHaveBeenCalledTimes(5);
+      expect(
+        sql
+          .prepare(
+            "SELECT COUNT(*) n FROM seo_budget_calls WHERE status='complete'",
+          )
+          .get()!.n,
+      ).toBe(5);
+      const raw = [...objects.entries()]
+        .filter(([key]) => key.startsWith("seo-proposals/"))
+        .at(-1)![1];
+      expect(raw).toContain("CMS_SEO_CODE_V1_");
+    },
+  );
+
   it.each([
     "valid",
     "wiki-pass",
@@ -1149,7 +1218,15 @@ describe("SEO durable editorial boundary", () => {
           mocks.infer.mock.calls
             .at(-1)![3]
             .find((file: { path: string }) => file.path === sourcePath).content,
-        ).toBe(japanese);
+        ).toBe(
+          prepareCodePreservation(
+            [{ path: sourcePath, content: japanese }],
+            sourcePath,
+            sourcePath,
+            "",
+            2,
+          ).files[0].content,
+        );
       }
     }
     expect(

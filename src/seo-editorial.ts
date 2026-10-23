@@ -1,3 +1,4 @@
+import { prepareCodePreservation } from "./seo-code-preservation.ts";
 import { inputPreflight } from "./seo-input-preflight.ts";
 import { assertTableContextPreserved } from "./seo-table-claims.ts";
 import { hasExternalClaimCandidate } from "./seo-research-plan.ts";
@@ -83,6 +84,7 @@ type EditorialJob = {
   research_context: "low" | "high";
   research_recovery: 1 | 2;
   discovery_instructions: 1 | 2;
+  code_preservation: 1 | 2;
   allocation_version: 1 | 2;
   variable_review: 0 | 1;
   input_allocation_sha256: string | null;
@@ -121,6 +123,7 @@ const diagnosticCodes = new Set([
   "seo_content_unsafe",
   "seo_unverified_reference",
   "seo_code_changed",
+  "seo_code_transport",
   "seo_number_added",
   "seo_html_changed",
   "seo_change_path",
@@ -291,7 +294,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery,discovery_instructions) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery,discovery_instructions,code_preservation) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -305,6 +308,7 @@ async function advance(env: AppEnv, runId: string) {
         "high",
         2,
         1,
+        2,
         2,
         2,
         2,
@@ -762,6 +766,7 @@ async function claimJob(
       ...(job.reference_policy === 2 ? { referencePolicy: 2 } : {}),
       ...(job.url_instructions === 2 ? { urlInstructions: 2 } : {}),
       ...(job.discovery_instructions === 2 ? { discoveryInstructions: 2 } : {}),
+      ...(job.code_preservation === 2 ? { codePreservation: 2 } : {}),
       ...(job.allocation_version === 2 ? { allocationVersion: 2 } : {}),
       ...(job.generation_syntax === 2 ? { generationSyntax: 2 } : {}),
       ...(job.discovery_policy === 3
@@ -974,6 +979,7 @@ async function propose(
       (saved.recovery ?? 1) !== job.research_recovery ||
       (saved.urlInstructions ?? 1) !== job.url_instructions ||
       (saved.discoveryInstructions ?? 1) !== job.discovery_instructions ||
+      (saved.codePreservation ?? 1) !== job.code_preservation ||
       (saved.budgetVersion ?? 1) !== job.budget_version ||
       (saved.allocationVersion ?? 1) !== job.allocation_version ||
       (saved.discoveryPolicy ?? 2) !==
@@ -996,6 +1002,22 @@ async function propose(
     );
     generationInputCap = saved.generationAllocation[job.next_step].maxBytes;
   }
+  const transport = prepareCodePreservation(
+    context,
+    job.article_path!,
+    path,
+    buildEditorialInstruction({
+      syntaxPolicy: job.generation_syntax,
+      step: job.next_step,
+      paths,
+      locale,
+      translationCount: article.translations.length,
+      reason: candidate.reason,
+      research,
+    }),
+    job.code_preservation,
+    article.target.spec.site.projectRoot,
+  );
   const callId = "seo-" + crypto.randomUUID();
   const changed = await env.CMS_AI_DB.prepare(
     "UPDATE seo_editorial_jobs SET status='generating',generation_started=1,call_id=? WHERE id=? AND status IN ('claimed','generated') AND next_step=?",
@@ -1011,18 +1033,10 @@ async function propose(
     siteId: job.site_id,
     articlePath: job.article_path,
     allowedPaths: [path],
-    files: context,
+    files: transport.files,
     ...(research ? { researchBudget: true } : {}),
     ...(generationInputCap !== undefined ? { generationInputCap } : {}),
-    instruction: buildEditorialInstruction({
-      syntaxPolicy: job.generation_syntax,
-      step: job.next_step,
-      paths,
-      locale,
-      translationCount: article.translations.length,
-      reason: candidate.reason,
-      research,
-    }),
+    instruction: transport.instruction,
   });
   alive(run);
   if (
@@ -1034,7 +1048,10 @@ async function propose(
   const content = await acceptEditorialChange(
     article,
     original,
-    generated.result.changes[0],
+    {
+      ...generated.result.changes[0],
+      content: transport.restore(generated.result.changes[0].content),
+    },
     locale ? japanese : null,
     Date.now(),
     research ? evidenceReferences(research) : [],

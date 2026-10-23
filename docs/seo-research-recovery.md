@@ -90,3 +90,13 @@ eligibility RPCには候補reasonがないため、reason空文字の下限見�
 保存snapshotのSystems34URLを実GitHub読取でも検証し、同じHEAD 7ea874884176541f94fc34ff4da48630f1ebea41で93requests・20ineligible/14eligible、最終再読取り成功。下位の適合2記事も残った。これはローカルから実readerと同じ経路を使った読取検証であり、配備済みworkerのrunや有料実成功とは区別する。候補・PRが増えれば100件上限でunknownになる可能性は残る。
 
 最大予約額1,249,533 microUSD、13API、9言語、30分、月額・通常枠確保は不変。本修正では有料API0回。実検索→本文支持→生成→AI校閲→Draftの成功は未検証であり、merge・本番配備・有料実行は親担当へ引き継ぐ。
+
+## 翻訳コードの構造的保持（0024）
+
+実試行ではptの既存コード2ブロックが日本語版のコードへ置き換わり、`seo_code_changed`で正常に停止した。新jobは`code_preservation=2`を保存し、正本と対象言語のコードをファイル別のplaceholderへ置換する。全コード原文は読み取り専用の共有辞書として渡し、完全一致するブロックだけ重複排除する。応答は対象言語のplaceholderが順序どおり各1回ある場合だけ、その言語の原本コードへ復元する。別言語token・欠落・重複・生コードは拒否する。復元後の既存guardとAI校閲は変更しない。
+
+生のモデル提案はplaceholder付きのまま保存し、受入stepには復元済み全文を保存する。既存のreceipt/hash照合を維持する。0024は旧jobをdefault1に固定しimmutable triggerを追加するだけで、旧builder・提案解釈は変更しない。site runner・SEO schema変更は不要。migration適用は運用担当が行う。
+
+無課金検証では513tests成功、旧版48比較一致、保存34URLのoffline再生は93reads・20ineligible/14eligibleだった。実原稿と既取得JAを使った全9段階のrequestは割当内で、既知入力pool502,963bytes、pt57,108/58,508bytes。これは保存原本と合成応答による検証であり、新transportの実モデル成功ではない。最大予約1,249,533 microUSD、13API、9言語、30分、研究8KBおよび生成pool525KBは不変。有料APIは呼び出していない。
+
+リスト・引用内に入れ子になったコードは復元を推測せず拒否する。コード周辺の意味や配置は引き続き既存guard・AI校閲で確認する。eligibilityの既知入力適合は将来の研究・改訂による増分を保証せず、各stageの最終入力検査を維持する。
