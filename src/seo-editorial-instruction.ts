@@ -29,6 +29,11 @@ export function buildEditorialInstruction({
         : []),
       `Controller stage ${step + 1}/${paths.length}: 1 call = 1 file. Output only the complete file ${path}, locale=${locale || "ja"}.`,
       `The controller revises/formats Japanese, then assigns all ${translationCount} existing translations in separate calls under one budget run ID and absolute deadline. It validates every locale before one Draft PR; budget/deadline/validation failure stops. The guides' all-locales/same-PR requirements are controller responsibilities, not missing permission to edit other paths in this call.`,
+      ...(research.tableContext
+        ? [
+            "External evidence verifies ONLY the named product functionality in the original table row. Preserve the full historical introduction, header, subject and feature text in Japanese (formatting only); add the new reference outside those protected parts. Every translation must preserve the historical record and unknown-current-deployment meaning. Never convert product functionality to a claim that this site currently uses/offers it.",
+          ]
+        : []),
       SEO_WRITING_GUIDE,
       "Use only existing article facts. Improve title, description, introduction, headings and body for the reader's search intent. Distinguish measurements, experience, proposals and unknowns. Reason: " +
         reason,

@@ -10,7 +10,9 @@ export const RESEARCH_TOOLS = 3;
 export function responsesUpperCost(
   request: Record<string, unknown>,
   now = Date.now(),
+  recovery = 1,
 ) {
+  if (![1, 2].includes(recovery)) throw new Error("seo_research_bound");
   if (
     now < Date.parse("2026-10-20T00:00:00Z") ||
     now >= RATE_VALID_UNTIL ||
@@ -31,7 +33,9 @@ export function responsesUpperCost(
     const contextSize = (request.tools as any)?.[0]?.search_context_size;
     if (
       !["low", "high"].includes(contextSize) ||
-      (contextSize === "high" && request.max_tool_calls !== 1) ||
+      (contextSize === "high" &&
+        request.max_tool_calls !== 1 &&
+        !(recovery === 2 && request.max_tool_calls === 2)) ||
       JSON.stringify(request.tools) !==
         JSON.stringify([
           {
@@ -40,7 +44,10 @@ export function responsesUpperCost(
             external_web_access: true,
           },
         ]) ||
-      ![1, RESEARCH_TOOLS].includes(request.max_tool_calls as number) ||
+      !(recovery === 2 ? [1, 2] : [1, RESEARCH_TOOLS]).includes(
+        request.max_tool_calls as number,
+      ) ||
+      (recovery === 2 && bytes > 8000) ||
       request.tool_choice !== "required" ||
       bytes + 8192 > 128_000
     )
@@ -63,6 +70,7 @@ export async function seoResponse(
   args: {
     runId: string;
     budgetVersion?: number;
+    recovery?: number;
     callId: string;
     articleKey: string;
     deadline: number;
@@ -83,8 +91,9 @@ export async function seoResponse(
         (args.request.tools ? "research" : "review"),
       args.request,
       args.budgetVersion,
+      args.recovery,
     );
-    const amount = responsesUpperCost(args.request);
+    const amount = responsesUpperCost(args.request, Date.now(), args.recovery);
     // Runtime binding only; no key is read by the development agent or runner.
     const key = (await env.OPENAI_API_KEY_STORE?.get())?.trim();
     if (!key) throw new Error("seo_research_credentials");

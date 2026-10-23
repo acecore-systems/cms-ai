@@ -9,10 +9,11 @@ export function assertStageInput(
   stage: keyof typeof STAGE_INPUT_BYTES,
   request: unknown,
   version = 1,
+  recovery = 1,
 ) {
   if (
     new TextEncoder().encode(JSON.stringify(request)).length >
-    stageBudget(version).limits[stage]
+    stageBudget(version, recovery).limits[stage]
   )
     throw new Error("seo_stage_input_budget");
 }
@@ -96,7 +97,25 @@ export const CURRENT_SPLIT_RUN_MICROS =
   525000 +
   9 * (8192 + 12000 * 2) +
   Math.ceil((CURRENT_LIMITS.review + 8192) * 0.3 + 6000);
-export function stageBudget(version = 1) {
+// Two ordered opens in one Responses request, no extra API call. The 8KB
+// research cap funds the additional model pass without reducing any locale.
+export const RECOVERY_RUN_MICROS =
+  Math.ceil((CURRENT_LIMITS.plan + 8192) * 0.3 + 6000) +
+  Math.ceil((128000 + 8000 + 8192) * 2 * 0.3 + 10000 + 6000) +
+  Math.ceil((128000 + 8000 + 8192) * 3 * 0.3 + 20000 + 6000) +
+  525000 +
+  9 * (8192 + 12000 * 2) +
+  Math.ceil((CURRENT_LIMITS.review + 8192) * 0.3 + 6000);
+export function stageBudget(version = 1, recovery = 1) {
+  if (![1, 2].includes(recovery) || (recovery === 2 && version !== 2))
+    throw new Error("seo_budget_version");
+  if (recovery === 2)
+    return {
+      limits: { ...CURRENT_LIMITS, research: 8000 },
+      pool: 525000,
+      maximum: RECOVERY_RUN_MICROS,
+      runMicros: 1250000,
+    };
   if (version === 1)
     return {
       limits: STAGE_INPUT_BYTES,

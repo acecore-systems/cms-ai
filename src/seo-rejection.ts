@@ -24,7 +24,7 @@ export async function prepareRejection(
 ) {
   if (context.contractVersion !== 2) return fail();
   const scope =
-    context.discoveryPolicy === 4
+    (context.discoveryPolicy ?? 2) >= 4
       ? externalScope(context.siteId!, {
           path: context.articleKey.slice(context.articleKey.indexOf(":") + 1),
           content: source,
@@ -82,13 +82,14 @@ export async function prepareRejection(
           source,
           context.sourceSha256,
           2,
+          context.recovery,
         );
         focusedInput(source, context.sourceSha256, plan);
         parsed = plan;
       } else if (row.phase === "discovery" && plan) {
         const savedDiscovery = await read(env, key(context.jobId, row.phase));
         if (
-          ![1, 2, 3, 4].includes(savedDiscovery.value.version) ||
+          ![1, 2, 3, 4, 5].includes(savedDiscovery.value.version) ||
           ((context.discoveryPolicy ?? 2) >= 3
             ? savedDiscovery.value.version !== context.discoveryPolicy
             : savedDiscovery.value.version >= 3)
@@ -356,9 +357,15 @@ export async function finalizeRejection(
           contractVersion: 2,
           retrievalVersion: job.retrieval_contract,
           researchContext: job.research_context,
+          recovery: job.research_recovery,
           referencePolicy: job.reference_policy,
           urlInstructions: job.url_instructions,
-          discoveryPolicy: job.external_sources ? 4 : job.discovery_policy,
+          discoveryPolicy:
+            job.research_recovery === 2
+              ? 5
+              : job.external_sources
+                ? 4
+                : job.discovery_policy,
           ...(job.external_sources ? { siteId: job.site_id } : {}),
         },
         canonical.content,
