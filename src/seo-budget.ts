@@ -11,7 +11,7 @@ export const SEO_BUDGET = {
 export function monthBudgetMicros(monthJst: string): number {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(monthJst))
     throw new Error("seo_invalid_budget_month");
-  return monthJst === "2026-10" ? 11_000_000 : SEO_BUDGET.monthMicros;
+  return monthJst === "2026-10" ? 11_140_000 : SEO_BUDGET.monthMicros;
 }
 // Conservative rates above standard long-context rates verified 2026-10-19.
 // Text only; no cache writes, tools, images, priority tier or model fallback.

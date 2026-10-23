@@ -120,6 +120,7 @@ beforeEach(async () => {
     "0025_seo_review_output.sql",
     "0026_seo_metadata_preservation.sql",
     "0027_seo_october_budget_extension.sql",
+    "0029_seo_october_budget_1114.sql",
     "0028_seo_code_token_repair.sql",
   ])
     sql.exec(
@@ -540,13 +541,13 @@ describe("SEO fresh search evidence and retained budget", () => {
           context.deadline,
         );
       else
-        for (let i = 2; i < 13; i++)
+        for (let i = 2; i < 14; i++)
           await budget.reserve(
             id(i),
             id(i + 80),
             "other",
             "a".repeat(64),
-            1000000,
+            i === 13 ? 140000 : 1000000,
             now,
             context.deadline,
           );
