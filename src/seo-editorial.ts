@@ -71,6 +71,7 @@ type Run = {
 };
 type EditorialJob = {
   model_version: 1 | 2;
+  plan_instructions: 1 | 2;
   id: string;
   run_id: string;
   site_id: string;
@@ -118,7 +119,7 @@ const runRow = (env: AppEnv, runId: string) =>
     .first<Run>();
 const jobRow = (env: AppEnv, jobId: string) =>
   env.CMS_AI_DB.prepare(
-    "SELECT j.*,COALESCE(m.version,1) AS model_version FROM seo_editorial_jobs j LEFT JOIN seo_job_models m ON m.job_id=j.id WHERE j.id=?",
+    "SELECT j.*,COALESCE(m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions FROM seo_editorial_jobs j LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id WHERE j.id=?",
   )
     .bind(jobId)
     .first<EditorialJob>();
@@ -355,6 +356,13 @@ async function advance(env: AppEnv, runId: string) {
     }
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
+      ...(researchEnabled(env, runId)
+        ? [
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_plan_contracts(job_id,version) SELECT ?,2 WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+            ).bind(jobId, runId, run.candidate_index),
+          ]
+        : []),
       ...(env.SEO_AI_MODEL === SEO_DEEPSEEK
         ? [
             env.CMS_AI_DB.prepare(
@@ -958,6 +966,7 @@ async function claimJob(
           }
         : {}),
       researchContract: 2,
+      ...(job.plan_instructions === 2 ? { planInstructions: 2 } : {}),
       ...(job.research_recovery === 2 ? { recovery: 2 } : {}),
       ...(job.reference_policy === 2 ? { referencePolicy: 2 } : {}),
       ...(job.url_instructions === 2 ? { urlInstructions: 2 } : {}),
@@ -1080,6 +1089,7 @@ async function claimJob(
 function checkContext(job: EditorialJob, run: Run): CheckContext {
   return {
     modelVersion: job.model_version,
+    planInstructions: job.plan_instructions,
     jobId: job.id,
     runId: run.run_id,
     budgetRunId: run.budget_run_id,
@@ -1195,6 +1205,7 @@ async function propose(
     if (
       !saved ||
       saved.retrievalContract !== 2 ||
+      (saved.planInstructions ?? 1) !== job.plan_instructions ||
       (saved.referencePolicy ?? 1) !== job.reference_policy ||
       (saved.recovery ?? 1) !== job.research_recovery ||
       (saved.urlInstructions ?? 1) !== job.url_instructions ||

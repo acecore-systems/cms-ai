@@ -91,6 +91,7 @@ beforeEach(async () => {
     "0028_seo_code_token_repair.sql",
     "0031_seo_fallback.sql",
     "0032_seo_text_models.sql",
+    "0033_seo_plan_contracts.sql",
   ])
     sql.exec(
       readFileSync(
@@ -2632,6 +2633,7 @@ describe("new DeepSeek job profile", () => {
       expect(_model).toBe(model);
       expect(payload.store).toBe(false);
       expect(payload.reasoning_effort).toBe("high");
+      expect(payload.messages[0].content).toContain('verdict="ready"');
       expect(payload.input).toBeUndefined();
       expect(
         sql.prepare("SELECT status FROM seo_budget_calls").get()!.status,
@@ -2647,6 +2649,15 @@ describe("new DeepSeek job profile", () => {
       .prepare("SELECT * FROM seo_job_models WHERE job_id=?")
       .get(jobId)!;
     expect(pin.text_model).toBe(model);
+    expect(
+      sql
+        .prepare("SELECT version FROM seo_plan_contracts WHERE job_id=?")
+        .get(jobId)!.version,
+    ).toBe(2);
+    const preflight = JSON.parse(
+      objects.get("seo-editorial/" + jobId + "/eligibility-preflight.json")!,
+    );
+    expect(preflight.planInstructions).toBe(2);
     const offer = await request(jobId, "research", {});
     expect(offer.status).toBe("research_insufficient");
     (env.SEO_COORDINATOR as any).rejectResearch = async () => ({
