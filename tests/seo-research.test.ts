@@ -115,6 +115,7 @@ beforeEach(async () => {
     "0020_seo_reference_policy.sql",
     "0021_seo_url_instructions.sql",
     "0022_seo_research_recovery.sql",
+    "0023_seo_discovery_instructions.sql",
   ])
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),
@@ -1181,89 +1182,103 @@ it("binds split discovery and retrieval replay to the immutable URL instruction 
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
-it("new recovery uses three API reservations, ordered fallback and immutable replay without resending", async () => {
-  sql.prepare("DELETE FROM seo_editorial_jobs WHERE id=?").run(context.jobId);
-  sql
-    .prepare(
-      "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,reference_policy,url_instructions,research_recovery) VALUES(?,?,?,0,2,2,2,2,2,2,2)",
-    )
-    .run(context.jobId, context.runId, "homepage-cherry");
-  Object.assign(context, {
-    contractVersion: 2,
-    retrievalVersion: 2,
-    budgetVersion: 2,
-    referencePolicy: 2,
-    urlInstructions: 2,
-    recovery: 2,
-    discoveryPolicy: 5,
-    siteId: "homepage-cherry",
-    researchContext: "high",
-  });
-  const fallback = "https://docs.example.org/alternative";
-  fetchMock.mockImplementation(async (_url, options) => {
-    const request = JSON.parse(options.body),
-      input = JSON.parse(request.input);
-    const result: any = provider();
-    if (input.claims) {
-      const plan: any = plannerProvider();
-      const value = JSON.parse(plan.output[0].content[0].text);
-      value.targetQuote = claim;
-      plan.output[0].content[0].text = JSON.stringify(value);
-      return Response.json(plan);
-    }
-    if (!input.discovery) {
-      result.output = result.output.filter(
-        (x: any) => x.type !== "web_search_call" || x.action.type === "search",
-      );
-      result.output[0].action.sources = [url, fallback].map((url) => ({
-        type: "url",
-        url,
-      }));
-      result.output.at(-1).content[0].text = JSON.stringify({
-        verdict: "selected",
-        selectedUrl: url,
-        fallbackUrl: fallback,
-        reason: "Synthetic test, not live evidence",
-      });
-    } else {
-      expect(request.max_tool_calls).toBe(2);
-      expect(request.tools[0].search_context_size).toBe("high");
-      result.output = result.output.filter(
-        (x: any) =>
-          x.type !== "web_search_call" || x.action.type === "open_page",
-      );
-      result.output.splice(1, 0, {
-        type: "web_search_call",
-        status: "completed",
-        action: { type: "open_page", url: fallback },
-      });
-      const part = result.output.at(-1).content[0];
-      const value = JSON.parse(
-        part.text.split("```json\n")[1].split("\n```")[0],
-      );
-      value.sources[0].url = fallback;
-      value.retrieval = [
-        { url, outcome: "unavailable" },
-        { url: fallback, outcome: "retrieved" },
-      ];
-      part.text = researchText(value);
-      part.annotations[0].url = fallback;
-    }
-    return Response.json(result);
-  });
-  const first = await research();
-  expect(first.sources[0].url).toBe(fallback);
-  const ledger = sql
-    .prepare("SELECT * FROM seo_budget_calls ORDER BY id")
-    .all();
-  expect(ledger).toHaveLength(3);
-  expect(fetchMock).toHaveBeenCalledTimes(3);
-  expect(await research()).toEqual(first);
-  expect(fetchMock).toHaveBeenCalledTimes(3);
-  expect(
-    sql.prepare("SELECT * FROM seo_budget_calls ORDER BY id").all(),
-  ).toEqual(ledger);
-  context.recovery = 1;
-  await expect(research()).rejects.toThrow("seo_check_conflict");
-  expect(fetchMock).toHaveBeenCalledTimes(3);
-});
+it.each([1, 2] as const)(
+  "recovery uses three API reservations and immutable discovery instruction %i replay",
+  async (discoveryInstructions) => {
+    sql.prepare("DELETE FROM seo_editorial_jobs WHERE id=?").run(context.jobId);
+    sql
+      .prepare(
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,reference_policy,url_instructions,research_recovery) VALUES(?,?,?,0,2,2,2,2,2,2,2)",
+      )
+      .run(context.jobId, context.runId, "homepage-cherry");
+    Object.assign(context, {
+      contractVersion: 2,
+      retrievalVersion: 2,
+      budgetVersion: 2,
+      referencePolicy: 2,
+      urlInstructions: 2,
+      recovery: 2,
+      discoveryInstructions,
+      discoveryPolicy: 5,
+      siteId: "homepage-cherry",
+      researchContext: "high",
+    });
+    const fallback = "https://docs.example.org/alternative";
+    fetchMock.mockImplementation(async (_url, options) => {
+      const request = JSON.parse(options.body),
+        input = JSON.parse(request.input);
+      const result: any = provider();
+      if (input.claims) {
+        const plan: any = plannerProvider();
+        const value = JSON.parse(plan.output[0].content[0].text);
+        value.targetQuote = claim;
+        plan.output[0].content[0].text = JSON.stringify(value);
+        return Response.json(plan);
+      }
+      if (!input.discovery) {
+        expect(
+          request.instructions.includes(
+            "This stage selects candidates for later retrieval",
+          ),
+        ).toBe(discoveryInstructions === 2);
+        result.output = result.output.filter(
+          (x: any) =>
+            x.type !== "web_search_call" || x.action.type === "search",
+        );
+        result.output[0].action.sources = [url, fallback].map((url) => ({
+          type: "url",
+          url,
+        }));
+        result.output.at(-1).content[0].text = JSON.stringify({
+          verdict: "selected",
+          selectedUrl: url,
+          fallbackUrl: fallback,
+          reason: "Synthetic test, not live evidence",
+        });
+      } else {
+        expect(request.max_tool_calls).toBe(2);
+        expect(request.tools[0].search_context_size).toBe("high");
+        result.output = result.output.filter(
+          (x: any) =>
+            x.type !== "web_search_call" || x.action.type === "open_page",
+        );
+        result.output.splice(1, 0, {
+          type: "web_search_call",
+          status: "completed",
+          action: { type: "open_page", url: fallback },
+        });
+        const part = result.output.at(-1).content[0];
+        const value = JSON.parse(
+          part.text.split("```json\n")[1].split("\n```")[0],
+        );
+        value.sources[0].url = fallback;
+        value.retrieval = [
+          { url, outcome: "unavailable" },
+          { url: fallback, outcome: "retrieved" },
+        ];
+        part.text = researchText(value);
+        part.annotations[0].url = fallback;
+      }
+      return Response.json(result);
+    });
+    const first = await research();
+    expect(first.sources[0].url).toBe(fallback);
+    const ledger = sql
+      .prepare("SELECT * FROM seo_budget_calls ORDER BY id")
+      .all();
+    expect(ledger).toHaveLength(3);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(await research()).toEqual(first);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(
+      sql.prepare("SELECT * FROM seo_budget_calls ORDER BY id").all(),
+    ).toEqual(ledger);
+    context.discoveryInstructions = discoveryInstructions === 2 ? 1 : 2;
+    await expect(research()).rejects.toThrow("seo_check_conflict");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    context.discoveryInstructions = discoveryInstructions;
+    context.recovery = 1;
+    await expect(research()).rejects.toThrow("seo_check_conflict");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  },
+);

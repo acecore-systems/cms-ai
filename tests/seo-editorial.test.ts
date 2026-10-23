@@ -71,6 +71,7 @@ beforeEach(async () => {
     "0020_seo_reference_policy.sql",
     "0021_seo_url_instructions.sql",
     "0022_seo_research_recovery.sql",
+    "0023_seo_discovery_instructions.sql",
   ])
     sql.exec(
       readFileSync(
@@ -109,7 +110,7 @@ beforeEach(async () => {
           if (legacyReview)
             for (const item of statements) {
               if (item.query.startsWith("INSERT INTO seo_editorial_jobs"))
-                item.args[item.args.length - 6] = 0;
+                item.args[item.args.length - 7] = 0;
             }
           const values = statements.map((item) => ({
             meta: {
@@ -239,6 +240,13 @@ async function request(jobId: string, operation = "", body?: unknown) {
 async function inspecting() {
   const result = await start();
   const jobId = result.jobId!;
+  expect(
+    sql
+      .prepare(
+        "SELECT discovery_instructions FROM seo_editorial_jobs WHERE id=?",
+      )
+      .get(jobId)!.discovery_instructions,
+  ).toBe(2);
   await request(jobId);
   return jobId;
 }

@@ -87,6 +87,7 @@ type EditorialJob = {
   url_instructions: 1 | 2;
   research_context: "low" | "high";
   research_recovery: 1 | 2;
+  discovery_instructions: 1 | 2;
   allocation_version: 1 | 2;
   variable_review: 0 | 1;
   input_allocation_sha256: string | null;
@@ -295,7 +296,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery,discovery_instructions) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -309,6 +310,7 @@ async function advance(env: AppEnv, runId: string) {
         "high",
         2,
         1,
+        2,
         2,
         2,
         2,
@@ -841,6 +843,7 @@ async function claimJob(
       ...(job.research_recovery === 2 ? { recovery: 2 } : {}),
       ...(job.reference_policy === 2 ? { referencePolicy: 2 } : {}),
       ...(job.url_instructions === 2 ? { urlInstructions: 2 } : {}),
+      ...(job.discovery_instructions === 2 ? { discoveryInstructions: 2 } : {}),
       ...(job.allocation_version === 2 ? { allocationVersion: 2 } : {}),
       ...(job.generation_syntax === 2 ? { generationSyntax: 2 } : {}),
       ...(job.discovery_policy === 3
@@ -949,6 +952,7 @@ function checkContext(job: EditorialJob, run: Run): CheckContext {
     recovery: job.research_recovery,
     referencePolicy: job.reference_policy,
     urlInstructions: job.url_instructions,
+    discoveryInstructions: job.discovery_instructions,
     discoveryPolicy:
       job.research_recovery === 2
         ? 5
@@ -1051,6 +1055,7 @@ async function propose(
       (saved.referencePolicy ?? 1) !== job.reference_policy ||
       (saved.recovery ?? 1) !== job.research_recovery ||
       (saved.urlInstructions ?? 1) !== job.url_instructions ||
+      (saved.discoveryInstructions ?? 1) !== job.discovery_instructions ||
       (saved.budgetVersion ?? 1) !== job.budget_version ||
       (saved.allocationVersion ?? 1) !== job.allocation_version ||
       (saved.discoveryPolicy ?? 2) !==

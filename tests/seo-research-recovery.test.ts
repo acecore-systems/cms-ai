@@ -395,49 +395,52 @@ it.each([
     parseResearch(result, source.content, f.hash, now, f.plan, f.discovery),
   ).toThrow();
 });
-it("proves every serialized request and all nine full locale caps fit 1249533 microUSD in 13 API calls", async () => {
-  const f = await fixture(),
-    caps = stageBudget(2, 2);
-  const fill = (r: any, n: number) => {
-    r.padding = "";
-    r.padding = "x".repeat(n - Buffer.byteLength(JSON.stringify(r)));
-    expect(Buffer.byteLength(JSON.stringify(r))).toBe(n);
-    return r;
-  };
-  const requests = [
-    buildPlanRequest(source.content, 2, 5, f.scope, 2),
-    buildDiscoveryRequest(f.focused, 5, f.scope, 2, 2),
-    buildRetrievalRequest(f.focused, f.discovery, "high", 2),
-    responseRequest("review", {}, {}),
-  ];
-  const stages = ["plan", "research", "research", "review"] as const;
-  requests.forEach((r, i) => assertStageInput(stages[i], r, 2, 2));
-  const padded = requests.map((r, i) => fill(r, caps.limits[stages[i]]));
-  const allocations = allocateGenerationInputs(
-    Array.from({ length: 9 }, (_, i) => ({ path: `${i}.md`, bytes: 40000 })),
-    2,
-    2,
-  );
-  const generation = allocations.map((a) =>
-    fill(
-      { service_tier: "default", max_completion_tokens: 12000, messages: [] },
-      a.maxBytes,
-    ),
-  );
-  const total =
-    padded.reduce((n, r) => n + responsesUpperCost(r, now, 2), 0) +
-    generation.reduce((n, r) => n + upperCost("gpt-6-luna", r, now), 0);
-  expect(total).toBe(caps.maximum);
-  expect(total).toBe(1249533);
-  expect(total).toBeLessThanOrEqual(1250000);
-  expect(padded.length + generation.length).toBe(13);
-  expect(allocations.reduce((n, a) => n + a.maxBytes, 0)).toBe(525000);
-  expect(() => responsesUpperCost(padded[2], now)).toThrow();
-  expect(() =>
-    assertStageInput("research", { text: "x".repeat(8000) }, 2, 2),
-  ).toThrow();
-  expect(stageBudget(2).maximum).toBe(1205876);
-});
+it.each([1, 2])(
+  "discovery instruction %i: all nine full locale caps fit 1249533 microUSD in 13 API calls",
+  async (instruction) => {
+    const f = await fixture(),
+      caps = stageBudget(2, 2);
+    const fill = (r: any, n: number) => {
+      r.padding = "";
+      r.padding = "x".repeat(n - Buffer.byteLength(JSON.stringify(r)));
+      expect(Buffer.byteLength(JSON.stringify(r))).toBe(n);
+      return r;
+    };
+    const requests = [
+      buildPlanRequest(source.content, 2, 5, f.scope, 2),
+      buildDiscoveryRequest(f.focused, 5, f.scope, 2, 2, instruction),
+      buildRetrievalRequest(f.focused, f.discovery, "high", 2),
+      responseRequest("review", {}, {}),
+    ];
+    const stages = ["plan", "research", "research", "review"] as const;
+    requests.forEach((r, i) => assertStageInput(stages[i], r, 2, 2));
+    const padded = requests.map((r, i) => fill(r, caps.limits[stages[i]]));
+    const allocations = allocateGenerationInputs(
+      Array.from({ length: 9 }, (_, i) => ({ path: `${i}.md`, bytes: 40000 })),
+      2,
+      2,
+    );
+    const generation = allocations.map((a) =>
+      fill(
+        { service_tier: "default", max_completion_tokens: 12000, messages: [] },
+        a.maxBytes,
+      ),
+    );
+    const total =
+      padded.reduce((n, r) => n + responsesUpperCost(r, now, 2), 0) +
+      generation.reduce((n, r) => n + upperCost("gpt-6-luna", r, now), 0);
+    expect(total).toBe(caps.maximum);
+    expect(total).toBe(1249533);
+    expect(total).toBeLessThanOrEqual(1250000);
+    expect(padded.length + generation.length).toBe(13);
+    expect(allocations.reduce((n, a) => n + a.maxBytes, 0)).toBe(525000);
+    expect(() => responsesUpperCost(padded[2], now)).toThrow();
+    expect(() =>
+      assertStageInput("research", { text: "x".repeat(8000) }, 2, 2),
+    ).toThrow();
+    expect(stageBudget(2).maximum).toBe(1205876);
+  },
+);
 it("migration preserves every legacy row/column and prior locks/budget triggers with immutable default 1", () => {
   const db = new DatabaseSync(":memory:");
   const migrations = new URL("../migrations/", import.meta.url);
