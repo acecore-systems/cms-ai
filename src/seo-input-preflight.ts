@@ -18,6 +18,7 @@ export type InputPreflightOptions = {
   budget_version: number;
   allocation_version: 1 | 2;
   code_preservation?: 1 | 2;
+  review_output?: 1 | 2;
 };
 // Current new-job contracts. No provider calls, storage writes or budget reservations.
 export function currentInputPreflightOptions(
@@ -33,6 +34,7 @@ export function currentInputPreflightOptions(
     budget_version: 2,
     allocation_version: 2,
     code_preservation: 2,
+    review_output: 2,
   };
 }
 export function inputPreflight(
@@ -52,14 +54,20 @@ export function inputPreflight(
     new TextEncoder().encode(JSON.stringify(request)).length;
   const planBytes = planInputBytes(article.source, options);
   const reviewBytes = bytes(
-    buildReviewRequest(article, files, baseline, {
-      version: 1,
-      checkedAt: "",
-      sourceSha256: sourceHash,
-      responseId: "not_acquired_size_estimate_only",
-      queries: [],
-      sources: [],
-    }),
+    buildReviewRequest(
+      article,
+      files,
+      baseline,
+      {
+        version: 1,
+        checkedAt: "",
+        sourceSha256: sourceHash,
+        responseId: "not_acquired_size_estimate_only",
+        queries: [],
+        sources: [],
+      },
+      options.review_output,
+    ),
   );
   // Unknown future research/JA growth cannot be forecast. This placeholder is
   // explicitly unacquired and only rejects already oversized known inputs.
@@ -140,7 +148,8 @@ export function assessInputSizes(
     ...(planBytes > stageBudget(options.budget_version).limits.plan
       ? ["plan_input_exceeded"]
       : []),
-    ...(reviewBytes > stageBudget(options.budget_version).limits.review
+    ...(reviewBytes >
+    stageBudget(options.budget_version, 1, options.review_output).limits.review
       ? ["baseline_review_input_exceeded"]
       : []),
     ...((

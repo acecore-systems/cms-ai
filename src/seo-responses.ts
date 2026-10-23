@@ -11,7 +11,15 @@ export function responsesUpperCost(
   request: Record<string, unknown>,
   now = Date.now(),
   recovery = 1,
+  reviewOutput = 1,
 ) {
+  if (![1, 2].includes(reviewOutput)) throw new Error("seo_research_bound");
+  if (
+    reviewOutput === 2 &&
+    (request.tools !== undefined ||
+      (request.reasoning as any)?.effort !== "high")
+  )
+    throw new Error("seo_research_bound");
   if (![1, 2].includes(recovery)) throw new Error("seo_research_bound");
   if (
     now < Date.parse("2026-10-20T00:00:00Z") ||
@@ -24,10 +32,12 @@ export function responsesUpperCost(
     request.conversation ||
     request.prompt_cache_options ||
     request.truncation !== "disabled" ||
-    request.max_output_tokens !== 6000
+    request.max_output_tokens !== (reviewOutput === 2 ? 24000 : 6000)
   )
     throw new Error("seo_research_rate");
   const bytes = new TextEncoder().encode(JSON.stringify(request)).length;
+  if (reviewOutput === 2 && bytes > 440000)
+    throw new Error("seo_research_size");
   if (bytes > 768_000) throw new Error("seo_research_size");
   if (request.tools !== undefined) {
     const contextSize = (request.tools as any)?.[0]?.search_context_size;
@@ -62,7 +72,7 @@ export function responsesUpperCost(
   }
   if (request.max_tool_calls !== undefined || request.tool_choice !== undefined)
     throw new Error("seo_research_bound");
-  return Math.ceil((bytes + 8192) * 0.3 + 6000);
+  return Math.ceil((bytes + 8192) * 0.3 + (reviewOutput === 2 ? 24000 : 6000));
 }
 
 export async function seoResponse(
@@ -71,6 +81,7 @@ export async function seoResponse(
     runId: string;
     budgetVersion?: number;
     recovery?: number;
+    reviewOutput?: number;
     callId: string;
     articleKey: string;
     deadline: number;
@@ -86,14 +97,22 @@ export async function seoResponse(
   const budget = new SeoBudget(env.CMS_AI_DB);
   let reserved = false;
   try {
+    if ((args.reviewOutput ?? 1) === 2 && args.phase !== "review")
+      throw new Error("seo_research_bound");
     assertStageInput(
       (args.phase === "discovery" ? "research" : args.phase) ||
         (args.request.tools ? "research" : "review"),
       args.request,
       args.budgetVersion,
       args.recovery,
+      args.reviewOutput,
     );
-    const amount = responsesUpperCost(args.request, Date.now(), args.recovery);
+    const amount = responsesUpperCost(
+      args.request,
+      Date.now(),
+      args.recovery,
+      args.reviewOutput,
+    );
     // Runtime binding only; no key is read by the development agent or runner.
     const key = (await env.OPENAI_API_KEY_STORE?.get())?.trim();
     if (!key) throw new Error("seo_research_credentials");
@@ -144,7 +163,7 @@ export async function seoResponse(
       result.usage.input_tokens < 0 ||
       !Number.isSafeInteger(result.usage?.output_tokens) ||
       result.usage.output_tokens < 0 ||
-      result.usage.output_tokens > 6000 ||
+      result.usage.output_tokens > (args.reviewOutput === 2 ? 24000 : 6000) ||
       result.usage.input_tokens * 0.3 +
         result.usage.output_tokens +
         (args.request.tools

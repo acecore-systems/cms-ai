@@ -117,6 +117,7 @@ beforeEach(async () => {
     "0022_seo_research_recovery.sql",
     "0023_seo_discovery_instructions.sql",
     "0024_seo_code_preservation.sql",
+    "0025_seo_review_output.sql",
   ])
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),
@@ -674,26 +675,36 @@ describe("AI review gate", () => {
     );
     return { identity, file, pass };
   }
-  it("binds review to final bytes and only releases the publish gate for that hash", async () => {
-    const { identity, file } = await setup();
-    const receipt = await reviewArticle(
-      env,
-      context,
-      identity,
-      [source],
-      [file],
-      [file],
-    );
-    await expect(
-      assertReview(env, context, receipt.filesSha256),
-    ).resolves.toBeUndefined();
-    await expect(assertReview(env, context, "f".repeat(64))).rejects.toThrow();
-    expect(
-      await reviewArticle(env, context, identity, [source], [file], [file]),
-    ).toEqual(receipt);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(budgetCount()).toBe(3);
-  });
+  it.each([undefined, 1, 2] as const)(
+    "binds review v%s to final bytes and only releases the publish gate for that hash",
+    async (reviewOutput) => {
+      context.reviewOutput = reviewOutput;
+      if (reviewOutput === 2) context.budgetVersion = 2;
+      const { identity, file } = await setup();
+      const receipt = await reviewArticle(
+        env,
+        context,
+        identity,
+        [source],
+        [file],
+        [file],
+      );
+      expect(
+        JSON.parse(fetchMock.mock.calls.at(-1)![1].body).max_output_tokens,
+      ).toBe(reviewOutput === 2 ? 24000 : 6000);
+      await expect(
+        assertReview(env, context, receipt.filesSha256),
+      ).resolves.toBeUndefined();
+      await expect(
+        assertReview(env, context, "f".repeat(64)),
+      ).rejects.toThrow();
+      expect(
+        await reviewArticle(env, context, identity, [source], [file], [file]),
+      ).toEqual(receipt);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(budgetCount()).toBe(3);
+    },
+  );
   it.each([
     "否定条件が翻訳で失われている",
     "成功応答だけでなくエラー応答を確認する手順と設定漏れ発見の目的が欠落しています。",
@@ -1283,3 +1294,98 @@ it.each([1, 2] as const)(
     expect(fetchMock).toHaveBeenCalledTimes(3);
   },
 );
+
+it.each([
+  [1, 6000, "completed", true],
+  [1, 6001, "completed", false],
+  [2, 6001, "completed", true],
+  [2, 24000, "completed", true],
+  [2, 24001, "completed", false],
+  [2, 6000, "incomplete", false],
+  [2, 24000, "incomplete", false],
+])(
+  "review output contract %i usage %i status %s acceptance %s",
+  async (version, output, status, accepted) => {
+    const { seoResponse } = await import("../src/seo-responses.ts");
+    const request = {
+      ...responseRequest("review", {}, {}),
+      max_output_tokens: version === 2 ? 24000 : 6000,
+    };
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status,
+          usage: { input_tokens: 100, output_tokens: output },
+          output: [],
+        }),
+      ),
+    );
+    const call = seoResponse(env, {
+      runId: context.budgetRunId,
+      callId: id(88),
+      articleKey: context.budgetArticleKey,
+      deadline: context.deadline,
+      budgetVersion: 2,
+      reviewOutput: version as number,
+      phase: "review",
+      request,
+    });
+    if (accepted) await expect(call).resolves.toBeDefined();
+    else await expect(call).rejects.toThrow("seo_research_call");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(budgetCount()).toBe(1);
+    expect(
+      sql.prepare("SELECT status FROM seo_budget_calls").get()!.status,
+    ).toBe(accepted ? "complete" : "unresolved");
+    expect(objects.has("seo-responses/" + id(88) + ".json")).toBe(true);
+  },
+);
+it.each(["plan", "discovery", "research"] as const)(
+  "does not permit expanded output in %s",
+  async (phase) => {
+    const { seoResponse } = await import("../src/seo-responses.ts");
+    await expect(
+      seoResponse(env, {
+        runId: context.budgetRunId,
+        callId: id(88),
+        articleKey: context.budgetArticleKey,
+        deadline: context.deadline,
+        budgetVersion: 2,
+        reviewOutput: 2,
+        phase,
+        request: { ...responseRequest("", {}, {}), max_output_tokens: 24000 },
+      }),
+    ).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(budgetCount()).toBe(0);
+  },
+);
+
+it("rejects total usage beyond the reserved review amount without refund", async () => {
+  const { seoResponse } = await import("../src/seo-responses.ts");
+  fetchMock.mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        status: "completed",
+        usage: { input_tokens: 1000000, output_tokens: 1 },
+        output: [],
+      }),
+    ),
+  );
+  await expect(
+    seoResponse(env, {
+      runId: context.budgetRunId,
+      callId: id(88),
+      articleKey: context.budgetArticleKey,
+      deadline: context.deadline,
+      budgetVersion: 2,
+      reviewOutput: 2,
+      phase: "review",
+      request: { ...responseRequest("", {}, {}), max_output_tokens: 24000 },
+    }),
+  ).rejects.toThrow();
+  expect(budgetCount()).toBe(1);
+  expect(sql.prepare("SELECT status FROM seo_budget_calls").get()!.status).toBe(
+    "unresolved",
+  );
+});

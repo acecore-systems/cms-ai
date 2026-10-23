@@ -10,10 +10,11 @@ export function assertStageInput(
   request: unknown,
   version = 1,
   recovery = 1,
+  reviewOutput = 1,
 ) {
   if (
     new TextEncoder().encode(JSON.stringify(request)).length >
-    stageBudget(version, recovery).limits[stage]
+    stageBudget(version, recovery, reviewOutput).limits[stage]
   )
     throw new Error("seo_stage_input_budget");
 }
@@ -106,7 +107,34 @@ export const RECOVERY_RUN_MICROS =
   525000 +
   9 * (8192 + 12000 * 2) +
   Math.ceil((CURRENT_LIMITS.review + 8192) * 0.3 + 6000);
-export function stageBudget(version = 1, recovery = 1) {
+export function stageBudget(
+  version = 1,
+  recovery = 1,
+  reviewOutput = 1,
+): {
+  limits: {
+    plan: number;
+    research: number;
+    review: number;
+    generation: number;
+  };
+  pool: number;
+  maximum: number;
+  runMicros: number;
+} {
+  if (![1, 2].includes(reviewOutput) || (reviewOutput === 2 && version !== 2))
+    throw new Error("seo_budget_version");
+  if (reviewOutput === 2) {
+    const legacy = stageBudget(version, recovery);
+    return {
+      ...legacy,
+      limits: { ...legacy.limits, review: 440000 },
+      maximum:
+        legacy.maximum -
+        Math.ceil((legacy.limits.review + 8192) * 0.3 + 6000) +
+        Math.ceil((440000 + 8192) * 0.3 + 24000),
+    };
+  }
   if (![1, 2].includes(recovery) || (recovery === 2 && version !== 2))
     throw new Error("seo_budget_version");
   if (recovery === 2)

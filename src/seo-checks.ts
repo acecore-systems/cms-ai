@@ -63,6 +63,7 @@ export type CheckContext = {
   contractVersion?: number;
   retrievalVersion?: number;
   budgetVersion?: number;
+  reviewOutput?: 1 | 2;
   discoveryPolicy?: 2 | 3 | 4 | 5;
   recovery?: 1 | 2;
   referencePolicy?: 1 | 2;
@@ -741,7 +742,9 @@ export function buildReviewRequest(
   originals: EditorialFile[],
   finalFiles: EditorialFile[],
   evidence: ResearchEvidence,
+  reviewOutput = 1,
 ) {
+  if (![1, 2].includes(reviewOutput)) throw new Error("seo_budget_version");
   const paths = [
     identity.source.path,
     ...identity.translations.map((t) => t.path),
@@ -764,7 +767,7 @@ export function buildReviewRequest(
       ...identity.translations,
     ],
   };
-  return responseRequest(
+  const request = responseRequest(
     SHARED_TEXT_INSTRUCTION +
       (evidence.tableContext
         ? "表の製品機能だけを外部確認した根拠であり、旧Wiki記録・現行導入不明の意味を全言語で保持する。導入済み・現行利用可能という断定への変更は必ずfail。"
@@ -776,6 +779,9 @@ export function buildReviewRequest(
     context,
     reviewSchema,
   );
+  return reviewOutput === 2
+    ? { ...request, max_output_tokens: 24000 }
+    : request;
 }
 
 export async function reviewArticle(
@@ -844,10 +850,13 @@ export async function reviewArticle(
       originals,
       finalFiles,
       evidence,
+      context.reviewOutput,
     );
     const response = await seoResponse(env, {
       runId: context.budgetRunId,
       budgetVersion: context.budgetVersion,
+      reviewOutput: context.reviewOutput,
+      phase: "review",
       callId,
       articleKey: context.budgetArticleKey,
       deadline: context.deadline,
