@@ -1,5 +1,5 @@
 import { validateSourceFiles } from "./inference.ts";
-import { prepareCodePreservation } from "./seo-code-preservation.ts";
+import { prepareEditorialTransport } from "./seo-metadata-preservation.ts";
 import type { SiteConfig } from "./sites.ts";
 import type { ArticleIdentity, EditorialFile } from "./seo-content.ts";
 import { buildPlanRequest, buildReviewRequest } from "./seo-checks.ts";
@@ -19,6 +19,7 @@ export type InputPreflightOptions = {
   allocation_version: 1 | 2;
   code_preservation?: 1 | 2;
   review_output?: 1 | 2;
+  metadata_preservation?: 1 | 2;
 };
 // Current new-job contracts. No provider calls, storage writes or budget reservations.
 export function currentInputPreflightOptions(
@@ -35,6 +36,7 @@ export function currentInputPreflightOptions(
     allocation_version: 2,
     code_preservation: 2,
     review_output: 2,
+    metadata_preservation: 2,
   };
 }
 export function inputPreflight(
@@ -96,20 +98,23 @@ export function inputPreflight(
       reason: reason,
       research: generationEstimateEvidence,
     });
-    const transport = prepareCodePreservation(
+    const transport = prepareEditorialTransport(
       knownFiles,
       article.source.path,
       path,
       instruction,
       options.code_preservation,
       site.projectRoot,
+      options.metadata_preservation,
+      article.target.spec.editableFields,
+      options.generation_syntax,
     );
     const request = buildSeoGenerationRequest(
       site,
       article.source.path,
       [path],
       transport.instruction,
-      options.code_preservation === 2
+      options.code_preservation === 2 || options.metadata_preservation === 2
         ? validateSourceFiles(site, transport.files)
         : transport.files,
     );

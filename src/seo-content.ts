@@ -190,7 +190,7 @@ function BufferlessBytes(text: string) {
 // Repair only an invalid mapping caused by one extra space before a copy field.
 // Each adjacent line must independently be a complete, existing string field;
 // block/flow values, nested structures, aliases and valid YAML are never repaired.
-function proposalMarkdown(
+export function proposalMarkdown(
   content: string,
   original: Record<string, unknown>,
   editable: Set<string>,
