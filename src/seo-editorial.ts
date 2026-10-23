@@ -87,6 +87,7 @@ type EditorialJob = {
   code_preservation: 1 | 2;
   review_output: 1 | 2;
   metadata_preservation: 1 | 2;
+  code_token_repair: 1 | 2;
   allocation_version: 1 | 2;
   variable_review: 0 | 1;
   input_allocation_sha256: string | null;
@@ -297,7 +298,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery,discovery_instructions,code_preservation,review_output,metadata_preservation) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery,discovery_instructions,code_preservation,review_output,metadata_preservation,code_token_repair) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -311,6 +312,7 @@ async function advance(env: AppEnv, runId: string) {
         "high",
         2,
         1,
+        2,
         2,
         2,
         2,
@@ -778,6 +780,7 @@ async function claimJob(
       ...(job.code_preservation === 2 ? { codePreservation: 2 } : {}),
       ...(job.review_output === 2 ? { reviewOutput: 2 } : {}),
       ...(job.metadata_preservation === 2 ? { metadataPreservation: 2 } : {}),
+      ...(job.code_token_repair === 2 ? { codeTokenRepair: 2 } : {}),
       ...(job.allocation_version === 2 ? { allocationVersion: 2 } : {}),
       ...(job.generation_syntax === 2 ? { generationSyntax: 2 } : {}),
       ...(job.discovery_policy === 3
@@ -1002,6 +1005,7 @@ async function propose(
       (saved.codePreservation ?? 1) !== job.code_preservation ||
       (saved.reviewOutput ?? 1) !== job.review_output ||
       (saved.metadataPreservation ?? 1) !== job.metadata_preservation ||
+      (saved.codeTokenRepair ?? 1) !== job.code_token_repair ||
       (saved.budgetVersion ?? 1) !== job.budget_version ||
       (saved.allocationVersion ?? 1) !== job.allocation_version ||
       (saved.discoveryPolicy ?? 2) !==
@@ -1042,6 +1046,7 @@ async function propose(
     job.metadata_preservation,
     article.target.spec.editableFields,
     job.generation_syntax,
+    job.code_token_repair,
   );
   const callId = "seo-" + crypto.randomUUID();
   const changed = await env.CMS_AI_DB.prepare(

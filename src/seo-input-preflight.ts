@@ -20,6 +20,7 @@ export type InputPreflightOptions = {
   code_preservation?: 1 | 2;
   review_output?: 1 | 2;
   metadata_preservation?: 1 | 2;
+  code_token_repair?: 1 | 2;
 };
 // Current new-job contracts. No provider calls, storage writes or budget reservations.
 export function currentInputPreflightOptions(
@@ -37,6 +38,7 @@ export function currentInputPreflightOptions(
     code_preservation: 2,
     review_output: 2,
     metadata_preservation: 2,
+    code_token_repair: 2,
   };
 }
 export function inputPreflight(
@@ -108,6 +110,7 @@ export function inputPreflight(
       options.metadata_preservation,
       article.target.spec.editableFields,
       options.generation_syntax,
+      options.code_token_repair,
     );
     const request = buildSeoGenerationRequest(
       site,

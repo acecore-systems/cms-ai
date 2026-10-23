@@ -120,6 +120,7 @@ beforeEach(async () => {
     "0025_seo_review_output.sql",
     "0026_seo_metadata_preservation.sql",
     "0027_seo_october_budget_extension.sql",
+    "0028_seo_code_token_repair.sql",
   ])
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),

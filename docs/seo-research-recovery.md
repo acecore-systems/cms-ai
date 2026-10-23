@@ -120,3 +120,13 @@ trial11はja/en受入後、zh-cn提案が `callout`・`insightGrid`・`processFi
 利用者の追加承認により0027は2026年10月JSTだけ月上限を10M→11M microUSDへ引き上げる。通常月7M、既存runの1M/1.25M上限、旧予約・失敗・記事lock・期限・台帳は保持する。SQL変更は予算triggerの10月値だけで、preflightのmonthBudgetMicrosも一致させる。10月26日1.25M確保、修正後の追加試行は1回のみ・成功時終了という運用制約は親担当が管理する。
 
 最大全工程1249533microUSD・13API・9言語・30分は不変。runner/SEO schema変更は不要。有料呼出し0、旧run再送なし。trial12用の全候補sizingは新metadata/code/review契約で用意した。0026/0027適用・merge/deploy・承認範囲内の実試行は親担当へ引き継ぐ。
+
+## 対象file番号だけが欠落したコードtoken（0028）
+
+trial12はja/en/zh-cn受入後、es提案の6個のコードtoken中5個が `CMS_SEO_CODE_V1_F1_Bn` から `CMS_SEO_CODE_V1_Bn` に変わり、旧transportが正常に拒否した。生コードの再生成ではなかった。0028は旧jobを `code_token_repair=1` に固定し、新jobだけ2にするimmutable列を追加する。
+
+新版で正規化するのは、root直下の独立HTMLコメントで `F数字_` 全体だけが欠落し、現在の対象fileにblock番号が一意に対応する場合だけ。block番号のゼロ埋め・部分省略・空白補完などは行わない。正規化後も全数・順序・重複・未知番号・明示された別file・生コード・隠れtokenを拒否し、復元後は対象原本コードの完全一致を要求する。request/promptは変更せず、metadata保持と既存品質guardを維持する。生の提案は省略token付きのまま保存し、受入stepは復元済み全文を保存する。旧runの解釈変更・再送はしない。
+
+保存された実拒否proposalを加工せず無課金で再生し、旧版拒否、新版で6コードブロック完全一致・不変metadata一致・既存guard通過を確認した。これは保存応答のローカル検証であり、新jobの実モデル成功や旧run成功への変更ではない。旧HEADとのpreflight24組＋生成入力216組は一致。全9段階の実builder入力は割当内、既知pool437701bytes、es51647/59748bytes。全579tests・型検査を確認した。
+
+月11M（2026年10月のみ）/通常7M、run1.25M、最大全工程1249533microUSD、13API、9言語、30分、10月26日1.25M確保を維持。有料API0回。追加1回の承認枠はtrial12で消費済み、次の実試行は再承認待ち。runner/SEO schema変更不要。親の方針に従いPR統合後に0028を適用し旧全列・triggerを読戻してから配備する。helperはコード準備のみで、本番操作は親担当。

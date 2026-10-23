@@ -40,8 +40,14 @@ export function prepareCodePreservation(
   instruction: string,
   version = 1,
   projectRoot = "",
+  tokenRepair = 1,
 ) {
-  if (![1, 2].includes(version)) return fail();
+  if (
+    ![1, 2].includes(version) ||
+    ![1, 2].includes(tokenRepair) ||
+    (tokenRepair === 2 && version !== 2)
+  )
+    return fail();
   if (version === 1)
     return { files, instruction, restore: (content: string) => content };
   if (
@@ -71,14 +77,33 @@ export function prepareCodePreservation(
   });
   const expected = records.filter((r) => r.path === targetPath);
   const restore = (content: string) => {
-    const { tree } = bodyTree(content);
+    const { tree, offset } = bodyTree(content);
+    const repairs: { start: number; end: number; token: string }[] = [];
     const found: string[] = [];
     const visit = (node: any, parent: any) => {
       if (node.type === "code") return fail(); // raw/recreated code is never a substitute
       if (node.type === "html" && node.value.includes(PREFIX)) {
-        if (parent !== tree || !expected.some((r) => r.token === node.value))
-          return fail();
-        found.push(node.value);
+        if (parent !== tree) return fail();
+        let token = node.value as string;
+        if (
+          tokenRepair === 2 &&
+          /^<!--CMS_SEO_CODE_V1_B(?:0|[1-9][0-9]*)-->$/.test(token)
+        ) {
+          // The only accepted abbreviation omits F<index>_ completely. Match
+          // exactly one block in this call's TARGET, never another file/context.
+          const candidates = expected.filter(
+            (r) => r.token.replace(/_F[0-9]+_B/, "_B") === token,
+          );
+          if (candidates.length !== 1) return fail();
+          token = candidates[0].token;
+          repairs.push({
+            start: offset + node.position.start.offset,
+            end: offset + node.position.end.offset,
+            token,
+          });
+        }
+        if (!expected.some((r) => r.token === token)) return fail();
+        found.push(token);
       }
       for (const child of node.children || []) visit(child, node);
     };
@@ -88,6 +113,11 @@ export function prepareCodePreservation(
     // Also reject hidden/inline/frontmatter, malformed and duplicate tokens.
     if (content.split(PREFIX).length - 1 !== expected.length) return fail();
     let restored = content;
+    for (const repair of repairs.toReversed())
+      restored =
+        restored.slice(0, repair.start) +
+        repair.token +
+        restored.slice(repair.end);
     for (const r of expected)
       restored = restored.replace(r.token, () => r.code);
     if (restored.includes(PREFIX)) return fail();
