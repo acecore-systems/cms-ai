@@ -69,7 +69,7 @@ async function inspectEligibility(
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "acecore-seo-eligibility",
       },
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(Math.min(10000, v.deadline - Date.now())),
     });
     mark("response");

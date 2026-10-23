@@ -135,7 +135,7 @@ describe("SEO authenticated public repository reader", () => {
         "Bearer fixture-token",
       );
       expect(init?.method).toBe("GET");
-      expect(init?.redirect).toBe("error");
+      expect(init?.redirect).toBe("manual");
       return new Response("{}", {
         status,
         headers: {
@@ -153,6 +153,16 @@ describe("SEO authenticated public repository reader", () => {
     for (let i = 0; i < 100; i++) await read(url);
     await expect(read(url)).rejects.toThrow("seo_eligibility_unknown");
     expect(fn).toHaveBeenCalledTimes(101);
+  });
+  it("rejects every redirect without following the destination", async () => {
+    for (const status of [301, 302, 303, 307, 308]) {
+      const fn = mock(status);
+      await expect(
+        seoRepositoryReader(env, site, Date.now() + 60000)(url),
+      ).rejects.toMatchObject({ code: "read_unavailable" });
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(fn.mock.calls[1][1]?.redirect).toBe("manual");
+    }
   });
   it("rejects other hosts/repos and write routes before credential creation", async () => {
     const fn = mock(),
