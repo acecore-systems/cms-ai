@@ -9,7 +9,7 @@
 - Cloudflare Access、D1の利用権限、GitHub Actions OIDCを別の認証境界として扱う。
 - `chat`権限からファイル変更を作成できないことをサーバー側で強制する。
 - `editor`と`admin`でも自動マージせず、変更はbranchとPRへ限定する。
-- CMS保存用GitHub AppやOAuth tokenをCMS AIへ流用しない。CMS AI Appはworkflow起動だけに使う。
+- CMS保存用GitHub AppやOAuth tokenをCMS AIへ流用しない。CMS AI Appはworkflow起動用actions-only tokenと、承認済み範囲の記事候補確認用contents/pull_requests read-only tokenをrepo限定で分離する。
 - secret、Access JWT、メールallowlist、GitHub tokenをログへ出さない。
 - 参考画像の入力を許可する。添付は非公開R2に保存し、サイト・会話所有者の認可を強制する。画像生成は追加しない。
 

@@ -1,3 +1,4 @@
+import { SeoRepositoryReadError } from "./github.ts";
 import { seoSite, seoArticleUrl } from "./sites.ts";
 import { sourceIdentity, markdown, normalizeLf } from "./seo-content.ts";
 import { sha256 } from "./seo-hash.ts";
@@ -22,7 +23,14 @@ export async function editorialEligibility(
 ) {
   try {
     return await inspectEligibility(input, fetcher);
-  } catch {
+  } catch (error) {
+    // Fixed local enum only. RPC still returns the same unknown error contract.
+    console.warn(
+      JSON.stringify({
+        event: "seo_eligibility_unavailable",
+        code: error instanceof SeoRepositoryReadError ? error.code : "unknown",
+      }),
+    );
     return fail();
   }
 }

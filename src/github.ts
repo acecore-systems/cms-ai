@@ -44,6 +44,7 @@ async function createInstallationToken(
   env: AppEnv,
   site: SiteConfig,
   deadline?: number,
+  purpose: "dispatch" | "eligibility" = "dispatch",
 ) {
   const appJwt = await createAppJwt(env);
   const installationId = String(
@@ -59,7 +60,10 @@ async function createInstallationToken(
     `${GITHUB_API}/app/installations/${installationId}/access_tokens`,
     {
       body: JSON.stringify({
-        permissions: { actions: "write" },
+        permissions:
+          purpose === "eligibility"
+            ? { contents: "read", pull_requests: "read" }
+            : { actions: "write" },
         repositories: [repositoryName],
       }),
       headers: githubHeaders(appJwt),
@@ -81,6 +85,15 @@ async function createInstallationToken(
     typeof body !== "object" ||
     typeof (body as { token?: unknown }).token !== "string"
   ) {
+    if (purpose === "eligibility") {
+      throw new SeoRepositoryReadError(
+        response.status === 401
+          ? "token_authentication"
+          : [403, 422].includes(response.status)
+            ? "token_permission_denied"
+            : "token_unavailable",
+      );
+    }
     const details = await readGitHubError(response, body);
     throw new HttpError(
       502,
@@ -88,11 +101,44 @@ async function createInstallationToken(
     );
   }
 
+  if (purpose === "eligibility") {
+    const permissions = (body as { permissions?: Record<string, unknown> })
+      .permissions;
+    if (
+      !permissions ||
+      permissions.contents !== "read" ||
+      permissions.pull_requests !== "read" ||
+      Object.entries(permissions).some(
+        ([key, value]) =>
+          !["contents", "pull_requests", "metadata"].includes(key) &&
+          value !== "none",
+      )
+    )
+      throw new SeoRepositoryReadError("token_scope_mismatch");
+  }
   return (body as { token: string }).token;
 }
 
-// Public resources need no additional repository read permission. Reuse the
-// existing repository-scoped App credential; never expose it through RPC/storage.
+export class SeoRepositoryReadError extends Error {
+  constructor(
+    readonly code:
+      | "token_authentication"
+      | "token_permission_denied"
+      | "token_unavailable"
+      | "token_scope_mismatch"
+      | "read_authentication"
+      | "read_forbidden"
+      | "read_unavailable"
+      | "rate_evidence_missing"
+      | "rate_insufficient"
+      | "request_bound"
+      | "unknown",
+  ) {
+    super("seo_eligibility_unknown");
+  }
+}
+
+// Read-token permissions are separate from actions-only dispatch permissions.
 // At most six sites: 600 GETs + six token requests per collection (no retry).
 export function seoRepositoryReader(
   env: AppEnv,
@@ -111,7 +157,7 @@ export function seoRepositoryReader(
         ++requests > 100 ||
         Date.now() >= deadline
       )
-        throw new Error();
+        throw new SeoRepositoryReadError("request_bound");
       const suffix = url.slice(prefix.length);
       if (
         !/^(?:commits\/main|git\/trees\/[a-f0-9]{40}\?recursive=1|git\/blobs\/[a-f0-9]{40}|pulls(?:\/[1-9][0-9]*(?:\/files)?)?(?:\?[^#]*)?)$/.test(
@@ -119,7 +165,7 @@ export function seoRepositoryReader(
         )
       )
         throw new Error();
-      token ??= createInstallationToken(env, site, deadline);
+      token ??= createInstallationToken(env, site, deadline, "eligibility");
       const response = await fetch(url, {
         ...init,
         method: "GET",
@@ -133,21 +179,29 @@ export function seoRepositoryReader(
       // authentication failures and secondary limits. Never fall back anonymously.
       const remaining = response.headers.get("x-ratelimit-remaining");
       const limit = response.headers.get("x-ratelimit-limit");
-      if (
-        !response.ok ||
+      let code: SeoRepositoryReadError["code"] | undefined;
+      if (response.status === 401) code = "read_authentication";
+      else if (response.status === 403) code = "read_forbidden";
+      else if (response.status === 429) code = "rate_insufficient";
+      else if (!response.ok) code = "read_unavailable";
+      else if (
         !remaining ||
         !limit ||
         !/^\d+$/.test(remaining) ||
-        !/^\d+$/.test(limit) ||
-        Number(limit) < 5000 ||
-        Number(remaining) < 606
-      ) {
+        !/^\d+$/.test(limit)
+      )
+        code = "rate_evidence_missing";
+      else if (Number(limit) < 5000 || Number(remaining) < 606)
+        code = "rate_insufficient";
+      if (code) {
         await response.body?.cancel();
-        throw new Error();
+        throw new SeoRepositoryReadError(code);
       }
       return response;
-    } catch {
-      throw new Error("seo_eligibility_unknown");
+    } catch (error) {
+      throw error instanceof SeoRepositoryReadError
+        ? error
+        : new SeoRepositoryReadError("unknown");
     }
   };
 }

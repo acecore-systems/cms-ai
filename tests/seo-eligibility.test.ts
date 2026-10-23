@@ -1,3 +1,4 @@
+import { SeoRepositoryReadError } from "../src/github.ts";
 import { it, expect, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { editorialEligibility } from "../src/seo-eligibility.ts";
@@ -274,4 +275,37 @@ it("does not fetch source or shared-state blobs for a proven path conflict", asy
       String(c[0]).includes("/git/blobs/"),
     ),
   ).toBe(false);
+});
+
+it("logs only a fixed diagnostic code while preserving the RPC unknown contract", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    for (const error of [
+      new SeoRepositoryReadError("token_permission_denied"),
+      new Error("SENTINEL_SECRET_RESPONSE"),
+    ]) {
+      const fetcher: typeof fetch = async () => {
+        throw error;
+      };
+      await expect(editorialEligibility(input(), fetcher)).rejects.toThrow(
+        "seo_eligibility_unknown",
+      );
+    }
+    expect(warn.mock.calls).toEqual([
+      [
+        JSON.stringify({
+          event: "seo_eligibility_unavailable",
+          code: "token_permission_denied",
+        }),
+      ],
+      [
+        JSON.stringify({
+          event: "seo_eligibility_unavailable",
+          code: "unknown",
+        }),
+      ],
+    ]);
+  } finally {
+    warn.mockRestore();
+  }
 });

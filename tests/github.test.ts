@@ -119,10 +119,17 @@ describe("SEO authenticated public repository reader", () => {
     const fn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).endsWith("/access_tokens")) {
         expect(JSON.parse(String(init?.body))).toEqual({
-          permissions: { actions: "write" },
+          permissions: { contents: "read", pull_requests: "read" },
           repositories: ["homepage-hatt"],
         });
-        return Response.json({ token: "fixture-token" });
+        return Response.json({
+          token: "fixture-token",
+          permissions: {
+            contents: "read",
+            pull_requests: "read",
+            metadata: "read",
+          },
+        });
       }
       expect(new Headers(init?.headers).get("Authorization")).toBe(
         "Bearer fixture-token",
@@ -171,6 +178,68 @@ describe("SEO authenticated public repository reader", () => {
         read = seoRepositoryReader(env, site, Date.now() + 60000);
       await expect(read(url)).rejects.toThrow("seo_eligibility_unknown");
       expect(fn).toHaveBeenCalledTimes(2);
+    }
+  });
+  it("retains a denied token outcome without retry and never reads repository data", async () => {
+    for (const status of [401, 403, 422, 500]) {
+      const fn = vi.fn(async () =>
+        Response.json(
+          { message: "SENTINEL_PRIVATE", token: "SENTINEL_TOKEN" },
+          { status },
+        ),
+      );
+      vi.stubGlobal("fetch", fn);
+      const read = seoRepositoryReader(env, site, Date.now() + 60000);
+      const code =
+        status === 401
+          ? "token_authentication"
+          : [403, 422].includes(status)
+            ? "token_permission_denied"
+            : "token_unavailable";
+      await expect(read(url)).rejects.toMatchObject({
+        message: "seo_eligibility_unknown",
+        code,
+      });
+      await expect(read(url)).rejects.toMatchObject({
+        message: "seo_eligibility_unknown",
+        code,
+      });
+      expect(fn).toHaveBeenCalledTimes(1);
+    }
+  });
+  it("rejects missing, write, or unrelated token permissions", async () => {
+    for (const permissions of [
+      undefined,
+      { contents: "write", pull_requests: "read" },
+      { contents: "read", pull_requests: "read", actions: "write" },
+      { contents: "read" },
+    ]) {
+      const fn = vi.fn(async () =>
+        Response.json({ token: "SENTINEL_TOKEN", permissions }),
+      );
+      vi.stubGlobal("fetch", fn);
+      await expect(
+        seoRepositoryReader(env, site, Date.now() + 60000)(url),
+      ).rejects.toMatchObject({
+        message: "seo_eligibility_unknown",
+        code: "token_scope_mismatch",
+      });
+      expect(fn).toHaveBeenCalledTimes(1);
+    }
+  });
+  it("distinguishes fixed read permission and rate diagnostics without response values", async () => {
+    for (const [status, remaining, limit, code] of [
+      [401, "4900", "5000", "read_authentication"],
+      [403, "4900", "5000", "read_forbidden"],
+      [429, "4900", "5000", "rate_insufficient"],
+      [200, "", "5000", "rate_evidence_missing"],
+      [200, "605", "5000", "rate_insufficient"],
+      [500, "4900", "5000", "read_unavailable"],
+    ] as const) {
+      mock(status, remaining, limit);
+      await expect(
+        seoRepositoryReader(env, site, Date.now() + 60000)(url),
+      ).rejects.toMatchObject({ message: "seo_eligibility_unknown", code });
     }
   });
 });
