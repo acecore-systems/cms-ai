@@ -1,3 +1,5 @@
+import { assertTableContextPreserved } from "./seo-table-claims.ts";
+import { hasExternalClaimCandidate } from "./seo-research-plan.ts";
 import { externalScope } from "./seo-external-sources.ts";
 import { stageBudget, CURRENT_BUDGET_VERSION } from "./seo-stage-budget.ts";
 import {
@@ -84,6 +86,7 @@ type EditorialJob = {
   reference_policy: 1 | 2;
   url_instructions: 1 | 2;
   research_context: "low" | "high";
+  research_recovery: 1 | 2;
   allocation_version: 1 | 2;
   variable_review: 0 | 1;
   input_allocation_sha256: string | null;
@@ -292,7 +295,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -306,6 +309,7 @@ async function advance(env: AppEnv, runId: string) {
         "high",
         2,
         1,
+        2,
         2,
         2,
         runId,
@@ -719,10 +723,15 @@ async function claimJob(
       buildPlanRequest(
         article.source.content,
         2,
-        job.external_sources ? 4 : job.discovery_policy,
+        job.research_recovery === 2
+          ? 5
+          : job.external_sources
+            ? 4
+            : job.discovery_policy,
         job.external_sources
           ? externalScope(job.site_id, article.source)
           : undefined,
+        job.research_recovery,
       ),
     );
     const reviewBytes = bytes(
@@ -799,8 +808,13 @@ async function claimJob(
     )
       throw new Error("seo_budget_state_conflict");
     const reasons = [
+      ...(job.research_recovery === 2 &&
+      !hasExternalClaimCandidate(article.source.content)
+        ? ["no_external_factual_claim"]
+        : []),
       ...(monthly &&
-      monthly.held + stageBudget(job.budget_version).maximum >
+      monthly.held +
+        stageBudget(job.budget_version, job.research_recovery).maximum >
         monthBudgetMicros(monthJst)
         ? ["monthly_budget_insufficient"]
         : []),
@@ -824,12 +838,16 @@ async function claimJob(
     const preflightRaw = JSON.stringify({
       version: 1,
       researchContract: 2,
+      ...(job.research_recovery === 2 ? { recovery: 2 } : {}),
       ...(job.reference_policy === 2 ? { referencePolicy: 2 } : {}),
       ...(job.url_instructions === 2 ? { urlInstructions: 2 } : {}),
       ...(job.allocation_version === 2 ? { allocationVersion: 2 } : {}),
       ...(job.generation_syntax === 2 ? { generationSyntax: 2 } : {}),
       ...(job.discovery_policy === 3
-        ? { discoveryPolicy: job.external_sources ? 4 : 3 }
+        ? {
+            discoveryPolicy:
+              job.research_recovery === 2 ? 5 : job.external_sources ? 4 : 3,
+          }
         : {}),
       ...(job.budget_version === 2 ? { budgetVersion: 2 } : {}),
       baseSha: body.baseSha,
@@ -852,7 +870,7 @@ async function claimJob(
                 job.allocation_version === 2
                   ? Math.floor((stageBudget(2).pool * paths.length) / 9)
                   : stageBudget(2).pool,
-              maximumMicros: stageBudget(2).maximum,
+              maximumMicros: stageBudget(2, job.research_recovery).maximum,
               runMicros: stageBudget(2).runMicros,
             }
           : {}),
@@ -928,9 +946,15 @@ function checkContext(job: EditorialJob, run: Run): CheckContext {
     retrievalVersion: job.retrieval_contract,
     budgetVersion: job.budget_version,
     researchContext: job.research_context,
+    recovery: job.research_recovery,
     referencePolicy: job.reference_policy,
     urlInstructions: job.url_instructions,
-    discoveryPolicy: job.external_sources ? 4 : job.discovery_policy,
+    discoveryPolicy:
+      job.research_recovery === 2
+        ? 5
+        : job.external_sources
+          ? 4
+          : job.discovery_policy,
     ...(job.external_sources ? { siteId: job.site_id } : {}),
   };
 }
@@ -1025,11 +1049,16 @@ async function propose(
       !saved ||
       saved.retrievalContract !== 2 ||
       (saved.referencePolicy ?? 1) !== job.reference_policy ||
+      (saved.recovery ?? 1) !== job.research_recovery ||
       (saved.urlInstructions ?? 1) !== job.url_instructions ||
       (saved.budgetVersion ?? 1) !== job.budget_version ||
       (saved.allocationVersion ?? 1) !== job.allocation_version ||
       (saved.discoveryPolicy ?? 2) !==
-        (job.external_sources ? 4 : job.discovery_policy) ||
+        (job.research_recovery === 2
+          ? 5
+          : job.external_sources
+            ? 4
+            : job.discovery_policy) ||
       (saved.generationSyntax ?? 1) !== job.generation_syntax ||
       saved.sourceSha256 !== job.source_sha256 ||
       saved.baseSha !== job.base_sha ||
@@ -1088,6 +1117,8 @@ async function propose(
     research ? evidenceReferences(research) : [],
     job.generation_syntax,
   );
+  if (job.next_step === 0 && research?.tableContext)
+    assertTableContextPreserved(research.tableContext, content);
   if (job.next_step === 1) {
     // Persist formatting before later locales read the accepted Japanese source.
     const saved = await env.CMS_AI_IMAGES.put(

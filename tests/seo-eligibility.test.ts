@@ -12,7 +12,7 @@ function fixture() {
   const target = seoArticleUrl(site, url)!;
   const path = target.directory + "/example.md";
   const content =
-    '---\ntitle: Example\ndate: "2026-10-01T00:00:00Z"\n---\nText.';
+    '---\ntitle: Example\ndate: "2026-10-01T00:00:00Z"\n---\nExternal product supports verified configuration settings.';
   const bodies = new Map<string, string>();
   const entry = (path: string, body: string) => {
     const sha = createHash("sha1")
@@ -106,7 +106,7 @@ it("excludes actual shared state overlap, retaining all nine locale blob identit
   expect(r.results[0].paths).toHaveLength(10);
   expect(r.proof.prs[0].paths).toEqual([f.target.spec.statePath]);
   expect(r.complete).toBe(true);
-  expect(JSON.stringify(r)).not.toContain("Text.");
+  expect(JSON.stringify(r)).not.toContain("External product supports");
 });
 it("keeps unrelated articles eligible and includes rename previous paths", async () => {
   const f = fixture();

@@ -70,6 +70,7 @@ beforeEach(async () => {
     "0019_seo_variable_review.sql",
     "0020_seo_reference_policy.sql",
     "0021_seo_url_instructions.sql",
+    "0022_seo_research_recovery.sql",
   ])
     sql.exec(
       readFileSync(
@@ -108,7 +109,7 @@ beforeEach(async () => {
           if (legacyReview)
             for (const item of statements) {
               if (item.query.startsWith("INSERT INTO seo_editorial_jobs"))
-                item.args[item.args.length - 5] = 0;
+                item.args[item.args.length - 6] = 0;
             }
           const values = statements.map((item) => ({
             meta: {
@@ -377,13 +378,44 @@ describe("SEO durable editorial boundary", () => {
                       ? JSON.stringify({
                           verdict: "selected",
                           selectedUrl: reference,
+                          fallbackUrl: null,
                           reason: "Synthetic relevant primary source candidate",
                         })
                       : research
                         ? "Verified claim [1].\n```json\n" +
-                          JSON.stringify(value) +
+                          JSON.stringify(
+                            input.discovery?.retrievalUrls
+                              ? {
+                                  ...value,
+                                  retrieval: [
+                                    {
+                                      url: input.discovery.retrievalUrls[0],
+                                      outcome:
+                                        value.verdict === "verified"
+                                          ? "retrieved"
+                                          : "unavailable",
+                                    },
+                                  ],
+                                }
+                              : value,
+                          ) +
                           "\n```"
-                        : JSON.stringify(value),
+                        : JSON.stringify(
+                            input.discovery?.retrievalUrls
+                              ? {
+                                  ...value,
+                                  retrieval: [
+                                    {
+                                      url: input.discovery.retrievalUrls[0],
+                                      outcome:
+                                        value.verdict === "verified"
+                                          ? "retrieved"
+                                          : "unavailable",
+                                    },
+                                  ],
+                                }
+                              : value,
+                          ),
                   annotations: research
                     ? [
                         {
@@ -647,13 +679,44 @@ describe("SEO durable editorial boundary", () => {
                       ? JSON.stringify({
                           verdict: "selected",
                           selectedUrl: reference,
+                          fallbackUrl: null,
                           reason: "Synthetic relevant primary source candidate",
                         })
                       : research
                         ? "Verified claim [1].\n```json\n" +
-                          JSON.stringify(value) +
+                          JSON.stringify(
+                            input.discovery?.retrievalUrls
+                              ? {
+                                  ...value,
+                                  retrieval: [
+                                    {
+                                      url: input.discovery.retrievalUrls[0],
+                                      outcome:
+                                        value.verdict === "verified"
+                                          ? "retrieved"
+                                          : "unavailable",
+                                    },
+                                  ],
+                                }
+                              : value,
+                          ) +
                           "\n```"
-                        : JSON.stringify(value),
+                        : JSON.stringify(
+                            input.discovery?.retrievalUrls
+                              ? {
+                                  ...value,
+                                  retrieval: [
+                                    {
+                                      url: input.discovery.retrievalUrls[0],
+                                      outcome:
+                                        value.verdict === "verified"
+                                          ? "retrieved"
+                                          : "unavailable",
+                                    },
+                                  ],
+                                }
+                              : value,
+                          ),
                   annotations: research
                     ? [
                         {
@@ -1462,7 +1525,12 @@ it.each(["insufficient", "verified-empty", "contract-violation"])(
                   type: "web_search_call",
                   status: "completed",
                   action: input.discovery
-                    ? { type: "open_page", url: input.discovery.selectedUrl }
+                    ? {
+                        type: "open_page",
+                        url:
+                          input.discovery.retrievalUrls?.[0] ||
+                          input.discovery.selectedUrl,
+                      }
                     : {
                         type: "search",
                         queries: input.plan.queries,
@@ -1484,15 +1552,46 @@ it.each(["insufficient", "verified-empty", "contract-violation"])(
               {
                 type: "output_text",
                 text: planning
-                  ? JSON.stringify(value)
+                  ? JSON.stringify(
+                      input.discovery?.retrievalUrls
+                        ? {
+                            ...value,
+                            retrieval: [
+                              {
+                                url: input.discovery.retrievalUrls[0],
+                                outcome:
+                                  value.verdict === "verified"
+                                    ? "retrieved"
+                                    : "unavailable",
+                              },
+                            ],
+                          }
+                        : value,
+                    )
                   : !input.discovery
                     ? JSON.stringify({
                         verdict: "selected",
                         selectedUrl: "https://docs.example.org/new-guide",
+                        fallbackUrl: null,
                         reason: "Synthetic candidate",
                       })
                     : "No suitable primary source was established.\n```json\n" +
-                      JSON.stringify(value) +
+                      JSON.stringify(
+                        input.discovery?.retrievalUrls
+                          ? {
+                              ...value,
+                              retrieval: [
+                                {
+                                  url: input.discovery.retrievalUrls[0],
+                                  outcome:
+                                    value.verdict === "verified"
+                                      ? "retrieved"
+                                      : "unavailable",
+                                },
+                              ],
+                            }
+                          : value,
+                      ) +
                       "\n```",
                 annotations: [],
               },
@@ -1770,6 +1869,7 @@ it.each([
                   text: JSON.stringify({
                     verdict:
                       kind === "self-selected" ? "selected" : "insufficient",
+                    fallbackUrl: null,
                     selectedUrl:
                       kind === "self-selected"
                         ? "https://asv.acecore.net/"
@@ -1887,4 +1987,34 @@ it("skips before claim when the complete new run would exceed remaining monthly 
   ).toContain("monthly_budget_insufficient");
   expect(claim).not.toHaveBeenCalled();
   expect(sql.prepare("SELECT * FROM seo_budget_calls").all()).toEqual(before);
+});
+
+it("skips articles without external factual candidates before lock, budget or model and advances naturally", async () => {
+  env.SEO_RESEARCH_ENABLED = "true";
+  const started = await start([
+    candidate,
+    { ...candidate, url: "https://asv.acecore.net/stories/next/" },
+  ]);
+  const id = started.jobId!;
+  await request(id);
+  files[0].content = files[0].content.replace(
+    "Original body with [reference](https://example.org/guide).",
+    "エースサーバーはJava版・統合版のどちらでも遊べる公開サーバーです。",
+  );
+  expect(await request(id, "claim", { baseSha, files })).toEqual({
+    status: "skipped",
+  });
+  expect(claim).not.toHaveBeenCalled();
+  expect(mocks.infer).not.toHaveBeenCalled();
+  expect(sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n).toBe(
+    0,
+  );
+  expect(row().candidate_index).toBe(1);
+  const saved = JSON.parse(
+    objects.get(`seo-editorial/${id}/eligibility-preflight.json`)!,
+  );
+  expect(saved.reasons).toContain("no_external_factual_claim");
+  expect(saved.recovery).toBe(2);
+  expect(saved.discoveryPolicy).toBe(5);
+  expect(saved.limits.maximumMicros).toBe(1249533);
 });

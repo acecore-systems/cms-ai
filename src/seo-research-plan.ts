@@ -1,3 +1,5 @@
+import { tableClaims, type TableContext } from "./seo-table-claims.ts";
+import { externalClaimCandidate } from "./seo-claim-selection.ts";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { markdown, articleReferenceLinks } from "./seo-content.ts";
 // IDs are scoped to the exact source bytes already bound by sourceSha256.
@@ -28,7 +30,8 @@ export function researchInputs(source: string) {
 }
 
 export type ResearchPlan = {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
+  tableContext?: TableContext;
   target?: { start: number; end: number; quote: string };
   sourceSha256: string;
   claimId: string;
@@ -81,8 +84,8 @@ export function factualSentences(paragraph: string) {
     return [{ start, end, quote }];
   });
 }
-export function plannerClaims(source: string, contract: number) {
-  return researchInputs(source).claims.map((c) => {
+export function plannerClaims(source: string, contract: number, recovery = 1) {
+  const paragraphs = researchInputs(source).claims.map((c) => {
     if (contract !== 2) return c;
     let cursor = 0;
     const parts: { quote: string; selectable: boolean }[] = [];
@@ -92,13 +95,27 @@ export function plannerClaims(source: string, contract: number) {
           quote: c.markdown.slice(cursor, sentence.start),
           selectable: false,
         });
-      parts.push({ quote: sentence.quote, selectable: true });
+      parts.push({
+        quote: sentence.quote,
+        selectable:
+          recovery !== 2 || externalClaimCandidate(sentence.quote, c.markdown),
+      });
       cursor = sentence.end;
     }
     if (cursor < c.markdown.length)
       parts.push({ quote: c.markdown.slice(cursor), selectable: false });
     return { id: c.id, contextParts: parts };
   });
+  return recovery === 2
+    ? [
+        ...paragraphs,
+        ...tableClaims(source).map((c) => ({
+          id: c.id,
+          contextParts: [{ quote: c.markdown, selectable: true }],
+          tableContext: c.tableContext,
+        })),
+      ]
+    : paragraphs;
 }
 export const FACT_PLAN_SCHEMA = {
   ...PLAN_SCHEMA,
@@ -127,6 +144,7 @@ export function parsePlan(
   source: string,
   hash: string,
   contract = 1,
+  recovery = 1,
 ): ResearchPlan {
   if (
     !exact(value, [
@@ -141,9 +159,12 @@ export function parsePlan(
   )
     throw new Error("seo_research_plan_invalid");
   if (value.verdict !== "ready") throw new Error("seo_research_insufficient");
-  const claim = researchInputs(source).claims.find(
-    (c) => c.id === value.claimId,
-  );
+  const table =
+    recovery === 2
+      ? tableClaims(source).find((c) => c.id === value.claimId)
+      : undefined;
+  const claim =
+    table || researchInputs(source).claims.find((c) => c.id === value.claimId);
   if (
     !claim ||
     !Array.isArray(value.conditions) ||
@@ -157,12 +178,29 @@ export function parsePlan(
     value.queries.length > 2
   )
     throw new Error("seo_research_plan_invalid");
+  if (
+    table &&
+    (value.conditions.length !== 1 ||
+      value.conditions[0] !== table.tableContext.featureMarkdown ||
+      !value.anchors.includes(
+        /^\[([^\]]+)\]/.exec(table.tableContext.subjectMarkdown)![1],
+      ))
+  )
+    throw new Error("seo_research_plan_invalid");
   const target =
-    contract === 2
-      ? factualSentences(claim.markdown).find(
-          (s) => s.quote === value.targetQuote,
-        )
-      : undefined;
+    table && value.targetQuote === table.markdown
+      ? { start: 0, end: table.markdown.length, quote: table.markdown }
+      : contract === 2
+        ? factualSentences(claim.markdown).find(
+            (s) => s.quote === value.targetQuote,
+          )
+        : undefined;
+  if (
+    recovery === 2 &&
+    (!target ||
+      (!table && !externalClaimCandidate(target.quote, claim.markdown)))
+  )
+    throw new Error("seo_research_plan_invalid");
   if (contract === 2 && !target) throw new Error("seo_research_plan_invalid");
   const canonical = target?.quote || claim.markdown;
   const requiredConditions = value.conditions.map((quote: any) =>
@@ -191,7 +229,8 @@ export function parsePlan(
   )
     throw new Error("seo_research_plan_invalid");
   return {
-    version: contract === 2 ? 2 : 1,
+    version: table ? 3 : contract === 2 ? 2 : 1,
+    ...(table ? { tableContext: table.tableContext } : {}),
     ...(target ? { target } : {}),
     sourceSha256: hash,
     claimId: claim.id,
@@ -209,11 +248,12 @@ export function focusedInput(source: string, hash: string, plan: ResearchPlan) {
       conditions: plan.requiredConditions.map(({ quote }) => quote),
       anchors: plan.anchors,
       queries: plan.queries,
-      ...(plan.version === 2 ? { targetQuote: plan.target?.quote } : {}),
+      ...(plan.version >= 2 ? { targetQuote: plan.target?.quote } : {}),
     },
     source,
     hash,
-    plan.version,
+    plan.version >= 2 ? 2 : 1,
+    plan.version === 3 ? 2 : 1,
   );
   if (JSON.stringify(expected) !== JSON.stringify(plan))
     throw new Error("seo_research_plan_mismatch");
@@ -232,4 +272,15 @@ export function validatePlannedSearch(result: any, plan: ResearchPlan) {
     queries.some((q: any) => typeof q !== "string" || !plan.queries.includes(q))
   )
     throw new Error("seo_research_plan_mismatch");
+}
+
+export function hasExternalClaimCandidate(source: string) {
+  return (
+    tableClaims(source).length > 0 ||
+    researchInputs(source).claims.some((c) =>
+      factualSentences(c.markdown).some((s) =>
+        externalClaimCandidate(s.quote, c.markdown),
+      ),
+    )
+  );
 }

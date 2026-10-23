@@ -1,3 +1,4 @@
+import { hasExternalClaimCandidate } from "./seo-research-plan.ts";
 import { SeoRepositoryReadError } from "./github.ts";
 import { seoSite, seoArticleUrl, SEO_RESEARCH_EXCLUSIONS } from "./sites.ts";
 import { sourceIdentity, markdown, normalizeLf } from "./seo-content.ts";
@@ -342,6 +343,14 @@ async function inspectEligibility(
         url,
         status: "ineligible" as const,
         reason: "source_identity_ineligible",
+      });
+      continue;
+    }
+    if (!hasExternalClaimCandidate(identity.source.content)) {
+      results.push({
+        url,
+        status: "ineligible" as const,
+        reason: "no_external_factual_claim",
       });
       continue;
     }

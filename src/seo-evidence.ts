@@ -1,3 +1,4 @@
+import type { TableContext } from "./seo-table-claims.ts";
 // URLs here are reference destinations, never Worker fetch targets. Hosted search
 // performs retrieval; credentials/source files are never sent to those origins.
 export const LEARN_VIEW_URL_INSTRUCTION =
@@ -37,6 +38,7 @@ export function referenceUrl(value: unknown, policy = 1): string {
 
 export type ResearchEvidence = {
   version: 1;
+  tableContext?: TableContext;
   referencePolicy?: 2;
   checkedAt: string;
   sourceSha256: string;
