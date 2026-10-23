@@ -65,3 +65,28 @@ trial8では、PageSpeedのスコアに関する固定主張を検索し、Light
 調査requestは全件8,000 bytes以内。9表候補の検索query・URLはサイズ検証用の合成値であり、将来の実選定も最終requestのcap検査を通る必要がある。最大全予約額1,249,533 microUSD、13API、9言語generation pool525,000 bytes、30分、月額は変更しない。capまで埋めた新旧builderによる上限回帰も成功した。有料APIは0回、実際の生成→AI校閲→Draft初成功は未達。trial7の自己実施候補除外は今回の範囲外。
 
 配備担当が0023を先に適用して旧全列・行・trigger保持とdefault1/immutableを確認し、その後CMSを配備する。本修正担当はcommit/push/Draft PR/CIまでを扱う。指示改善でモデルが正しく候補を選ぶことは無課金テストだけでは保証できず、今回の有料再試行は行わない。
+
+## 順位切詰め前の入力適合確認
+
+trial9準備では自然順位上位3件が既知のplan入力だけで32,000 bytesを超えていた。CMS eligibilityにclaimと共通の無課金preflightを加え、順位を3件へ切り詰める前に`known_input_budget_exceeded`として除外する。新しいmigration・runner・SEO schema変更はない。
+
+`seo-input-preflight.ts`は既存claimのbuilder・サイズ計算・言語別allocation・判定を移した純粋関数である。claimは保存済みjobの契約値と実reasonを引き続き使用し、preflight JSON/hash・原稿保存・最終検査を維持する。eligibilityでは現行新jobの契約値を使用する。本文・guide・条件の削除/縮約、個別記事ブラックリスト、予算増額は行わない。
+
+取得は既存の認証済みGitHub readerを使い、同じcommit/treeの正本・全翻訳・設定済みguide・stateをblob SHA1とsize検証付きで読む。planは正本だけで確定できるため、plan超過を先に検出した候補の翻訳本文は取得しない。planが収まる候補は全量取得後のidentityとfilesでreview/generationを計算する。完全取得できない場合は従来のunknown契約で当該siteを採用しない。PR競合と最終main/PR再読取り、100リクエスト上限は維持する。blob cacheは同一SHAでもtree sizeが矛盾する場合に拒否する。
+
+eligibility RPCには候補reasonがないため、reason空文字の下限見積りで既知超過だけを除外する。実reasonや将来の研究根拠・日本語改訂による増分は保証せず、claimと各stageの最終cap検査を残す。`eligible`は本文支持・生成成功や将来の入力適合の証明ではない。
+
+無料検証では490tests成功。1〜9言語の比例pool、各上限ぴったり/1byte超過、全翻訳・guide取得、guide欠落/取得失敗、blob不整合、planの早期除外を確認した。実6原稿で旧HEAD f46eff51442da538de057622541106b25dc6e39bのclaim計算を抽出した48比較（recovery/retrieval/budget版の組合せ）は全て一致した。
+
+| 実原稿                                   | plan bytes | 共通claim計算の判定       |
+| ---------------------------------------- | ---------: | ------------------------- |
+| tax-return-with-copilot                  |     37,279 | plan・generation pool超過 |
+| cloudflare-only-blog-comments            |     34,891 | plan超過                  |
+| copilot-translation-pipeline             |     33,341 | plan超過                  |
+| astro-ai-contact-chat                    |     27,338 | 既知入力は適合            |
+| cloudflare-vectorize-safe-implementation |     43,662 | plan・generation pool超過 |
+| zoho-to-kagoya-mail-migration            |     19,438 | 既知入力は適合            |
+
+保存snapshotのSystems34URLを実GitHub読取でも検証し、同じHEAD 7ea874884176541f94fc34ff4da48630f1ebea41で93requests・20ineligible/14eligible、最終再読取り成功。下位の適合2記事も残った。これはローカルから実readerと同じ経路を使った読取検証であり、配備済みworkerのrunや有料実成功とは区別する。候補・PRが増えれば100件上限でunknownになる可能性は残る。
+
+最大予約額1,249,533 microUSD、13API、9言語、30分、月額・通常枠確保は不変。本修正では有料API0回。実検索→本文支持→生成→AI校閲→Draftの成功は未検証であり、merge・本番配備・有料実行は親担当へ引き継ぐ。
