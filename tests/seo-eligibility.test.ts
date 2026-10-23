@@ -295,12 +295,14 @@ it("logs only a fixed diagnostic code while preserving the RPC unknown contract"
       [
         JSON.stringify({
           event: "seo_eligibility_unavailable",
+          stage: "fetch",
           code: "token_permission_denied",
         }),
       ],
       [
         JSON.stringify({
           event: "seo_eligibility_unavailable",
+          stage: "fetch",
           code: "unknown",
         }),
       ],
