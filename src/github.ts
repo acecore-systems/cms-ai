@@ -45,7 +45,9 @@ async function createInstallationToken(
   site: SiteConfig,
   deadline?: number,
   purpose: "dispatch" | "eligibility" = "dispatch",
+  mark: (stage: string) => void = () => {},
 ) {
+  mark("token_sign");
   const appJwt = await createAppJwt(env);
   const installationId = String(
     env.CMS_AI_GITHUB_APP_INSTALLATION_ID || "",
@@ -55,6 +57,7 @@ async function createInstallationToken(
     throw new HttpError(503, "CMS AI GitHub Appの設定を確認できません。");
   }
 
+  mark("token_request");
   const repositoryName = site.repository.split("/").at(-1) || "";
   const response = await fetch(
     `${GITHUB_API}/app/installations/${installationId}/access_tokens`,
@@ -149,6 +152,7 @@ export function seoRepositoryReader(
   let requests = 0;
   const prefix = `${GITHUB_API}/repos/${site.repository}/`;
   return async (input, init) => {
+    let stage = "request_validate";
     try {
       const url = String(input);
       if (
@@ -165,11 +169,21 @@ export function seoRepositoryReader(
         )
       )
         throw new Error();
-      token ??= createInstallationToken(env, site, deadline, "eligibility");
+      token ??= createInstallationToken(
+        env,
+        site,
+        deadline,
+        "eligibility",
+        (value) => {
+          stage = value;
+        },
+      );
+      const accessToken = await token;
+      stage = "repository_fetch";
       const response = await fetch(url, {
         ...init,
         method: "GET",
-        headers: githubHeaders(await token),
+        headers: githubHeaders(accessToken),
         redirect: "error",
         signal: AbortSignal.timeout(
           Math.max(1, Math.min(10000, deadline - Date.now())),
@@ -199,6 +213,14 @@ export function seoRepositoryReader(
       }
       return response;
     } catch (error) {
+      console.warn(
+        JSON.stringify({
+          event: "seo_repository_read_unavailable",
+          stage,
+          code:
+            error instanceof SeoRepositoryReadError ? error.code : "unknown",
+        }),
+      );
       throw error instanceof SeoRepositoryReadError
         ? error
         : new SeoRepositoryReadError("unknown");

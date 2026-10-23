@@ -21,20 +21,28 @@ export async function editorialEligibility(
   input: unknown,
   fetcher: typeof fetch,
 ) {
+  let stage = "input";
   try {
-    return await inspectEligibility(input, fetcher);
+    return await inspectEligibility(input, fetcher, (value) => {
+      stage = value;
+    });
   } catch (error) {
     // Fixed local enum only. RPC still returns the same unknown error contract.
     console.warn(
       JSON.stringify({
         event: "seo_eligibility_unavailable",
+        stage,
         code: error instanceof SeoRepositoryReadError ? error.code : "unknown",
       }),
     );
     return fail();
   }
 }
-async function inspectEligibility(input: unknown, fetcher: typeof fetch) {
+async function inspectEligibility(
+  input: unknown,
+  fetcher: typeof fetch,
+  mark: (stage: string) => void,
+) {
   const v = input as { site: string; urls: string[]; deadline: number };
   const spec = v && seoSite(v.site);
   if (
@@ -54,6 +62,7 @@ async function inspectEligibility(input: unknown, fetcher: typeof fetch) {
   let requests = 0;
   async function get(path: string) {
     if (++requests > 100 || Date.now() >= v.deadline) return fail();
+    mark("fetch");
     const response = await fetcher("https://api.github.com" + prefix + path, {
       headers: {
         Accept: "application/vnd.github+json",
@@ -63,6 +72,7 @@ async function inspectEligibility(input: unknown, fetcher: typeof fetch) {
       redirect: "error",
       signal: AbortSignal.timeout(Math.min(10000, v.deadline - Date.now())),
     });
+    mark("response");
     if (!response.ok) return fail();
     // Tree API is capped at 7MB. Also bound responses when Content-Length is absent.
     const reader = response.body?.getReader();
@@ -85,6 +95,7 @@ async function inspectEligibility(input: unknown, fetcher: typeof fetch) {
       bytes.set(part, at);
       at += part.length;
     }
+    mark("json_decode");
     return {
       value: JSON.parse(
         new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
@@ -111,16 +122,19 @@ async function inspectEligibility(input: unknown, fetcher: typeof fetch) {
     return fail();
   }
   const main = await get("/commits/main");
+  mark("main_shape");
   const baseSha = main.value.sha,
     treeSha = main.value.commit?.tree?.sha;
   if (!validSha(baseSha) || !validSha(treeSha)) return fail();
   const tree = await get(`/git/trees/${treeSha}?recursive=1`);
+  mark("tree_shape");
   if (
     tree.value.truncated !== false ||
     tree.value.sha !== treeSha ||
     !Array.isArray(tree.value.tree)
   )
     return fail();
+  mark("tree_entries");
   const entries = new Map<string, any>();
   for (const item of tree.value.tree) {
     if (!validPath(item.path) || entries.has(item.path) || !validSha(item.sha))
@@ -147,6 +161,7 @@ async function inspectEligibility(input: unknown, fetcher: typeof fetch) {
       r.size !== e.size
     )
       return fail();
+    mark("blob_decode");
     const bytes = Uint8Array.from(atob(r.content.replace(/\n/g, "")), (c) =>
       c.charCodeAt(0),
     );
@@ -155,12 +170,14 @@ async function inspectEligibility(input: unknown, fetcher: typeof fetch) {
       whole = new Uint8Array(header.length + bytes.length);
     whole.set(header);
     whole.set(bytes, header.length);
+    mark("blob_digest");
     const digest = Array.from(
       new Uint8Array(await crypto.subtle.digest("SHA-1", whole)),
     )
       .map((n) => n.toString(16).padStart(2, "0"))
       .join("");
     if (digest !== e.sha) return fail();
+    mark("blob_utf8");
     const content = new TextDecoder("utf-8", {
       fatal: true,
       ignoreBOM: false,
@@ -184,6 +201,7 @@ async function inspectEligibility(input: unknown, fetcher: typeof fetch) {
         return [p.number, p.head.sha, p.base.sha, p.updated_at];
       }),
     );
+  mark("pr_signature");
   const initial = signature(open.rows);
   if (new Set(open.rows.map((p) => p.number)).size !== open.rows.length)
     return fail();
@@ -234,6 +252,7 @@ async function inspectEligibility(input: unknown, fetcher: typeof fetch) {
   }
   const results = [];
   for (const url of v.urls) {
+    mark("candidate");
     const target = seoArticleUrl(v.site, url)!;
     const roots = [...entries.keys()].filter(
       (path) =>
