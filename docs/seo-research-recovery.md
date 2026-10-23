@@ -41,3 +41,27 @@ Discovery5は1回の固定keyword検索から、主資料1件と任意の代替1
 運用担当がコード配備より先に0022を適用し、全旧行・列・trigger・lock・予算の保持、default1とimmutableを独立確認する。その後CMSだけを配備する。この変更の担当範囲はDraft PRまでで、merge・migration適用・本番配備・有料試行は行わない。
 
 自然候補の規則・公開告知・活動案内は無課金対象外になり、旧Wikiのプラグイン表には候補が残ることを実原稿で確認した。新しい一次資料の取得・支持、生成→AI校閲→Draft PRの実成功は未検証であり保証しない。
+
+## Discovery候補選定の指示版（0023）
+
+trial8では、PageSpeedのスコアに関する固定主張を検索し、Lighthouseの資料URLが実検索集合に含まれたが、モデルは「snippetでは主張の支持を検証できない」という理由でdiscoveryをinsufficientにした。これは本文検証に進む前の実失敗として保持する。
+
+新ジョブだけ`discovery_instructions=2`を明示して作成する。0023は同列をdefault1で追加し、変更禁止triggerを設ける。既存ジョブは元のDiscovery5要求文と入力hashを維持する。新しい指示版はdiscoveryの入力hashとeligibility-preflightへ束縛し、propose時も照合する。Discovery応答形式・parser・plan・retrieval・receipt・runnerの契約は変えない。SEO側・各siteのrunner更新は不要。
+
+選定時は二つの条件を独立して確認する。
+
+- 同じ実検索集合内のexact URLで、安全・新規・外部一次資料であること。
+- 固定主張全体と全条件について、本文確認に進む関連性があること。
+
+検索結果のtitle/snippet/contextが全条件を扱い得る候補を示す場合、本文が未取得・snippetが支持証明にならないという理由だけで候補無しにしない。無関係・条件違い・既存資料・自己サイト等で全候補が不適切ならinsufficientを維持する。候補選定は支持の認定ではない。取得本文に支持がない場合は従来どおり停止し、別URLへ支持を探し直さない。URL書換え・案内先への追加取得・旧版資料の条件拡張も許可しない。人が別途閲覧したページはworkerの検索・取得証拠に含めない。
+
+今回の無課金検証は465tests、旧HEAD e370d659との45比較一致、trial8原本のinsufficient維持を確認した。保存済み原稿を本番builderへ通したserialized bytesは次のとおり。選定を進める応答は合成であり、本文取得や実モデル成功の証拠ではない。
+
+| 入力                 |   plan | discovery（新版） |    retrieval |
+| -------------------- | -----: | ----------------: | -----------: |
+| trial8原稿と保存plan | 15,651 |             4,876 |        4,428 |
+| 旧Wikiの9表候補      | 16,896 |      6,381〜6,811 | 5,993〜6,423 |
+
+調査requestは全件8,000 bytes以内。9表候補の検索query・URLはサイズ検証用の合成値であり、将来の実選定も最終requestのcap検査を通る必要がある。最大全予約額1,249,533 microUSD、13API、9言語generation pool525,000 bytes、30分、月額は変更しない。capまで埋めた新旧builderによる上限回帰も成功した。有料APIは0回、実際の生成→AI校閲→Draft初成功は未達。trial7の自己実施候補除外は今回の範囲外。
+
+配備担当が0023を先に適用して旧全列・行・trigger保持とdefault1/immutableを確認し、その後CMSを配備する。本修正担当はcommit/push/Draft PR/CIまでを扱う。指示改善でモデルが正しく候補を選ぶことは無課金テストだけでは保証できず、今回の有料再試行は行わない。

@@ -67,6 +67,7 @@ export type CheckContext = {
   recovery?: 1 | 2;
   referencePolicy?: 1 | 2;
   urlInstructions?: 1 | 2;
+  discoveryInstructions?: 1 | 2;
   siteId?: string;
   researchContext?: "low" | "high";
 };
@@ -594,6 +595,9 @@ export async function researchArticle(
         ...(context.referencePolicy === 2 ? { referencePolicy: 2 } : {}),
         ...(context.urlInstructions === 2 ? { urlInstructions: 2 } : {}),
         ...(context.recovery === 2 ? { recovery: 2 } : {}),
+        ...(context.discoveryInstructions === 2
+          ? { discoveryInstructions: 2 }
+          : {}),
         ...(scope ? { externalScope: scope } : {}),
       },
       async (callId) => {
@@ -610,6 +614,7 @@ export async function researchArticle(
             scope,
             context.referencePolicy,
             context.urlInstructions,
+            context.discoveryInstructions,
           ),
           phase: "discovery",
         });

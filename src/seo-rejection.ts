@@ -360,6 +360,7 @@ export async function finalizeRejection(
           recovery: job.research_recovery,
           referencePolicy: job.reference_policy,
           urlInstructions: job.url_instructions,
+          discoveryInstructions: job.discovery_instructions,
           discoveryPolicy:
             job.research_recovery === 2
               ? 5
