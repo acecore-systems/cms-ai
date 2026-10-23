@@ -108,3 +108,15 @@ eligibility RPCには候補reasonがないため、reason空文字の下限見�
 0025のdefault1とimmutable triggerで既存jobのrequest・hash・receiptを保持する。他stageの6000出力、生成枠、研究8KB、13API、9言語、30分は不変。新review契約はphase=reviewに限定し、入力cap・予約額・usage上限を同じ版で検証する。incompleteや予約超過は引き続き未解決として予約を保持する。旧runの再送・再校閲は行わない。runner・SEO schema変更は不要。
 
 本番builderを全13呼出しの上限まで埋めた計算は1,249,533microUSDで不変。入力60000bytes×0.3の削減で追加出力18000を相殺する。保存された実9言語の完成稿から再構成した校閲requestは旧306304、新306305bytesで440000以下（本文は同一、出力上限の桁数だけ増加）。当該実サイズの予約は100349→118350microUSDとなるため、実runの追加出力が無料になるという意味ではない。旧HEADとのrequest/hash一致とpreflight48比較一致を確認した。全証拠は無課金のローカル検証で、実モデル呼出しは0。merge・migration適用・本番配備・実試行は運用担当へ引き継ぐ。
+
+## 不変metadataの構造保持（0026）と10月の追加承認（0027）
+
+trial11はja/en受入後、zh-cn提案が `callout`・`insightGrid`・`processFigure`・`linkCards` 内の表示文言17か所を推敲して `seo_immutable_metadata` で停止した。日時やURLの差替えではなく、現契約で不変の入れ子metadataを生成し直したことが原因。guardは正常だった。
+
+新jobだけ `metadata_preservation=2` とし、モデルが出力するfrontmatterをサイト契約の編集可能な文字列フィールドに限定する。sourceHash/更新日時もcontroller管理として除外する。不変metadataは省略せず読み取り専用contextで渡し、対象言語の原本YAMLへ許可された文言と全文bodyを組み戻す。不変field・未知field・重複key・非文字列・既存編集field欠落は拒否し、無断変更を黙って捨てない。コード復元後の既存guardと全言語AI校閲は維持する。既存の限定YAML修復は同じ関数を共有する。
+
+0026はdefault1/immutable列を追加するだけで、旧jobのprompt・raw提案・受入step・receipt再照合を保持する。旧HEADとの保存3候補比較はpreflight24組、生成入力216組が完全一致。実拒否提案は旧guard/新transportとも拒否し、編集可能項目だけを残した合成応答で原本metadata復元と既存guard通過を確認した。これは実モデル成功ではない。実原稿・既取得JAによる全9段階の入力は割当内、既知pool420683bytes。入れ子metadataは本文と合わせてAI校閲するが、原本からの保持であるためモデルがその内容を改訂できるという意味ではない。
+
+利用者の追加承認により0027は2026年10月JSTだけ月上限を10M→11M microUSDへ引き上げる。通常月7M、既存runの1M/1.25M上限、旧予約・失敗・記事lock・期限・台帳は保持する。SQL変更は予算triggerの10月値だけで、preflightのmonthBudgetMicrosも一致させる。10月26日1.25M確保、修正後の追加試行は1回のみ・成功時終了という運用制約は親担当が管理する。
+
+最大全工程1249533microUSD・13API・9言語・30分は不変。runner/SEO schema変更は不要。有料呼出し0、旧run再送なし。trial12用の全候補sizingは新metadata/code/review契約で用意した。0026/0027適用・merge/deploy・承認範囲内の実試行は親担当へ引き継ぐ。

@@ -1,4 +1,4 @@
-import { prepareCodePreservation } from "./seo-code-preservation.ts";
+import { prepareEditorialTransport } from "./seo-metadata-preservation.ts";
 import { inputPreflight } from "./seo-input-preflight.ts";
 import { assertTableContextPreserved } from "./seo-table-claims.ts";
 import { hasExternalClaimCandidate } from "./seo-research-plan.ts";
@@ -86,6 +86,7 @@ type EditorialJob = {
   discovery_instructions: 1 | 2;
   code_preservation: 1 | 2;
   review_output: 1 | 2;
+  metadata_preservation: 1 | 2;
   allocation_version: 1 | 2;
   variable_review: 0 | 1;
   input_allocation_sha256: string | null;
@@ -125,6 +126,7 @@ const diagnosticCodes = new Set([
   "seo_unverified_reference",
   "seo_code_changed",
   "seo_code_transport",
+  "seo_metadata_transport",
   "seo_number_added",
   "seo_html_changed",
   "seo_change_path",
@@ -295,7 +297,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery,discovery_instructions,code_preservation,review_output) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery,discovery_instructions,code_preservation,review_output,metadata_preservation) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -309,6 +311,7 @@ async function advance(env: AppEnv, runId: string) {
         "high",
         2,
         1,
+        2,
         2,
         2,
         2,
@@ -774,6 +777,7 @@ async function claimJob(
       ...(job.discovery_instructions === 2 ? { discoveryInstructions: 2 } : {}),
       ...(job.code_preservation === 2 ? { codePreservation: 2 } : {}),
       ...(job.review_output === 2 ? { reviewOutput: 2 } : {}),
+      ...(job.metadata_preservation === 2 ? { metadataPreservation: 2 } : {}),
       ...(job.allocation_version === 2 ? { allocationVersion: 2 } : {}),
       ...(job.generation_syntax === 2 ? { generationSyntax: 2 } : {}),
       ...(job.discovery_policy === 3
@@ -997,6 +1001,7 @@ async function propose(
       (saved.discoveryInstructions ?? 1) !== job.discovery_instructions ||
       (saved.codePreservation ?? 1) !== job.code_preservation ||
       (saved.reviewOutput ?? 1) !== job.review_output ||
+      (saved.metadataPreservation ?? 1) !== job.metadata_preservation ||
       (saved.budgetVersion ?? 1) !== job.budget_version ||
       (saved.allocationVersion ?? 1) !== job.allocation_version ||
       (saved.discoveryPolicy ?? 2) !==
@@ -1019,7 +1024,7 @@ async function propose(
     );
     generationInputCap = saved.generationAllocation[job.next_step].maxBytes;
   }
-  const transport = prepareCodePreservation(
+  const transport = prepareEditorialTransport(
     context,
     job.article_path!,
     path,
@@ -1034,6 +1039,9 @@ async function propose(
     }),
     job.code_preservation,
     article.target.spec.site.projectRoot,
+    job.metadata_preservation,
+    article.target.spec.editableFields,
+    job.generation_syntax,
   );
   const callId = "seo-" + crypto.randomUUID();
   const changed = await env.CMS_AI_DB.prepare(

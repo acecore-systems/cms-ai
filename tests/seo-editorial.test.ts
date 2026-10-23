@@ -1,4 +1,4 @@
-import { prepareCodePreservation } from "../src/seo-code-preservation.ts";
+import { prepareEditorialTransport } from "../src/seo-metadata-preservation.ts";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -45,11 +45,13 @@ let sql: DatabaseSync,
   files: { path: string; content: string }[],
   clock: ReturnType<typeof vi.spyOn>;
 let legacyReview = false;
+let legacyMetadata = false;
 let claim: ReturnType<typeof vi.fn>, complete: ReturnType<typeof vi.fn>;
 
 beforeEach(async () => {
   vi.clearAllMocks();
   legacyReview = false;
+  legacyMetadata = false;
   clock = vi.spyOn(Date, "now").mockReturnValue(now);
   sql = new DatabaseSync(":memory:");
   for (const migration of [
@@ -75,6 +77,8 @@ beforeEach(async () => {
     "0023_seo_discovery_instructions.sql",
     "0024_seo_code_preservation.sql",
     "0025_seo_review_output.sql",
+    "0026_seo_metadata_preservation.sql",
+    "0027_seo_october_budget_extension.sql",
   ])
     sql.exec(
       readFileSync(
@@ -113,7 +117,12 @@ beforeEach(async () => {
           if (legacyReview)
             for (const item of statements) {
               if (item.query.startsWith("INSERT INTO seo_editorial_jobs"))
-                item.args[item.args.length - 9] = 0;
+                item.args[item.args.length - 10] = 0;
+            }
+          if (legacyMetadata)
+            for (const item of statements) {
+              if (item.query.startsWith("INSERT INTO seo_editorial_jobs"))
+                item.args[item.args.length - 3] = 1;
             }
           const values = statements.map((item) => ({
             meta: {
@@ -940,46 +949,60 @@ describe("SEO durable editorial boundary", () => {
     expect(objects.has("seo-editorial/" + jobId + "/step-0.json")).toBe(true);
     expect(complete).not.toHaveBeenCalled();
   });
-  it("records safe content rejection evidence without retrying or releasing the completed reservation", async () => {
-    const jobId = await claimed();
-    const infer = mocks.infer.getMockImplementation()!;
-    mocks.infer.mockImplementationOnce(async (...args) => {
-      const result = await infer(...args);
-      result.changes[0].content = result.changes[0].content.replace(
-        "author: Gui",
-        "author: Changed",
+  it.each([1, 2])(
+    "records safe metadata rejection v%i without retrying or releasing the completed reservation",
+    async (version) => {
+      legacyMetadata = version === 1;
+      const jobId = await claimed();
+      const infer = mocks.infer.getMockImplementation()!;
+      mocks.infer.mockImplementationOnce(async (...args) => {
+        const result = await infer(...args);
+        result.changes[0].content =
+          version === 1
+            ? result.changes[0].content.replace(
+                "author: Gui",
+                "author: Changed",
+              )
+            : result.changes[0].content.replace(
+                "---\n",
+                "---\nauthor: Changed\n",
+              );
+        return result;
+      });
+      expect(await request(jobId, "propose", { step: 0 })).toEqual({
+        status: "unresolved",
+      });
+      const key = "seo-editorial/" + jobId + "/failure.json";
+      const failure = {
+        operation: "propose",
+        step: 0,
+        code:
+          version === 1 ? "seo_immutable_metadata" : "seo_metadata_transport",
+      };
+      expect(JSON.parse(objects.get(key)!)).toEqual(failure);
+      expect(
+        sql.prepare("SELECT status FROM seo_budget_calls").get()?.status,
+      ).toBe("complete");
+      expect(
+        sql.prepare("SELECT next_step FROM seo_editorial_jobs").get()
+          ?.next_step,
+      ).toBe(0);
+      expect(objects.has("seo-editorial/" + jobId + "/step-0.json")).toBe(
+        false,
       );
-      return result;
-    });
-    expect(await request(jobId, "propose", { step: 0 })).toEqual({
-      status: "unresolved",
-    });
-    const key = "seo-editorial/" + jobId + "/failure.json";
-    const failure = {
-      operation: "propose",
-      step: 0,
-      code: "seo_immutable_metadata",
-    };
-    expect(JSON.parse(objects.get(key)!)).toEqual(failure);
-    expect(
-      sql.prepare("SELECT status FROM seo_budget_calls").get()?.status,
-    ).toBe("complete");
-    expect(
-      sql.prepare("SELECT next_step FROM seo_editorial_jobs").get()?.next_step,
-    ).toBe(0);
-    expect(objects.has("seo-editorial/" + jobId + "/step-0.json")).toBe(false);
-    expect(complete).toHaveBeenCalledWith({
-      runId,
-      articleKey: "portal:" + sourcePath,
-      status: "unresolved",
-    });
-    await request(jobId, "propose", { step: 0 });
-    expect(JSON.parse(objects.get(key)!)).toEqual(failure);
-    expect(mocks.infer).toHaveBeenCalledTimes(1);
-    expect(
-      sql.prepare("SELECT COUNT(*) AS n FROM seo_budget_calls").get()?.n,
-    ).toBe(1);
-  });
+      expect(complete).toHaveBeenCalledWith({
+        runId,
+        articleKey: "portal:" + sourcePath,
+        status: "unresolved",
+      });
+      await request(jobId, "propose", { step: 0 });
+      expect(JSON.parse(objects.get(key)!)).toEqual(failure);
+      expect(mocks.infer).toHaveBeenCalledTimes(1);
+      expect(
+        sql.prepare("SELECT COUNT(*) AS n FROM seo_budget_calls").get()?.n,
+      ).toBe(1);
+    },
+  );
   it("never persists raw exceptions and still terminates if diagnostic storage fails", async () => {
     const jobId = await claimed();
     env.CMS_AI_IMAGES.get = vi.fn(async () => {
@@ -1220,11 +1243,15 @@ describe("SEO durable editorial boundary", () => {
             .at(-1)![3]
             .find((file: { path: string }) => file.path === sourcePath).content,
         ).toBe(
-          prepareCodePreservation(
+          prepareEditorialTransport(
             [{ path: sourcePath, content: japanese }],
             sourcePath,
             sourcePath,
             "",
+            2,
+            "",
+            2,
+            identity.target.spec.editableFields,
             2,
           ).files[0].content,
         );
@@ -2051,7 +2078,7 @@ it("binds the fixed generation allocation to persisted bytes and rejects tamperi
 it("skips before claim when the complete new run would exceed remaining monthly budget", async () => {
   env.SEO_RESEARCH_ENABLED = "true";
   const id = await inspecting();
-  for (let i = 0; i < 11; i++) {
+  for (let i = 0; i < 12; i++) {
     sql
       .prepare(
         "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline) VALUES(?,'other',?,?)",

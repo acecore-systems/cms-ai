@@ -356,7 +356,7 @@ it("reads complete locale and guide bytes before accepting a size-fitting candid
   const translation = f.target.directory + "/ru/example.md";
   f.entries[f.entries.findIndex((x) => x.path === translation)] = f.entry(
     translation,
-    "Unique complete translation body.",
+    "---\ntitle: Translation\n---\nUnique complete translation body.",
   );
   const result = await editorialEligibility(input(), f.fetcher);
   expect(result.results[0].status).toBe("eligible");
@@ -397,7 +397,8 @@ it("excludes full-language generation overflow even when the canonical plan is s
   for (let i = 1; i <= 8; i++)
     f.entries[i] = f.entry(
       f.entries[i].path,
-      ("Translation " + i + " ").repeat(7000),
+      "---\ntitle: Translation\n---\n" +
+        ("Translation " + i + " ").repeat(7000),
     );
   expect(
     (await editorialEligibility(input(), f.fetcher)).results[0],
@@ -450,4 +451,13 @@ it("rejects a known plan overflow before fetching translation or guide bodies", 
       ),
     ).toBe(false);
   }
+});
+
+it("keeps malformed translation metadata unknown without a paid call", async () => {
+  const f = fixture();
+  f.setOpen(false);
+  f.entries[1] = f.entry(f.entries[1].path, "Missing frontmatter");
+  await expect(editorialEligibility(input(), f.fetcher)).rejects.toThrow(
+    "seo_eligibility_unknown",
+  );
 });
