@@ -116,6 +116,7 @@ beforeEach(async () => {
     "0021_seo_url_instructions.sql",
     "0022_seo_research_recovery.sql",
     "0023_seo_discovery_instructions.sql",
+    "0024_seo_code_preservation.sql",
   ])
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),
