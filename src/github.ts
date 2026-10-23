@@ -184,7 +184,7 @@ export function seoRepositoryReader(
         ...init,
         method: "GET",
         headers: githubHeaders(accessToken),
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(
           Math.max(1, Math.min(10000, deadline - Date.now())),
         ),

@@ -50,7 +50,7 @@ function fixture() {
   const fetcher = vi.fn(
     async (input: RequestInfo | URL, options?: RequestInit) => {
       expect(options?.headers).not.toHaveProperty("Authorization");
-      expect(options?.redirect).toBe("error");
+      expect(options?.redirect).toBe("manual");
       const u = new URL(String(input)),
         p = u.pathname.replace("/repos/acecore-systems/acecore-systems", "");
       let value: any;
