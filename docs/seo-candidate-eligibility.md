@@ -36,3 +36,19 @@ CMSの新RPCを先に配置し、その後SEOの新規収集を配置する。D1
 ## 外部調査の編集対象外
 
 `SEO_RESEARCH_EXCLUSIONS` は実原稿を読んで確認した編集対象外の正本pathをサイト別に明示する。Wikiの `rinen.md` は運営自身の理念・目標の宣言だけであり、第三者資料による裏付け対象ではないため除外する。技術記事や外部リンクのない記事を一律に除外しない。新規候補照合の `owned_policy_not_external_research` として記録し、過去snapshot・記事・ロックは変更しない。将来このページに外部検証対象の事実を追加する場合は、この一覧を再レビューする。
+
+## 無料候補品質チェック（2026-10-23）
+
+新規収集のeligibilityだけで、既存plannerのselectable文をさらに確認する。製品名に見える主語だけで、自身の創作活動・制作実績・採用や実装の経験を外部製品仕様と扱わない。製品未特定の「AIがコードを読み込み／ブラウザを操作する」という個別作業説明も除外する。候補が残らない記事は既存の `no_external_factual_claim` を返し、翻訳・guide本文の追加取得、記事lock、API予約、モデル呼出しに進まない。
+
+タイトル・site単位のブロックではない。制作事例の別段落に独立した原文の技術仕様があれば対象を維持する。表は既存の厳密な製品／機能2列・exact行・前後の歴史的注記の契約をそのまま使う。原稿、条件、否定、コード、URL支持条件を変えず、事実を新しく合成しない。語句による保守的なheuristicのため取りこぼしはあり、候補ありも外部資料での支持やplanner成功を保証しない。
+
+保存済みsnapshotからのstart、既存jobのclaim、planner入力／parsePlan／receiptは再解釈しない。新規収集を経由しない直接startへの適用は範囲外。plannerを同じ判定へ変更する場合は、新jobのversionを導入して旧jobと分ける必要がある。
+
+ローカル非公開原稿の再生（本文はcommitしない）：trial7と15は旧候補あり→新候補なし、trial10と14は候補ありを維持。`CMS_CANDIDATE_REPLAY_DIR` にtrialディレクトリの親を設定すると `tests/seo-candidate-quality.test.ts` の任意再生を実施できる。未設定のCIではこの1件だけskipする。これは無料の候補判定の再生であり、課金planner／生成／校閲／Draft成功の実証ではない。
+
+### insufficient後のfallbackの境界
+
+現在の `seo_research_rejections` はrun単位でUNIQUE、receipt確定でjob/runを終端化し、job・budget run・article key・期限・checks・予算callの変更をtriggerで禁止する。`advance` が次候補へ進むのはclaim前のineligibleだけ。終端receipt後に同じrunを再開する変更は安全な小修正ではない。
+
+将来の実装案は親coordinatorで最大候補数を固定したattempt IDを新設し、各attemptのCMS run/job/receiptを独立に保持すること。記事lockの確定解放、重複通知の冪等性、親全体の累積予算上限・期限・月残を維持し、不明な失敗では進まない条件をCMS/SEO双方で合意・version化する必要がある。今回この契約・予算・migrationは変更しない。

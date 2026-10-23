@@ -461,3 +461,29 @@ it("keeps malformed translation metadata unknown without a paid call", async () 
     "seo_eligibility_unknown",
   );
 });
+it("rejects own case-study claims before fetching locale/guidance bodies, but retains independent facts", async () => {
+  const f = fixture();
+  f.setOpen(false);
+  const own =
+    '---\ntitle: 制作事例\ndate: "2026-10-01"\n---\nHattは、絵や小説などの創作活動を行っています。';
+  f.entries[0] = f.entry(f.entries[0].path, own);
+  expect(
+    (await editorialEligibility(input(), f.fetcher)).results[0],
+  ).toMatchObject({
+    status: "ineligible",
+    reason: "no_external_factual_claim",
+  });
+  const localeSha = f.entries[1].sha;
+  expect(
+    (f.fetcher as any).mock.calls.some((c: any[]) =>
+      String(c[0]).endsWith("/git/blobs/" + localeSha),
+    ),
+  ).toBe(false);
+  f.entries[0] = f.entry(
+    f.entries[0].path,
+    own + "\n\nPagefindは、静的サイト向けの全文検索ライブラリです。",
+  );
+  expect(
+    (await editorialEligibility(input(), f.fetcher)).results[0].status,
+  ).toBe("eligible");
+});
