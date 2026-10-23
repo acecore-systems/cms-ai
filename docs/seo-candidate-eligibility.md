@@ -32,3 +32,7 @@ CMSの新RPCを先に配置し、その後SEOの新規収集を配置する。D1
 4. 本修正CMS配備後、SEO新候補選別を配置して新IDのmanual_read_onlyを一度確認する。失敗時は固定codeを照合し、記事生成や匿名fallbackで回避しない。
 
 入口は [App登録設定](https://github.com/organizations/acecore-systems/settings/apps/acecore-cms-ai-runner/permissions) と [installation設定](https://github.com/organizations/acecore-systems/settings/installations/157933151)。これらは所有者/IDとGitHubの経路から示す管理入口であり、現在ログインでのUI到達は未確認。[公式の変更手順](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration)と[更新権限の承認](https://docs.github.com/en/apps/using-github-apps/approving-updated-permissions-for-a-github-app)に従う。秘密鍵再取得・token転記・新App作成は不要。
+
+## 外部調査の編集対象外
+
+`SEO_RESEARCH_EXCLUSIONS` は実原稿を読んで確認した編集対象外の正本pathをサイト別に明示する。Wikiの `rinen.md` は運営自身の理念・目標の宣言だけであり、第三者資料による裏付け対象ではないため除外する。技術記事や外部リンクのない記事を一律に除外しない。新規候補照合の `owned_policy_not_external_research` として記録し、過去snapshot・記事・ロックは変更しない。将来このページに外部検証対象の事実を追加する場合は、この一覧を再レビューする。
