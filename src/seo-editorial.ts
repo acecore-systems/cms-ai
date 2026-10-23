@@ -1,6 +1,6 @@
+import { inputPreflight } from "./seo-input-preflight.ts";
 import { assertTableContextPreserved } from "./seo-table-claims.ts";
 import { hasExternalClaimCandidate } from "./seo-research-plan.ts";
-import { externalScope } from "./seo-external-sources.ts";
 import { stageBudget, CURRENT_BUDGET_VERSION } from "./seo-stage-budget.ts";
 import {
   immutableReviewObject,
@@ -18,7 +18,7 @@ import {
 import type { AppEnv } from "./env.ts";
 import { dispatchSeoEditorialJob } from "./github.ts";
 import { sha256, jstMonth, monthBudgetMicros } from "./seo-budget.ts";
-import { generateSeo, buildSeoGenerationRequest } from "./seo-generation.ts";
+import { generateSeo } from "./seo-generation.ts";
 import { validateSourceFiles } from "./inference.ts";
 import { json, HttpError, readJsonObject } from "./http.ts";
 import { authenticateRunner, type RunnerIdentity } from "./oidc.ts";
@@ -31,18 +31,13 @@ import {
   type EditorialFile,
 } from "./seo-content.ts";
 import {
-  buildPlanRequest,
-  buildReviewRequest,
   researchArticle,
   loadResearch,
   reviewArticle,
   assertReview,
   type CheckContext,
 } from "./seo-checks.ts";
-import {
-  allocateGenerationInputs,
-  assertGenerationAllocation,
-} from "./seo-stage-budget.ts";
+import { assertGenerationAllocation } from "./seo-stage-budget.ts";
 import { evidenceReferences } from "./seo-evidence.ts";
 import { buildEditorialInstruction } from "./seo-editorial-instruction.ts";
 
@@ -718,83 +713,21 @@ async function claimJob(
   // Keep legacy jobs on their original contract.
   let allocationHash: string | null = null;
   if (job.research_contract === 2) {
-    const baseline = paths.map((path) => files.find((f) => f.path === path)!);
-    const bytes = (request: unknown) =>
-      new TextEncoder().encode(JSON.stringify(request)).length;
-    const planBytes = bytes(
-      buildPlanRequest(
-        article.source.content,
-        2,
-        job.research_recovery === 2
-          ? 5
-          : job.external_sources
-            ? 4
-            : job.discovery_policy,
-        job.external_sources
-          ? externalScope(job.site_id, article.source)
-          : undefined,
-        job.research_recovery,
-      ),
+    const {
+      baseline,
+      planBytes,
+      reviewBytes,
+      generationInputs,
+      generationAllocation,
+      sizeReasons,
+    } = inputPreflight(
+      identity.site,
+      article,
+      files,
+      sourceHash,
+      candidate.reason,
+      job,
     );
-    const reviewBytes = bytes(
-      buildReviewRequest(article, files, baseline, {
-        version: 1,
-        checkedAt: "",
-        sourceSha256: sourceHash,
-        responseId: "not_acquired_size_estimate_only",
-        queries: [],
-        sources: [],
-      }),
-    );
-    // Unknown future research/JA growth cannot be forecast. This placeholder is
-    // explicitly unacquired and only rejects already oversized known inputs.
-    const generationEstimateEvidence = {
-      version: 1 as const,
-      checkedAt: "",
-      sourceSha256: sourceHash,
-      responseId: "not_acquired_size_estimate_only",
-      queries: [],
-      sources: [],
-    };
-    const generationInputs = paths.map((path, step) => {
-      const locale = article.translations.find((t) => t.path === path)?.locale;
-      const knownFiles = files.filter(
-        (f) =>
-          f.path === article.source.path ||
-          f.path === path ||
-          f.path.startsWith("docs/"),
-      );
-      const instruction = buildEditorialInstruction({
-        syntaxPolicy: job.generation_syntax,
-        step,
-        paths,
-        locale,
-        translationCount: article.translations.length,
-        reason: candidate.reason,
-        research: generationEstimateEvidence,
-      });
-      const request = buildSeoGenerationRequest(
-        identity.site,
-        article.source.path,
-        [path],
-        instruction,
-        knownFiles,
-      );
-      return { path, locale: locale || "ja", bytes: bytes(request) };
-    });
-    let generationAllocation:
-      ReturnType<typeof allocateGenerationInputs> | undefined;
-    if (job.retrieval_contract === 2) {
-      try {
-        generationAllocation = allocateGenerationInputs(
-          generationInputs,
-          job.budget_version,
-          job.allocation_version,
-        );
-      } catch {
-        /* ineligible, no paid call */
-      }
-    }
     const monthJst = jstMonth(Date.now());
     const monthly =
       job.retrieval_contract === 2
@@ -820,22 +753,7 @@ async function claimJob(
         monthBudgetMicros(monthJst)
         ? ["monthly_budget_insufficient"]
         : []),
-      ...(planBytes > stageBudget(job.budget_version).limits.plan
-        ? ["plan_input_exceeded"]
-        : []),
-      ...(reviewBytes > stageBudget(job.budget_version).limits.review
-        ? ["baseline_review_input_exceeded"]
-        : []),
-      ...((
-        job.retrieval_contract === 2
-          ? !generationAllocation
-          : generationInputs.some(
-              (input) =>
-                input.bytes > stageBudget(job.budget_version).limits.generation,
-            )
-      )
-        ? ["baseline_generation_input_exceeded"]
-        : []),
+      ...sizeReasons,
     ];
     const preflightRaw = JSON.stringify({
       version: 1,

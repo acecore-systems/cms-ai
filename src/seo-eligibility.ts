@@ -1,3 +1,10 @@
+import { stageBudget } from "./seo-stage-budget.ts";
+import {
+  inputPreflight,
+  planInputBytes,
+  currentInputPreflightOptions,
+} from "./seo-input-preflight.ts";
+import { validateSourceFiles } from "./inference.ts";
 import { hasExternalClaimCandidate } from "./seo-research-plan.ts";
 import { SeoRepositoryReadError } from "./github.ts";
 import { seoSite, seoArticleUrl, SEO_RESEARCH_EXCLUSIONS } from "./sites.ts";
@@ -142,7 +149,7 @@ async function inspectEligibility(
       return fail();
     entries.set(item.path, item);
   }
-  const blobCache = new Map<string, string>();
+  const blobCache = new Map<string, { content: string; size: number }>();
   async function read(path: string) {
     const e = entries.get(path);
     if (
@@ -153,7 +160,11 @@ async function inspectEligibility(
       e.size > 448 * 1024
     )
       return fail();
-    if (blobCache.has(e.sha)) return blobCache.get(e.sha)!;
+    const cached = blobCache.get(e.sha);
+    if (cached) {
+      if (cached.size !== e.size) return fail();
+      return cached.content;
+    }
     const r = (await get(`/git/blobs/${e.sha}`)).value;
     if (
       r.sha !== e.sha ||
@@ -183,7 +194,7 @@ async function inspectEligibility(
       fatal: true,
       ignoreBOM: false,
     }).decode(bytes);
-    blobCache.set(e.sha, content);
+    blobCache.set(e.sha, { content, size: bytes.length });
     return content;
   }
   const open = await pages("/pulls?state=open&sort=created&direction=asc", 10);
@@ -362,6 +373,47 @@ async function inspectEligibility(
         url,
         status: "ineligible" as const,
         reason: "translation_pending",
+      });
+      continue;
+    }
+    const options = currentInputPreflightOptions(spec.site.id);
+    // A known plan overflow alone proves ineligibility. Do not spend bounded
+    // repository reads on translations that cannot change this result.
+    if (
+      planInputBytes(identity.source, options) >
+      stageBudget(options.budget_version).limits.plan
+    ) {
+      results.push({
+        url,
+        status: "ineligible" as const,
+        reason: "known_input_budget_exceeded",
+      });
+      continue;
+    }
+    // Read every known input at this immutable tree. Missing/tampered/oversized
+    // blobs fail unknown, never an eligible estimate with incomplete content.
+    const fullInputs = [];
+    for (const path of new Set([...paths, ...spec.guidance]))
+      fullInputs.push({ path, content: await read(path) });
+    const knownFiles = validateSourceFiles(spec.site, fullInputs);
+    const fullIdentity = sourceIdentity(v.site, url, knownFiles);
+    if (!fullIdentity) return fail();
+    const sourceHash = await sha256(normalizeLf(fullIdentity.source.content));
+    // The eligibility RPC has no candidate reason. Empty is a lower bound;
+    // claim repeats the same builder with the actual reason and saved contracts.
+    const preflight = inputPreflight(
+      spec.site,
+      fullIdentity,
+      knownFiles,
+      sourceHash,
+      "",
+      options,
+    );
+    if (preflight.sizeReasons.length) {
+      results.push({
+        url,
+        status: "ineligible" as const,
+        reason: "known_input_budget_exceeded",
       });
       continue;
     }

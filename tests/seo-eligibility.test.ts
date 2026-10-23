@@ -34,6 +34,9 @@ function fixture() {
       entry(target.directory + "/" + l + "/example.md", content),
     ),
     entry(target.spec.statePath!, JSON.stringify({ sourceHash: "x" })),
+    ...target.spec.guidance.map((path) =>
+      entry(path, "Complete writing guidance."),
+    ),
   ];
   const pr = {
     number: 158,
@@ -85,6 +88,7 @@ function fixture() {
   ) as unknown as typeof fetch;
   return {
     target,
+    entry,
     entries,
     pr,
     fetcher,
@@ -344,5 +348,106 @@ it("excludes the reviewed owned philosophy page but not other wiki articles", as
         ),
       ).toBe(false);
     }
+  }
+});
+it("reads complete locale and guide bytes before accepting a size-fitting candidate", async () => {
+  const f = fixture();
+  f.setOpen(false);
+  const translation = f.target.directory + "/ru/example.md";
+  f.entries[f.entries.findIndex((x) => x.path === translation)] = f.entry(
+    translation,
+    "Unique complete translation body.",
+  );
+  const result = await editorialEligibility(input(), f.fetcher);
+  expect(result.results[0].status).toBe("eligible");
+  for (const path of [
+    translation,
+    ...f.target.spec.guidance,
+    f.target.spec.statePath!,
+  ]) {
+    const sha = f.entries.find((x) => x.path === path)!.sha;
+    expect(
+      (f.fetcher as any).mock.calls.some((c: any[]) =>
+        String(c[0]).includes("/git/blobs/" + sha),
+      ),
+    ).toBe(true);
+  }
+});
+it.each(["guide-missing", "locale-corrupt", "guide-unavailable"])(
+  "incomplete preflight input remains unknown: %s",
+  async (kind) => {
+    const f = fixture();
+    f.setOpen(false);
+    const guide = f.entries.find((x) => x.path === f.target.spec.guidance[0])!;
+    if (kind === "guide-missing") f.entries.splice(f.entries.indexOf(guide), 1);
+    if (kind === "locale-corrupt") f.entries[1].size++;
+    const fetcher: typeof fetch = (u, o) =>
+      kind === "guide-unavailable" &&
+      String(u).endsWith("/git/blobs/" + guide.sha)
+        ? Promise.resolve(new Response("", { status: 403 }))
+        : f.fetcher(u, o);
+    await expect(editorialEligibility(input(), fetcher)).rejects.toThrow(
+      "seo_eligibility_unknown",
+    );
+  },
+);
+it("excludes full-language generation overflow even when the canonical plan is small", async () => {
+  const f = fixture();
+  f.setOpen(false);
+  for (let i = 1; i <= 8; i++)
+    f.entries[i] = f.entry(
+      f.entries[i].path,
+      ("Translation " + i + " ").repeat(7000),
+    );
+  expect(
+    (await editorialEligibility(input(), f.fetcher)).results[0],
+  ).toMatchObject({
+    status: "ineligible",
+    reason: "known_input_budget_exceeded",
+  });
+});
+it("excludes oversized known guide input without deleting or truncating it", async () => {
+  const f = fixture();
+  f.setOpen(false);
+  const i = f.entries.findIndex((x) => x.path === f.target.spec.guidance[0]);
+  f.entries[i] = f.entry(
+    f.entries[i].path,
+    "Full writing guide. ".repeat(4000),
+  );
+  expect(
+    (await editorialEligibility(input(), f.fetcher)).results[0],
+  ).toMatchObject({
+    status: "ineligible",
+    reason: "known_input_budget_exceeded",
+  });
+});
+it("rejects a known plan overflow before fetching translation or guide bodies", async () => {
+  const f = fixture();
+  f.setOpen(false);
+  const content =
+    '---\ntitle: Example\ndate: "2026-10-01"\n---\n' +
+    Array.from(
+      { length: 120 },
+      (_, i) =>
+        `Product${i} supports ` +
+        "complete configuration settings ".repeat(10) +
+        ".",
+    ).join("\n\n");
+  f.entries[0] = f.entry(f.entries[0].path, content);
+  const result = await editorialEligibility(input(), f.fetcher);
+  expect(result.results[0]).toMatchObject({
+    status: "ineligible",
+    reason: "known_input_budget_exceeded",
+  });
+  for (const path of [
+    f.target.directory + "/ru/example.md",
+    ...f.target.spec.guidance,
+  ]) {
+    const sha = f.entries.find((e) => e.path === path)!.sha;
+    expect(
+      (f.fetcher as any).mock.calls.some((c: any[]) =>
+        String(c[0]).endsWith("/git/blobs/" + sha),
+      ),
+    ).toBe(false);
   }
 });
