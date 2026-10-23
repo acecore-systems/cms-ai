@@ -70,27 +70,35 @@ it.each([1, 2, 3, 4, 5, 6, 7, 8, 9])(
   },
 );
 
-it.each([1, 2, 3, 4, 5, 6, 7, 8, 9])(
-  "rejects one byte over each cap, accepts exact cap for %i locales",
-  (count) => {
-    const options = currentInputPreflightOptions("acecore-systems");
+it.each(
+  [1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((count) =>
+    [1, 2].map((version) => [count, version]),
+  ),
+)(
+  "rejects one byte over each cap, accepts exact cap for %i locales review v%i",
+  (count, version) => {
+    const options = {
+      ...currentInputPreflightOptions("acecore-systems"),
+      review_output: version as 1 | 2,
+    };
+    const cap = version === 2 ? 440000 : 500000;
     const pool = Math.floor((525000 * count) / 9);
     const inputs = Array.from({ length: count }, (_, i) => ({
       path: i + ".md",
       bytes: i === 0 ? pool - count + 1 : 1,
     }));
+    expect(assessInputSizes(32000, cap, inputs, options).sizeReasons).toEqual(
+      [],
+    );
+    expect(assessInputSizes(32001, cap, inputs, options).sizeReasons).toEqual([
+      "plan_input_exceeded",
+    ]);
     expect(
-      assessInputSizes(32000, 500000, inputs, options).sizeReasons,
-    ).toEqual([]);
-    expect(
-      assessInputSizes(32001, 500000, inputs, options).sizeReasons,
-    ).toEqual(["plan_input_exceeded"]);
-    expect(
-      assessInputSizes(32000, 500001, inputs, options).sizeReasons,
+      assessInputSizes(32000, cap + 1, inputs, options).sizeReasons,
     ).toEqual(["baseline_review_input_exceeded"]);
     inputs[0].bytes++;
-    expect(
-      assessInputSizes(32000, 500000, inputs, options).sizeReasons,
-    ).toEqual(["baseline_generation_input_exceeded"]);
+    expect(assessInputSizes(32000, cap, inputs, options).sizeReasons).toEqual([
+      "baseline_generation_input_exceeded",
+    ]);
   },
 );

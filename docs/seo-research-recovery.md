@@ -100,3 +100,11 @@ eligibility RPCには候補reasonがないため、reason空文字の下限見�
 無課金検証では513tests成功、旧版48比較一致、保存34URLのoffline再生は93reads・20ineligible/14eligibleだった。実原稿と既取得JAを使った全9段階のrequestは割当内で、既知入力pool502,963bytes、pt57,108/58,508bytes。これは保存原本と合成応答による検証であり、新transportの実モデル成功ではない。最大予約1,249,533 microUSD、13API、9言語、30分、研究8KBおよび生成pool525KBは不変。有料APIは呼び出していない。
 
 リスト・引用内に入れ子になったコードは復元を推測せず拒否する。コード周辺の意味や配置は引き続き既存guard・AI校閲で確認する。eligibilityの既知入力適合は将来の研究・改訂による増分を保証せず、各stageの最終入力検査を維持する。
+
+## 全言語校閲の出力枠（0025）
+
+全9言語の生成受入と36コードブロックの原本一致後、校閲は `incomplete / max_output_tokens` で停止した。output6000が全てreasoningでfinal textがなく、AI品質判定のfailではない。新jobだけ `review_output=2` とし、校閲の出力上限を6000→24000、入力上限を500000→440000bytesへ変更する。high effort、全言語の原本・改訂・guide・根拠、品質判定条件を維持する。出力余裕を増やす対策であり、次回の完了や合格は保証しない。
+
+0025のdefault1とimmutable triggerで既存jobのrequest・hash・receiptを保持する。他stageの6000出力、生成枠、研究8KB、13API、9言語、30分は不変。新review契約はphase=reviewに限定し、入力cap・予約額・usage上限を同じ版で検証する。incompleteや予約超過は引き続き未解決として予約を保持する。旧runの再送・再校閲は行わない。runner・SEO schema変更は不要。
+
+本番builderを全13呼出しの上限まで埋めた計算は1,249,533microUSDで不変。入力60000bytes×0.3の削減で追加出力18000を相殺する。保存された実9言語の完成稿から再構成した校閲requestは旧306304、新306305bytesで440000以下（本文は同一、出力上限の桁数だけ増加）。当該実サイズの予約は100349→118350microUSDとなるため、実runの追加出力が無料になるという意味ではない。旧HEADとのrequest/hash一致とpreflight48比較一致を確認した。全証拠は無課金のローカル検証で、実モデル呼出しは0。merge・migration適用・本番配備・実試行は運用担当へ引き継ぐ。

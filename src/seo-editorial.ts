@@ -85,6 +85,7 @@ type EditorialJob = {
   research_recovery: 1 | 2;
   discovery_instructions: 1 | 2;
   code_preservation: 1 | 2;
+  review_output: 1 | 2;
   allocation_version: 1 | 2;
   variable_review: 0 | 1;
   input_allocation_sha256: string | null;
@@ -294,7 +295,7 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery,discovery_instructions,code_preservation) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery,discovery_instructions,code_preservation,review_output) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
         jobId,
         target.spec.site.id,
@@ -308,6 +309,7 @@ async function advance(env: AppEnv, runId: string) {
         "high",
         2,
         1,
+        2,
         2,
         2,
         2,
@@ -753,7 +755,11 @@ async function claimJob(
         : []),
       ...(monthly &&
       monthly.held +
-        stageBudget(job.budget_version, job.research_recovery).maximum >
+        stageBudget(
+          job.budget_version,
+          job.research_recovery,
+          job.review_output,
+        ).maximum >
         monthBudgetMicros(monthJst)
         ? ["monthly_budget_insufficient"]
         : []),
@@ -767,6 +773,7 @@ async function claimJob(
       ...(job.url_instructions === 2 ? { urlInstructions: 2 } : {}),
       ...(job.discovery_instructions === 2 ? { discoveryInstructions: 2 } : {}),
       ...(job.code_preservation === 2 ? { codePreservation: 2 } : {}),
+      ...(job.review_output === 2 ? { reviewOutput: 2 } : {}),
       ...(job.allocation_version === 2 ? { allocationVersion: 2 } : {}),
       ...(job.generation_syntax === 2 ? { generationSyntax: 2 } : {}),
       ...(job.discovery_policy === 3
@@ -788,7 +795,11 @@ async function claimJob(
         : {}),
       limits: {
         plan: stageBudget(job.budget_version).limits.plan,
-        review: stageBudget(job.budget_version).limits.review,
+        review: stageBudget(
+          job.budget_version,
+          job.research_recovery,
+          job.review_output,
+        ).limits.review,
         generation: stageBudget(job.budget_version).limits.generation,
         ...(job.budget_version === 2
           ? {
@@ -796,7 +807,11 @@ async function claimJob(
                 job.allocation_version === 2
                   ? Math.floor((stageBudget(2).pool * paths.length) / 9)
                   : stageBudget(2).pool,
-              maximumMicros: stageBudget(2, job.research_recovery).maximum,
+              maximumMicros: stageBudget(
+                2,
+                job.research_recovery,
+                job.review_output,
+              ).maximum,
               runMicros: stageBudget(2).runMicros,
             }
           : {}),
@@ -871,6 +886,7 @@ function checkContext(job: EditorialJob, run: Run): CheckContext {
     contractVersion: job.research_contract,
     retrievalVersion: job.retrieval_contract,
     budgetVersion: job.budget_version,
+    reviewOutput: job.review_output,
     researchContext: job.research_context,
     recovery: job.research_recovery,
     referencePolicy: job.reference_policy,
@@ -980,6 +996,7 @@ async function propose(
       (saved.urlInstructions ?? 1) !== job.url_instructions ||
       (saved.discoveryInstructions ?? 1) !== job.discovery_instructions ||
       (saved.codePreservation ?? 1) !== job.code_preservation ||
+      (saved.reviewOutput ?? 1) !== job.review_output ||
       (saved.budgetVersion ?? 1) !== job.budget_version ||
       (saved.allocationVersion ?? 1) !== job.allocation_version ||
       (saved.discoveryPolicy ?? 2) !==
