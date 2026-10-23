@@ -1,3 +1,6 @@
+import { SeoBudget } from "../src/seo-budget.ts";
+import { deepseekPayload, SEO_DEEPSEEK } from "../src/seo-deepseek.ts";
+import { buildTextInferencePayload } from "../src/inference.ts";
 import { prepareEditorialTransport } from "../src/seo-metadata-preservation.ts";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
@@ -31,7 +34,7 @@ vi.mock("../src/inference.ts", async (original) => ({
   ...(await original()),
   runInference: (...args: unknown[]) => mocks.infer(...args),
 }));
-const now = Date.parse("2026-10-20T00:00:00Z");
+let now = Date.parse("2026-10-20T00:00:00Z");
 const runId = "editorial-00000000-0000-4000-8000-000000000001";
 const baseSha = "a".repeat(40);
 const sourcePath = "src/content/stories/example.md";
@@ -45,12 +48,15 @@ let sql: DatabaseSync,
   objects: Map<string, string>,
   files: { path: string; content: string }[],
   clock: ReturnType<typeof vi.spyOn>;
+let deepseekProfile = false;
 let legacyReview = false;
 let legacyMetadata = false;
 let claim: ReturnType<typeof vi.fn>, complete: ReturnType<typeof vi.fn>;
 
 beforeEach(async () => {
+  now = Date.parse("2026-10-20T00:00:00Z");
   vi.clearAllMocks();
+  deepseekProfile = false;
   legacyReview = false;
   legacyMetadata = false;
   clock = vi.spyOn(Date, "now").mockReturnValue(now);
@@ -83,6 +89,8 @@ beforeEach(async () => {
     "0029_seo_october_budget_1114.sql",
     "0030_seo_october_budget_1189.sql",
     "0028_seo_code_token_repair.sql",
+    "0031_seo_fallback.sql",
+    "0032_seo_text_models.sql",
   ])
     sql.exec(
       readFileSync(
@@ -203,11 +211,16 @@ beforeEach(async () => {
       const path = JSON.parse(
         /変更は次の許可pathだけ: (\[[^\n]*\])/.exec(job.instruction)![1],
       )[0];
-      await beforeRequest("gpt-6-luna", {
-        max_completion_tokens: 12000,
-        service_tier: "default",
-        messages: [{ role: "user", content: "bounded" }],
-      });
+      await beforeRequest(
+        deepseekProfile ? SEO_DEEPSEEK : "gpt-6-luna",
+        deepseekProfile
+          ? deepseekPayload(buildTextInferencePayload(_site, job, context))
+          : {
+              max_completion_tokens: 12000,
+              service_tier: "default",
+              messages: [{ role: "user", content: "bounded" }],
+            },
+      );
       return {
         changes: [
           {
@@ -348,6 +361,7 @@ describe("SEO durable editorial boundary", () => {
 
   it.each([
     "valid",
+    "deepseek-wiki-pass",
     "wiki-pass",
     "wiki-valid",
     "wiki-lost-callback",
@@ -366,6 +380,14 @@ describe("SEO durable editorial boundary", () => {
     "malformed-review",
     "receipt-store-failure",
   ])("review rejection receipt: %s", async (variant) => {
+    const deepseek = variant === "deepseek-wiki-pass";
+    if (deepseek) {
+      variant = "wiki-pass";
+      deepseekProfile = true;
+      env.SEO_AI_MODEL = SEO_DEEPSEEK;
+      now = Date.parse("2026-10-23T00:00:00Z");
+      clock.mockReturnValue(now);
+    }
     const wiki = variant.startsWith("wiki-");
     if (variant === "legacy-valid") {
       legacyReview = true;
@@ -529,6 +551,29 @@ describe("SEO durable editorial boundary", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
+    if (deepseek)
+      env.AI = {
+        run: vi.fn(async (_model: string, payload: any) => {
+          const r = await fetchMock("mock-only", {
+            body: JSON.stringify({ input: payload.messages[1].content }),
+          });
+          const result: any = await r.json();
+          return {
+            model: SEO_DEEPSEEK,
+            choices: [
+              {
+                finish_reason: "stop",
+                message: {
+                  role: "assistant",
+                  content: result.output.find((x: any) => x.type === "message")
+                    .content[0].text,
+                },
+              },
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 100 },
+          };
+        }),
+      } as unknown as Ai;
     const rejectReview = vi.fn(async () => ({ status: "recorded" }));
     (env.SEO_COORDINATOR as any).rejectReview = rejectReview;
     if (variant === "lost-callback")
@@ -548,7 +593,14 @@ describe("SEO durable editorial boundary", () => {
         "claimed",
       );
     } else jobId = await claimed();
-    expect((await request(jobId, "research", {})).status).toBe("researched");
+    expect(
+      (await request(jobId, "research", {})).status,
+      JSON.stringify(
+        [...objects.entries()].filter(
+          ([k]) => k.includes(jobId) && k.includes("failure"),
+        ),
+      ),
+    ).toBe("researched");
     const finalFiles = [];
     let japanese = "";
     for (let step = 0; step < files.length; step++) {
@@ -581,6 +633,23 @@ describe("SEO durable editorial boundary", () => {
       const preflight = JSON.parse(
         objects.get("seo-editorial/" + jobId + "/eligibility-preflight.json")!,
       );
+      if (deepseek) {
+        expect(env.AI.run).toHaveBeenCalledTimes(2);
+        const modelCalls = sql
+          .prepare("SELECT phase,model FROM seo_model_calls ORDER BY phase")
+          .all();
+        expect(modelCalls).toHaveLength(5);
+        expect(
+          modelCalls
+            .filter((c) => c.model === SEO_DEEPSEEK)
+            .map((c) => c.phase),
+        ).toEqual(["generation", "plan", "review"]);
+        expect(
+          modelCalls
+            .filter((c) => c.model === "gpt-6-luna")
+            .map((c) => c.phase),
+        ).toEqual(["discovery", "research"]);
+      }
       expect(preflight.allocationVersion).toBe(2);
       expect(preflight.generationAllocation).toHaveLength(1);
       expect(preflight.generationAllocation[0].maxBytes).toBe(58333);
@@ -2314,5 +2383,318 @@ it("report preserves legacy run ceiling, sums all reservation states and anchors
     runLimitMicros: 1000000,
     articleKey: "portal:article.md",
     prUrl: "https://github.com/acecore-systems/aceserver-portal/pull/999",
+  });
+});
+
+describe("fallback coordinator protocol 1", () => {
+  const trial = (ordinal = 1, previousReceiptSha256: string | null = null) => ({
+    version: 1 as const,
+    rootRunId: runId,
+    ordinal,
+    previousReceiptSha256,
+  });
+  const nextId = "editorial-00000000-0000-4000-8000-000000000002";
+  async function firstRejected() {
+    env.SEO_RESEARCH_ENABLED = "true";
+    expect(
+      (
+        await startEditorial(
+          env,
+          { runId, deadline: now + 20 * 60000, candidates: [candidate] },
+          trial(),
+        )
+      ).status,
+    ).toBe("started");
+    const { jobId, body } = await insufficientOffer();
+    return request(jobId, "research-reject", body);
+  }
+  it("keeps the previous receipt/job/calls unchanged and starts one distinct single-language attempt", async () => {
+    const rejected = await firstRejected();
+    const before = {
+      receipt: sql.prepare("SELECT * FROM seo_research_rejections").all(),
+      jobs: sql.prepare("SELECT * FROM seo_editorial_jobs").all(),
+      calls: sql.prepare("SELECT * FROM seo_budget_calls").all(),
+    };
+    const next = {
+      runId: nextId,
+      deadline: now + 20 * 60000,
+      candidates: [
+        {
+          site: "wiki",
+          url: "https://asv-wiki.acecore.net/article/example/",
+          reason: "test",
+        },
+      ],
+    };
+    const started = await startEditorial(
+      env,
+      next,
+      trial(2, rejected.receiptSha256),
+    );
+    expect(started.status).toBe("started");
+    expect(
+      await startEditorial(env, next, trial(2, rejected.receiptSha256)),
+    ).toEqual(started);
+    expect(mocks.dispatch).toHaveBeenCalledTimes(2);
+    mocks.identity = {
+      site: seoSite("wiki")!.site,
+      repository: seoSite("wiki")!.site.repository,
+      runId: "200",
+      workflowSha: baseSha,
+    };
+    files = [
+      {
+        path: "poc/astro-sveltia/src/content/wiki/example.md",
+        content: files[0].content,
+      },
+    ];
+    await request(started.jobId!);
+    expect(
+      (await request(started.jobId!, "claim", { baseSha, files })).status,
+    ).toBe("claimed");
+    expect(
+      sql
+        .prepare(
+          "SELECT maximum_micros FROM seo_fallback_preflights WHERE job_id=?",
+        )
+        .get(started.jobId!)!.maximum_micros,
+    ).toBe(525330);
+    expect(sql.prepare("SELECT * FROM seo_research_rejections").all()).toEqual(
+      before.receipt,
+    );
+    expect(
+      sql.prepare("SELECT * FROM seo_editorial_jobs WHERE run_id=?").all(runId),
+    ).toEqual(before.jobs);
+    expect(sql.prepare("SELECT * FROM seo_budget_calls").all()).toEqual(
+      before.calls,
+    );
+    const budgetRun = String(
+      sql
+        .prepare("SELECT budget_run_id FROM seo_editorial_runs WHERE run_id=?")
+        .get(nextId)!.budget_run_id,
+    );
+    const budget = new SeoBudget(env.CMS_AI_DB);
+    await budget.reserve(
+      budgetRun,
+      "seo-00000000-0000-4000-8000-000000000080",
+      "aceserver-wiki:" + files[0].path,
+      "a".repeat(64),
+      1000000,
+      now,
+      now + 20 * 60000,
+      2,
+    );
+    await expect(
+      budget.reserve(
+        budgetRun,
+        "seo-00000000-0000-4000-8000-000000000081",
+        "aceserver-wiki:" + files[0].path,
+        "a".repeat(64),
+        250000,
+        now,
+        now + 20 * 60000,
+        2,
+      ),
+    ).rejects.toThrow("seo_fallback_budget_exhausted");
+    await expect(
+      budget.reserve(
+        budgetRun,
+        "seo-00000000-0000-4000-8000-000000000082",
+        "aceserver-wiki:" + files[0].path,
+        "a".repeat(64),
+        1,
+        now + 20 * 60000,
+        now + 21 * 60000,
+        2,
+      ),
+    ).rejects.toThrow();
+    expect(
+      sql
+        .prepare("SELECT count(*) n FROM seo_budget_calls WHERE run_id=?")
+        .get(budgetRun)!.n,
+    ).toBe(1);
+  });
+  it("skips a second nine-language article before claim or paid AI when the full bound no longer fits", async () => {
+    const rejected = await firstRejected();
+    const started = await startEditorial(
+      env,
+      {
+        runId: nextId,
+        deadline: now + 20 * 60000,
+        candidates: [
+          { ...candidate, url: candidate.url.replace("example", "second") },
+        ],
+      },
+      trial(2, rejected.receiptSha256),
+    );
+    await request(started.jobId!);
+    files = files.map((f) => ({
+      ...f,
+      path: f.path.replace("example", "second"),
+      content: f.content.replace(
+        "translationOf: example",
+        "translationOf: second",
+      ),
+    }));
+    expect(
+      (await request(started.jobId!, "claim", { baseSha, files })).status,
+    ).toBe("skipped");
+    expect((await editorialStatus(env, { runId: nextId })).status).toBe(
+      "no_eligible_article",
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(
+        objects.get(
+          "seo-editorial/" + started.jobId + "/eligibility-preflight.json",
+        )!,
+      ).reasons,
+    ).toContain("shared_budget_insufficient");
+  });
+  it.each(["unknown", "hash", "deadline", "duplicate-article", "old"])(
+    "denies unsafe continuation: %s",
+    async (kind) => {
+      let receipt = "a".repeat(64);
+      if (kind === "unknown") {
+        env.SEO_RESEARCH_ENABLED = "true";
+        await startEditorial(
+          env,
+          { runId, deadline: now + 20 * 60000, candidates: [candidate] },
+          trial(),
+        );
+      } else if (kind === "old") {
+        const offer = await insufficientOffer();
+        receipt = (await request(offer.jobId, "research-reject", offer.body))
+          .receiptSha256;
+      } else receipt = (await firstRejected()).receiptSha256;
+      const result = await startEditorial(
+        env,
+        {
+          runId: nextId,
+          deadline: now + (kind === "deadline" ? 21 : 20) * 60000,
+          candidates: [
+            {
+              ...candidate,
+              url:
+                kind === "duplicate-article"
+                  ? candidate.url.replace("/en/", "/fr/")
+                  : candidate.url.replace("example", "second"),
+            },
+          ],
+        },
+        trial(2, kind === "hash" ? "b".repeat(64) : receipt),
+      );
+      expect(result.status).toBe("unresolved");
+      expect(
+        sql
+          .prepare(
+            "SELECT count(*) n FROM seo_fallback_attempts WHERE ordinal=2",
+          )
+          .get()!.n,
+      ).toBe(0);
+    },
+  );
+});
+
+describe("new DeepSeek job profile", () => {
+  const model = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+  beforeEach(() => {
+    deepseekProfile = true;
+    env.SEO_AI_MODEL = SEO_DEEPSEEK;
+    now = Date.parse("2026-10-23T00:00:00Z");
+    clock.mockReturnValue(now);
+    env.SEO_RESEARCH_ENABLED = "true";
+  });
+  it("pins model before dispatch, reserves exact Chat payload, keeps raw evidence and rejects plan without retry", async () => {
+    const raw = {
+      id: "cf-test",
+      model,
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: JSON.stringify({
+              verdict: "insufficient",
+              claimId: "",
+              targetQuote: "",
+              conditions: [],
+              anchors: [],
+              queries: [],
+            }),
+          },
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 100 },
+    };
+    const ai = vi.fn(async (_model: string, payload: any) => {
+      expect(_model).toBe(model);
+      expect(payload.store).toBe(false);
+      expect(payload.reasoning_effort).toBe("high");
+      expect(payload.input).toBeUndefined();
+      expect(
+        sql.prepare("SELECT status FROM seo_budget_calls").get()!.status,
+      ).toBe("reserved");
+      expect(
+        sql.prepare("SELECT model FROM seo_model_calls").get()!.model,
+      ).toBe(model);
+      return raw;
+    });
+    env.AI = { run: ai } as unknown as Ai;
+    const jobId = await claimed();
+    const pin = sql
+      .prepare("SELECT * FROM seo_job_models WHERE job_id=?")
+      .get(jobId)!;
+    expect(pin.text_model).toBe(model);
+    const offer = await request(jobId, "research", {});
+    expect(offer.status).toBe("research_insufficient");
+    (env.SEO_COORDINATOR as any).rejectResearch = async () => ({
+      status: "recorded",
+    });
+    expect(
+      (
+        await request(jobId, "research-reject", {
+          baseSha,
+          offerSha256: offer.offerSha256,
+          refs: [],
+          pullRequests: [],
+        })
+      ).status,
+    ).toBe("research_rejected");
+    expect(ai).toHaveBeenCalledTimes(1);
+    const call = sql.prepare("SELECT * FROM seo_model_calls").get()!;
+    expect(call.phase).toBe("plan");
+    expect(call.request_sha256).toBe(
+      await sha256(JSON.stringify(ai.mock.calls[0][1])),
+    );
+    expect(
+      objects.get("seo-provider-responses/" + call.call_id + ".json"),
+    ).toBe(JSON.stringify(raw));
+    expect(
+      JSON.parse(objects.get("seo-responses/" + call.call_id + ".json")!)
+        .provider,
+    ).toBe("workers-ai");
+    for (const query of [
+      "DELETE FROM seo_job_models",
+      "UPDATE seo_job_models SET version=1",
+      "DELETE FROM seo_model_calls",
+      "UPDATE seo_budget_calls SET reserved_micros=1",
+    ])
+      expect(() => sql.exec(query)).toThrow();
+    expect((await editorialStatus(env, { runId })).status).toBe(
+      "research_rejected",
+    );
+    expect(ai).toHaveBeenCalledTimes(1);
+  });
+  it("cannot retrofit the new model onto an existing legacy job", async () => {
+    deepseekProfile = false;
+    env.SEO_AI_MODEL = "gpt-6-luna";
+    const jobId = await claimed();
+    expect(() =>
+      sql
+        .prepare("INSERT INTO seo_job_models VALUES(?,2,?,'gpt-6-luna')")
+        .run(jobId, model),
+    ).toThrow("seo_model_new_only");
   });
 });

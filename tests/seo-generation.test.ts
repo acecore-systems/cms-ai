@@ -1,3 +1,4 @@
+import { deepseekPayload, SEO_DEEPSEEK } from "../src/seo-deepseek.ts";
 import { SITES } from "../src/sites.ts";
 import { STAGE_INPUT_BYTES } from "../src/seo-stage-budget.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -48,7 +49,7 @@ describe("SEO generation gate", () => {
     const env = {
       SEO_GENERATION_ENABLED: "true",
       CMS_AI_MODEL: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
-      SEO_AI_MODEL: "gpt-6-luna",
+      SEO_AI_MODEL: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
       OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
       CMS_AI_DB: {
         prepare: () => statement,
@@ -203,5 +204,108 @@ it.each(["exact", "one-byte-over", "legacy"])(
     );
     expect(batch).toHaveBeenCalledTimes(kind === "exact" ? 1 : 0);
     expect(fetcher).toHaveBeenCalledTimes(kind === "exact" ? 1 : 0);
+  },
+);
+
+it.each(["valid", "missing-usage", "late", "budget"])(
+  "DeepSeek generation uses the real payload and preserves reservations: %s",
+  async (kind) => {
+    const now = Date.parse("2026-10-23T00:00:00Z");
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const path = "src/content/blog/example.md",
+      files = [{ path, content: "original" }],
+      instruction = "参考資料に基づき改訂案を作成";
+    const expected = deepseekPayload(
+      buildSeoGenerationRequest(
+        SITES.find((s) => s.id === "homepage-hatt")!,
+        path,
+        [path],
+        instruction,
+        files,
+      ),
+    );
+    const entries: any[] = [];
+    const stored: string[] = [];
+    const states: any[] = [];
+    const result = {
+      changes: [{ path, content: "revised", reason: "copy" }],
+      summary: "proposal",
+      clarification: "",
+    };
+    const ai = vi.fn(async (_m, payload) => {
+      expect(entries.length).toBe(3);
+      expect(payload).toEqual(expected);
+      if (kind === "late") vi.mocked(Date.now).mockReturnValue(now + 60001);
+      return {
+        model: SEO_DEEPSEEK,
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { role: "assistant", content: JSON.stringify(result) },
+          },
+        ],
+        ...(kind === "missing-usage"
+          ? {}
+          : { usage: { prompt_tokens: 100, completion_tokens: 100 } }),
+      };
+    });
+    const env = {
+      SEO_GENERATION_ENABLED: "true",
+      AI: { run: ai },
+      CMS_AI_DB: {
+        prepare: (query: string) => ({
+          bind: (...args: any[]) => ({
+            query,
+            args,
+            run: async () => {
+              states.push(args);
+              return { meta: { changes: 1 } };
+            },
+          }),
+        }),
+        batch: async (items: any[]) => {
+          if (kind === "budget") throw Error("cap");
+          entries.push(...items);
+          return items.map(() => ({ meta: { changes: 1 } }));
+        },
+      },
+      CMS_AI_IMAGES: {
+        put: async (key: string) => {
+          stored.push(key);
+          return {};
+        },
+      },
+    } as unknown as AppEnv;
+    const response = await generateSeo(
+      env,
+      {
+        runId: "seo-00000000-0000-4000-8000-000000000001",
+        callId: "seo-00000000-0000-4000-8000-000000000002",
+        siteId: "homepage-hatt",
+        articlePath: path,
+        allowedPaths: [path],
+        instruction,
+        files,
+        deadline: now + 60000,
+        budgetVersion: 2,
+        researchBudget: true,
+        generationInputCap: Buffer.byteLength(JSON.stringify(expected)),
+      },
+      { jobId: "00000000-0000-4000-8000-000000000003", version: 2 },
+    );
+    expect(response.status).toBe(
+      kind === "valid"
+        ? "proposal_created"
+        : kind === "budget"
+          ? "stopped"
+          : "unresolved",
+    );
+    expect(ai).toHaveBeenCalledTimes(kind === "budget" ? 0 : 1);
+    if (kind !== "budget") {
+      expect(stored[0]).toContain("seo-provider-responses/");
+      expect(states.at(-1)[0]).toBe(
+        kind === "valid" ? "complete" : "unresolved",
+      );
+    }
   },
 );

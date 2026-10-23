@@ -1,3 +1,11 @@
+import { SEO_DEEPSEEK } from "./seo-deepseek.ts";
+import {
+  parseTrial,
+  trialStatements,
+  fallbackPreflight,
+  fallbackTotals,
+  fallbackMaximum,
+} from "./seo-fallback.ts";
 import { prepareEditorialTransport } from "./seo-metadata-preservation.ts";
 import { inputPreflight } from "./seo-input-preflight.ts";
 import { assertTableContextPreserved } from "./seo-table-claims.ts";
@@ -18,7 +26,12 @@ import {
 } from "./seo-rejection.ts";
 import type { AppEnv } from "./env.ts";
 import { dispatchSeoEditorialJob } from "./github.ts";
-import { sha256, jstMonth, monthBudgetMicros } from "./seo-budget.ts";
+import {
+  sha256,
+  jstMonth,
+  monthBudgetMicros,
+  newJobMonthLimit,
+} from "./seo-budget.ts";
 import { generateSeo } from "./seo-generation.ts";
 import { validateSourceFiles } from "./inference.ts";
 import { json, HttpError, readJsonObject } from "./http.ts";
@@ -57,6 +70,7 @@ type Run = {
   created_at: number;
 };
 type EditorialJob = {
+  model_version: 1 | 2;
   id: string;
   run_id: string;
   site_id: string;
@@ -103,7 +117,9 @@ const runRow = (env: AppEnv, runId: string) =>
     .bind(runId)
     .first<Run>();
 const jobRow = (env: AppEnv, jobId: string) =>
-  env.CMS_AI_DB.prepare("SELECT * FROM seo_editorial_jobs WHERE id=?")
+  env.CMS_AI_DB.prepare(
+    "SELECT j.*,COALESCE(m.version,1) AS model_version FROM seo_editorial_jobs j LEFT JOIN seo_job_models m ON m.job_id=j.id WHERE j.id=?",
+  )
     .bind(jobId)
     .first<EditorialJob>();
 const baseKey = (job: EditorialJob) => "seo-editorial/" + job.id;
@@ -190,7 +206,11 @@ function alive(run: Run) {
 }
 
 // A start is persisted before dispatch. A duplicate/uncertain dispatch is never retried.
-export async function startEditorial(env: AppEnv, input: unknown) {
+export async function startEditorial(
+  env: AppEnv,
+  input: unknown,
+  trialInput?: unknown,
+) {
   if (!enabled(env)) return { status: "stopped" as const };
   try {
     if (!input || typeof input !== "object" || Array.isArray(input))
@@ -234,10 +254,34 @@ export async function startEditorial(env: AppEnv, input: unknown) {
         reason: raw.reason || "選定理由の追加情報なし",
       };
     });
+    const trial =
+      trialInput === undefined
+        ? null
+        : parseTrial(trialInput, value.runId, candidates[0]);
+    if (
+      trial &&
+      (candidates.length !== 1 || !researchEnabled(env, value.runId))
+    )
+      throw Error("seo_fallback_input");
     const deadline = value.deadline as number;
     const inputHash = await sha256(JSON.stringify({ deadline, candidates }));
     const existing = await runRow(env, value.runId);
     if (existing) {
+      if (trial) {
+        const saved = await env.CMS_AI_DB.prepare(
+          "SELECT * FROM seo_fallback_attempts WHERE run_id=?",
+        )
+          .bind(value.runId)
+          .first<any>();
+        if (
+          !saved ||
+          saved.root_run_id !== trial.rootRunId ||
+          saved.ordinal !== trial.ordinal ||
+          saved.previous_receipt_sha256 !== trial.previousReceiptSha256 ||
+          saved.candidate_key !== trial.candidateKey
+        )
+          return { status: "unresolved" as const };
+      }
       if (existing.input_sha256 !== inputHash)
         return { status: "unresolved" as const };
       return {
@@ -251,18 +295,32 @@ export async function startEditorial(env: AppEnv, input: unknown) {
     const now = Date.now();
     if (deadline <= now || deadline > now + 30 * 60_000)
       return { status: "stopped" as const };
-    const inserted = await env.CMS_AI_DB.prepare(
+    const budgetRunId = "seo-" + crypto.randomUUID();
+    const statement = env.CMS_AI_DB.prepare(
       "INSERT INTO seo_editorial_runs(run_id,budget_run_id,input_sha256,deadline,candidates_json,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(run_id) DO NOTHING",
-    )
-      .bind(
-        value.runId,
-        "seo-" + crypto.randomUUID(),
-        inputHash,
-        deadline,
-        JSON.stringify(candidates),
-        now,
-      )
-      .run();
+    ).bind(
+      value.runId,
+      budgetRunId,
+      inputHash,
+      deadline,
+      JSON.stringify(candidates),
+      now,
+    );
+    const inserted = trial
+      ? (
+          await env.CMS_AI_DB.batch([
+            ...trialStatements(
+              env,
+              trial,
+              value.runId,
+              budgetRunId,
+              now,
+              deadline,
+            ),
+            statement,
+          ])
+        ).at(-1)!
+      : await statement.run();
     if (inserted.meta.changes === 1) await advance(env, value.runId);
     const run = await runRow(env, value.runId);
     return {
@@ -297,6 +355,13 @@ async function advance(env: AppEnv, runId: string) {
     }
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
+      ...(env.SEO_AI_MODEL === SEO_DEEPSEEK
+        ? [
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_job_models(job_id,version,text_model,search_model) SELECT ?,2,?,'gpt-6-luna' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+            ).bind(jobId, SEO_DEEPSEEK, runId, run.candidate_index),
+          ]
+        : []),
       env.CMS_AI_DB.prepare(
         "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,protocol_version,research_contract,retrieval_contract,budget_version,discovery_policy,generation_syntax,external_sources,research_context,allocation_version,variable_review,reference_policy,url_instructions,research_recovery,discovery_instructions,code_preservation,review_output,metadata_preservation,code_token_repair) SELECT ?,run_id,?,candidate_index,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?",
       ).bind(
@@ -327,7 +392,7 @@ async function advance(env: AppEnv, runId: string) {
         "UPDATE seo_editorial_runs SET job_id=? WHERE run_id=? AND job_id IS NULL AND status='pending' AND EXISTS(SELECT 1 FROM seo_editorial_jobs WHERE id=?)",
       ).bind(jobId, runId, jobId),
     ]);
-    if (transaction[1].meta.changes !== 1) return;
+    if (transaction.at(-1)!.meta.changes !== 1) return;
     try {
       await dispatchSeoEditorialJob(
         env,
@@ -848,25 +913,50 @@ async function claimJob(
       (!monthly || !Number.isSafeInteger(monthly.held) || monthly.held < 0)
     )
       throw new Error("seo_budget_state_conflict");
+    const fallback = await fallbackPreflight(
+      env,
+      run.run_id,
+      generationAllocation,
+      job.model_version,
+    );
+    const modelMaximum =
+      job.model_version === 2 && generationAllocation
+        ? fallbackMaximum(generationAllocation, 2)
+        : undefined;
     const reasons = [
+      ...(fallback && !fallback.fits ? ["shared_budget_insufficient"] : []),
       ...(job.research_recovery === 2 &&
       !hasExternalClaimCandidate(article.source.content)
         ? ["no_external_factual_claim"]
         : []),
       ...(monthly &&
       monthly.held +
-        stageBudget(
-          job.budget_version,
-          job.research_recovery,
-          job.review_output,
-        ).maximum >
-        monthBudgetMicros(monthJst)
+        (modelMaximum ??
+          fallback?.maximum ??
+          stageBudget(
+            job.budget_version,
+            job.research_recovery,
+            job.review_output,
+          ).maximum) >
+        (job.model_version === 2
+          ? newJobMonthLimit(monthJst)
+          : monthBudgetMicros(monthJst))
         ? ["monthly_budget_insufficient"]
         : []),
       ...sizeReasons,
     ];
     const preflightRaw = JSON.stringify({
       version: 1,
+      ...(modelMaximum
+        ? { modelVersion: 2, modelMaximumMicros: modelMaximum }
+        : {}),
+      ...(fallback
+        ? {
+            fallbackVersion: 1,
+            sharedReservedMicros: fallback.held,
+            maximumMicros: fallback.maximum,
+          }
+        : {}),
       researchContract: 2,
       ...(job.research_recovery === 2 ? { recovery: 2 } : {}),
       ...(job.reference_policy === 2 ? { referencePolicy: 2 } : {}),
@@ -934,6 +1024,17 @@ async function claimJob(
       await skipJob(env, job);
       return { status: "skipped" };
     }
+    if (fallback)
+      await env.CMS_AI_DB.prepare(
+        "INSERT INTO seo_fallback_preflights(job_id,maximum_micros,allocation_json,created_at) VALUES(?,?,?,?)",
+      )
+        .bind(
+          job.id,
+          fallback.maximum,
+          JSON.stringify(generationAllocation),
+          Date.now(),
+        )
+        .run();
   }
   const changed = await env.CMS_AI_DB.prepare(
     "UPDATE seo_editorial_jobs SET status='claiming',source_sha256=?,base_sha=?,article_key=?,article_path=?,paths_json=?,input_allocation_sha256=? WHERE id=? AND status='inspecting'",
@@ -978,6 +1079,7 @@ async function claimJob(
 
 function checkContext(job: EditorialJob, run: Run): CheckContext {
   return {
+    modelVersion: job.model_version,
     jobId: job.id,
     runId: run.run_id,
     budgetRunId: run.budget_run_id,
@@ -1150,19 +1252,23 @@ async function propose(
     .bind(callId, job.id, job.next_step)
     .run();
   if (changed.meta.changes !== 1) throw new Error("state");
-  const generated = await generateSeo(env, {
-    runId: run.budget_run_id,
-    budgetVersion: job.budget_version,
-    callId,
-    deadline: run.deadline,
-    siteId: job.site_id,
-    articlePath: job.article_path,
-    allowedPaths: [path],
-    files: transport.files,
-    ...(research ? { researchBudget: true } : {}),
-    ...(generationInputCap !== undefined ? { generationInputCap } : {}),
-    instruction: transport.instruction,
-  });
+  const generated = await generateSeo(
+    env,
+    {
+      runId: run.budget_run_id,
+      budgetVersion: job.budget_version,
+      callId,
+      deadline: run.deadline,
+      siteId: job.site_id,
+      articlePath: job.article_path,
+      allowedPaths: [path],
+      files: transport.files,
+      ...(research ? { researchBudget: true } : {}),
+      ...(generationInputCap !== undefined ? { generationInputCap } : {}),
+      instruction: transport.instruction,
+    },
+    job.model_version === 2 ? { jobId: job.id, version: 2 } : undefined,
+  );
   alive(run);
   if (
     generated.status !== "proposal_created" ||
@@ -1226,5 +1332,19 @@ async function propose(
     status: "proposal_created",
     file: { path, content },
     nextStep: job.next_step + 1,
+  };
+}
+
+export async function fallbackReport(env: AppEnv, input: { runId: string }) {
+  const totals = await fallbackTotals(env, input.runId);
+  if (!totals) throw Error("seo_fallback_missing");
+  const report = await editorialReport(env, { runId: totals.last_run_id });
+  return {
+    ...report,
+    reservedMicros: totals.held,
+    monthReservedMicros: totals.month_held,
+    monthLimitMicros: totals.monthLimit,
+    runLimitMicros: 1250000,
+    attemptCount: totals.attempt_count,
   };
 }

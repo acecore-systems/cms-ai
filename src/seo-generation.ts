@@ -1,3 +1,4 @@
+import { SEO_DEEPSEEK, deepseekUpperCost } from "./seo-deepseek.ts";
 import { stageBudget, assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
 import {
@@ -28,7 +29,11 @@ export function generationReadiness(env: AppEnv) {
     rateValidUntil: RATE_VALID_UNTIL,
   };
 }
-export async function generateSeo(env: AppEnv, input: unknown) {
+export async function generateSeo(
+  env: AppEnv,
+  input: unknown,
+  modelProfile?: { jobId: string; version: 2 },
+) {
   if (String(env.SEO_GENERATION_ENABLED) !== "true")
     return { status: "disabled" as const };
   let reserved = false;
@@ -144,16 +149,38 @@ export async function generateSeo(env: AppEnv, input: unknown) {
           callId,
           site.id + ":" + articlePath,
           await sha256(JSON.stringify(request)),
-          upperCost(model, request),
+          modelProfile ? deepseekUpperCost(request) : upperCost(model, request),
           Date.now(),
           deadline as number | undefined,
           version,
+          modelProfile
+            ? {
+                jobId: modelProfile.jobId,
+                phase: "generation",
+                model: SEO_DEEPSEEK,
+              }
+            : undefined,
         );
         reserved = true;
         stage = "generation";
       },
       deadline as number | undefined,
       "seo",
+      modelProfile
+        ? {
+            model: SEO_DEEPSEEK,
+            onResponse: async (raw: unknown) => {
+              if (
+                !(await env.CMS_AI_IMAGES.put(
+                  "seo-provider-responses/" + callId + ".json",
+                  JSON.stringify(raw),
+                  { onlyIf: { etagDoesNotMatch: "*" } },
+                ))
+              )
+                throw Error("seo_response_storage");
+            },
+          }
+        : undefined,
     );
     stage = "result_validation";
     if (!result.changes.every((c) => paths.includes(c.path)))

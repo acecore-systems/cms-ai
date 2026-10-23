@@ -55,6 +55,7 @@ export class SeoBudget {
     now = Date.now(),
     deadline = now + 30 * 60_000,
     version = 1,
+    modelAudit?: { jobId: string; phase: string; model: string },
   ) {
     const runLimit = stageBudget(version).runMicros;
     if (
@@ -76,6 +77,22 @@ export class SeoBudget {
           "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline,run_limit_micros) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
         )
         .bind(runId, article, now, deadline, runLimit),
+      ...(modelAudit
+        ? [
+            this.db
+              .prepare(
+                "INSERT INTO seo_model_calls(call_id,job_id,phase,model,request_sha256,budget_run_id) VALUES(?,?,?,?,?,?)",
+              )
+              .bind(
+                callId,
+                modelAudit.jobId,
+                modelAudit.phase,
+                modelAudit.model,
+                hash,
+                runId,
+              ),
+          ]
+        : []),
       this.db
         .prepare(
           "INSERT INTO seo_budget_calls(id,run_id,month_jst,request_sha256,reserved_micros,created_at) SELECT ?,id,?,?,?,? FROM seo_budget_runs WHERE id=? AND article_key=? AND deadline>? AND created_at<=? AND run_limit_micros=? ON CONFLICT(id) DO NOTHING",
@@ -93,7 +110,7 @@ export class SeoBudget {
           runLimit,
         ),
     ]);
-    if (results[1].meta.changes !== 1)
+    if (results.at(-1)!.meta.changes !== 1)
       throw new Error("seo_duplicate_or_conflict");
   }
   async finish(callId: string, status: "complete" | "unresolved") {
@@ -105,4 +122,14 @@ export class SeoBudget {
       .run();
     if (result.meta.changes !== 1) throw new Error("seo_budget_state_conflict");
   }
+}
+
+// New model protocol only: preserve the approved 26 October weekly slot.
+export function newJobMonthLimit(month: string, now = Date.now()) {
+  return (
+    monthBudgetMicros(month) -
+    (month === "2026-10" && now < Date.parse("2026-10-26T00:00:00Z")
+      ? 1250000
+      : 0)
+  );
 }
