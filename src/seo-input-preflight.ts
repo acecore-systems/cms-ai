@@ -11,6 +11,7 @@ import { allocateGenerationInputs, stageBudget } from "./seo-stage-budget.ts";
 
 export type InputPreflightOptions = {
   model_version?: 1 | 2;
+  plan_instructions?: 1 | 2;
   site_id: string;
   research_recovery: 1 | 2;
   external_sources: number;
@@ -30,6 +31,7 @@ export function currentInputPreflightOptions(
 ): InputPreflightOptions {
   return {
     site_id: siteId,
+    plan_instructions: 2,
     research_recovery: 2,
     external_sources: 1,
     discovery_policy: 3,
@@ -207,6 +209,7 @@ export function planInputBytes(
             ? externalScope(options.site_id, source)
             : undefined,
           options.research_recovery,
+          options.plan_instructions,
         ),
       ),
     ),

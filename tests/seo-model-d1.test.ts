@@ -53,6 +53,7 @@ it("D1 atomically requires audit and preserves October weekly reserve across com
           "INSERT INTO seo_editorial_runs(run_id,budget_run_id,input_sha256,deadline,candidates_json,created_at) VALUES('root',?,?,?,'[]',?)",
         )
         .bind(run, hash, deadline, now),
+      db.prepare("INSERT INTO seo_plan_contracts VALUES(?,2)").bind(job),
       db
         .prepare("INSERT INTO seo_job_models VALUES(?,2,?,'gpt-6-luna')")
         .bind(job, SEO_DEEPSEEK),
@@ -62,6 +63,40 @@ it("D1 atomically requires audit and preserves October weekly reserve across com
         )
         .bind(job, id(200)),
     ]);
+    // New plan contract can precede its job only inside one atomic batch.
+    await expect(
+      db.batch([
+        db.prepare("INSERT INTO seo_plan_contracts VALUES('orphan',2)"),
+      ]),
+    ).rejects.toThrow();
+    expect(
+      (await db
+        .prepare(
+          "SELECT count(*) n FROM seo_plan_contracts WHERE job_id='orphan'",
+        )
+        .first())!.n,
+    ).toBe(0);
+    await db
+      .prepare(
+        "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index) VALUES('legacy-job','root','wiki',1)",
+      )
+      .run();
+    expect(
+      (await db
+        .prepare(
+          "SELECT COALESCE(p.version,1) version FROM seo_editorial_jobs j LEFT JOIN seo_plan_contracts p ON p.job_id=j.id WHERE j.id='legacy-job'",
+        )
+        .first())!.version,
+    ).toBe(1);
+    await expect(
+      db.prepare("INSERT INTO seo_plan_contracts VALUES('legacy-job',2)").run(),
+    ).rejects.toThrow("seo_plan_new_only");
+    expect(
+      (await db
+        .prepare("SELECT version FROM seo_plan_contracts WHERE job_id=?")
+        .bind(job)
+        .first())!.version,
+    ).toBe(2);
     const before = await db
       .prepare("SELECT * FROM seo_budget_calls ORDER BY id")
       .all();
