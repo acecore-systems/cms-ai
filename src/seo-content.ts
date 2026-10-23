@@ -1,4 +1,5 @@
 import { parseDocument } from "yaml";
+import { unsafeEditorialProtocol } from "./seo-protocol-safety.ts";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
@@ -143,7 +144,7 @@ function assertContent(
   next: string,
   verifiedUrls: readonly string[] = [],
 ) {
-  if (/\b(?:javascript|vbscript|file|data)\s*:/iu.test(next))
+  if (unsafeEditorialProtocol(next, markdown(next).body))
     throw new Error("seo_content_unsafe");
   if (
     BufferlessBytes(next) > 128 * 1024 ||
