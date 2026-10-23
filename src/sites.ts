@@ -262,6 +262,14 @@ export const SEO_SITES = {
   },
 } as const;
 export type SeoSiteId = keyof typeof SEO_SITES;
+
+// Editorial scope decisions: owned declarations are not third-party factual research.
+export const SEO_RESEARCH_EXCLUSIONS: Partial<
+  Record<keyof typeof SEO_SITES, readonly string[]>
+> = {
+  wiki: ["poc/astro-sveltia/src/content/wiki/rinen.md"],
+};
+
 export function seoSite(id: string) {
   const entry = Object.entries(SEO_SITES).find(
     ([key, spec]) => key === id || spec.cmsId === id,

@@ -1,5 +1,5 @@
 import { SeoRepositoryReadError } from "./github.ts";
-import { seoSite, seoArticleUrl } from "./sites.ts";
+import { seoSite, seoArticleUrl, SEO_RESEARCH_EXCLUSIONS } from "./sites.ts";
 import { sourceIdentity, markdown, normalizeLf } from "./seo-content.ts";
 import { sha256 } from "./seo-hash.ts";
 
@@ -281,6 +281,14 @@ async function inspectEligibility(
         url,
         status: "ineligible" as const,
         reason: "canonical_source_missing_or_ambiguous",
+      });
+      continue;
+    }
+    if (SEO_RESEARCH_EXCLUSIONS[spec.key]?.includes(matches[0].path)) {
+      results.push({
+        url,
+        status: "ineligible" as const,
+        reason: "owned_policy_not_external_research",
       });
       continue;
     }

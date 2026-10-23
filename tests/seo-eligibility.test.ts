@@ -311,3 +311,38 @@ it("logs only a fixed diagnostic code while preserving the RPC unknown contract"
     warn.mockRestore();
   }
 });
+
+it("excludes the reviewed owned philosophy page but not other wiki articles", async () => {
+  for (const slug of ["rinen", "technical"]) {
+    const f = fixture();
+    f.setOpen(false);
+    f.entries[0].path = `poc/astro-sveltia/src/content/wiki/${slug}.md`;
+    const fetcher: typeof fetch = (input, init) =>
+      f.fetcher(
+        String(input).replace("/aceserver-wiki/", "/acecore-systems/"),
+        init,
+      );
+    const result = await editorialEligibility(
+      {
+        site: "wiki",
+        urls: [`https://asv-wiki.acecore.net/article/${slug}/`],
+        deadline: Date.now() + 60000,
+      },
+      fetcher,
+    );
+    expect(result.complete).toBe(true);
+    expect(result.results[0].status).toBe(
+      slug === "rinen" ? "ineligible" : "eligible",
+    );
+    if (slug === "rinen") {
+      expect(result.results[0].reason).toBe(
+        "owned_policy_not_external_research",
+      );
+      expect(
+        (f.fetcher as any).mock.calls.some((c: any[]) =>
+          String(c[0]).includes("/git/blobs/"),
+        ),
+      ).toBe(false);
+    }
+  }
+});
