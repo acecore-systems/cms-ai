@@ -5,7 +5,7 @@ import {
   currentInputPreflightOptions,
 } from "./seo-input-preflight.ts";
 import { validateSourceFiles } from "./inference.ts";
-import { hasExternalClaimCandidate } from "./seo-research-plan.ts";
+import { hasResearchableCandidate } from "./seo-candidate-quality.ts";
 import { SeoRepositoryReadError } from "./github.ts";
 import { seoSite, seoArticleUrl, SEO_RESEARCH_EXCLUSIONS } from "./sites.ts";
 import { sourceIdentity, markdown, normalizeLf } from "./seo-content.ts";
@@ -357,7 +357,7 @@ async function inspectEligibility(
       });
       continue;
     }
-    if (!hasExternalClaimCandidate(identity.source.content)) {
+    if (!hasResearchableCandidate(identity.source.content)) {
       results.push({
         url,
         status: "ineligible" as const,

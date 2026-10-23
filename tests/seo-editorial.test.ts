@@ -7,6 +7,7 @@ import { SITES, seoSite, SEO_LOCALES } from "../src/sites.ts";
 import {
   startEditorial,
   editorialStatus,
+  editorialReport,
   handleSeoRunnerRequest,
 } from "../src/seo-editorial.ts";
 import { buildEditorialInstruction } from "../src/seo-editorial-instruction.ts";
@@ -659,6 +660,12 @@ describe("SEO durable editorial boundary", () => {
       if (variant === "lost-callback") clock.mockReturnValue(now + 31 * 60000);
       expect(await editorialStatus(env, { runId })).toMatchObject({
         status: "review_rejected",
+      });
+      expect(await editorialReport(env, { runId })).toMatchObject({
+        status: "review_rejected",
+        phase: "review",
+        reason: "confirmed_review_rejection",
+        prUrl: null,
       });
       expect((await request(jobId, "review-reject", body)).status).toBe(
         "review_rejected",
@@ -2137,4 +2144,175 @@ it("skips articles without external factual candidates before lock, budget or mo
   expect(saved.recovery).toBe(2);
   expect(saved.discoveryPolicy).toBe(5);
   expect(saved.limits.maximumMicros).toBe(1249533);
+});
+
+describe("read-only editorial report", () => {
+  it("returns closed nullable fields for absent runs and rejects malformed IDs before reading", async () => {
+    const missing = await editorialReport(env, { runId });
+    expect(missing).toEqual({
+      status: "not_found",
+      phase: null,
+      reason: null,
+      reservedMicros: null,
+      monthReservedMicros: null,
+      monthLimitMicros: null,
+      runLimitMicros: 1250000,
+      articleKey: null,
+      prUrl: null,
+    });
+    const prepare = vi.spyOn(env.CMS_AI_DB, "prepare");
+    for (const input of [
+      { runId: "secret/raw-error" },
+      { runId, extra: true },
+      [],
+      null,
+    ])
+      expect(await editorialReport(env, input)).toEqual({
+        ...missing,
+        status: "unresolved",
+        reason: "unknown",
+      });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+  it("reads an expired pending run without expiration/callback mutation or invented run cost", async () => {
+    await startEditorial(env, {
+      runId,
+      deadline: now + 60000,
+      candidates: [candidate],
+    });
+    clock.mockReturnValue(now + 120000);
+    const before = sql.prepare("SELECT * FROM seo_editorial_runs").get();
+    const calls = complete.mock.calls.length;
+    expect(await editorialReport(env, { runId })).toMatchObject({
+      status: "pending",
+      phase: null,
+      reason: null,
+      reservedMicros: null,
+      monthReservedMicros: 0,
+      monthLimitMicros: 11890000,
+      runLimitMicros: 1250000,
+    });
+    expect(sql.prepare("SELECT * FROM seo_editorial_runs").get()).toEqual(
+      before,
+    );
+    expect(complete.mock.calls.length).toBe(calls);
+    expect(mocks.infer).not.toHaveBeenCalled();
+  });
+  it("reports confirmed insufficient from durable receipts and retains reservations without callbacks", async () => {
+    const { jobId, body } = await insufficientOffer();
+    await request(jobId, "research-reject", body);
+    const before = sql.prepare("SELECT * FROM seo_budget_calls").all();
+    const callbacks = complete.mock.calls.length;
+    const calls = (fetch as any).mock.calls.length;
+    const report = await editorialReport(env, { runId });
+    expect(report).toMatchObject({
+      status: "research_rejected",
+      phase: "plan",
+      reason: "confirmed_insufficient",
+      reservedMicros: before.reduce(
+        (sum, b) => sum + Number(b.reserved_micros),
+        0,
+      ),
+      monthLimitMicros: 11890000,
+      runLimitMicros: 1250000,
+      prUrl: null,
+    });
+    expect(Object.keys(report).sort()).toEqual(
+      [
+        "status",
+        "phase",
+        "reason",
+        "reservedMicros",
+        "monthReservedMicros",
+        "monthLimitMicros",
+        "runLimitMicros",
+        "articleKey",
+        "prUrl",
+      ].sort(),
+    );
+    expect(sql.prepare("SELECT * FROM seo_budget_calls").all()).toEqual(before);
+    expect(complete.mock.calls.length).toBe(callbacks);
+    expect((fetch as any).mock.calls.length).toBe(calls);
+  });
+  it("reports an ordinary failure as unknown without forwarding raw diagnostics", async () => {
+    await startEditorial(env, {
+      runId,
+      deadline: now + 60000,
+      candidates: [candidate],
+    });
+    sql.exec("UPDATE seo_editorial_runs SET status='unresolved'");
+    expect(await editorialReport(env, { runId })).toMatchObject({
+      status: "unresolved",
+      reason: "unknown",
+      phase: null,
+      reservedMicros: null,
+    });
+    vi.spyOn(env.CMS_AI_DB, "prepare").mockImplementation(() => {
+      throw Error("private credential diagnostic");
+    });
+    const failed = await editorialReport(env, { runId });
+    expect(failed).toMatchObject({
+      status: "unresolved",
+      reason: "unknown",
+      reservedMicros: null,
+      monthReservedMicros: null,
+      monthLimitMicros: null,
+    });
+    expect(JSON.stringify(failed)).not.toContain("private");
+  });
+});
+
+it("report preserves legacy run ceiling, sums all reservation states and anchors month to the run", async () => {
+  const created = Date.parse("2026-09-30T14:59:00Z");
+  sql
+    .prepare(
+      "INSERT INTO seo_editorial_runs(run_id,budget_run_id,input_sha256,deadline,candidates_json,status,article_key,pr_url,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      runId,
+      "legacy-budget",
+      "hash",
+      created + 60000,
+      "[]",
+      "draft_pr",
+      "portal:article.md",
+      "https://github.com/acecore-systems/aceserver-portal/pull/999",
+      created,
+    );
+  sql
+    .prepare(
+      "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline,run_limit_micros) VALUES(?,?,?,?,?)",
+    )
+    .run(
+      "legacy-budget",
+      "portal:article.md",
+      created,
+      created + 60000,
+      1000000,
+    );
+  for (const [i, status] of ["reserved", "complete", "unresolved"].entries())
+    sql
+      .prepare(
+        "INSERT INTO seo_budget_calls(id,run_id,month_jst,request_sha256,reserved_micros,status,created_at) VALUES(?,?,?,?,?,?,?)",
+      )
+      .run(
+        "call-" + i,
+        "legacy-budget",
+        "2026-09",
+        "hash",
+        100,
+        status,
+        created,
+      );
+  expect(await editorialReport(env, { runId })).toEqual({
+    status: "draft_pr",
+    phase: null,
+    reason: null,
+    reservedMicros: 300,
+    monthReservedMicros: 300,
+    monthLimitMicros: 7000000,
+    runLimitMicros: 1000000,
+    articleKey: "portal:article.md",
+    prUrl: "https://github.com/acecore-systems/aceserver-portal/pull/999",
+  });
 });

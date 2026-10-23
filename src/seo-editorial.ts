@@ -394,6 +394,101 @@ async function markUnresolved(env: AppEnv, jobId: string) {
     (await jobRow(env, jobId))!,
   );
 }
+// Read-only projection: unlike status(), never expires jobs or retries callbacks.
+export async function editorialReport(env: AppEnv, input: unknown) {
+  const empty = {
+    status: "unresolved",
+    phase: null as string | null,
+    reason: "unknown" as string | null,
+    reservedMicros: null as number | null,
+    monthReservedMicros: null as number | null,
+    monthLimitMicros: null as number | null,
+    runLimitMicros: stageBudget(CURRENT_BUDGET_VERSION).runMicros,
+    articleKey: null as string | null,
+    prUrl: null as string | null,
+  };
+  if (
+    !input ||
+    typeof input !== "object" ||
+    Array.isArray(input) ||
+    Object.keys(input).join() !== "runId" ||
+    typeof (input as { runId: unknown }).runId !== "string" ||
+    !runPattern.test((input as { runId: string }).runId)
+  )
+    return empty;
+  try {
+    // One SELECT gives a consistent ledger/status snapshot. No receipt or content
+    // is fetched; immutable receipt presence supplies only a fixed reason code.
+    const row = await env.CMS_AI_DB.prepare(
+      `
+      SELECT r.status, r.article_key, r.pr_url,
+        strftime('%Y-%m', r.created_at / 1000 + 32400, 'unixepoch') AS month_jst,
+        j.budget_version, b.run_limit_micros,
+        CASE WHEN b.id IS NOT NULL THEN
+          (SELECT COALESCE(SUM(reserved_micros),0) FROM seo_budget_calls WHERE run_id=b.id)
+        END AS reserved_micros,
+        (SELECT COALESCE(SUM(reserved_micros),0) FROM seo_budget_calls
+          WHERE month_jst=strftime('%Y-%m', r.created_at / 1000 + 32400, 'unixepoch')) AS month_reserved_micros,
+        (SELECT phase FROM seo_all_checks WHERE job_id=j.id
+          AND phase IN ('plan','discovery','research','review')
+          ORDER BY CASE phase WHEN 'review' THEN 4 WHEN 'research' THEN 3 WHEN 'discovery' THEN 2 ELSE 1 END DESC LIMIT 1) AS phase,
+        EXISTS(SELECT 1 FROM seo_research_rejections WHERE job_id=j.id AND run_id=r.run_id) AS research_rejected,
+        (EXISTS(SELECT 1 FROM seo_review_rejections WHERE job_id=j.id AND run_id=r.run_id) OR
+         EXISTS(SELECT 1 FROM seo_variable_review_rejections WHERE job_id=j.id AND run_id=r.run_id)) AS review_rejected
+      FROM seo_editorial_runs r
+      LEFT JOIN seo_editorial_jobs j ON j.id=r.job_id AND j.run_id=r.run_id
+      LEFT JOIN seo_budget_runs b ON b.id=r.budget_run_id
+      WHERE r.run_id=?
+    `,
+    )
+      .bind((input as { runId: string }).runId)
+      .first<{
+        status: string;
+        article_key: string | null;
+        pr_url: string | null;
+        month_jst: string;
+        budget_version: number | null;
+        run_limit_micros: number | null;
+        reserved_micros: number | null;
+        month_reserved_micros: number;
+        phase: string | null;
+        research_rejected: number;
+        review_rejected: number;
+      }>();
+    if (!row) return { ...empty, status: "not_found", reason: null };
+    const status = row.review_rejected
+      ? "review_rejected"
+      : row.research_rejected
+        ? "research_rejected"
+        : ["pending", "draft_pr", "no_eligible_article", "unresolved"].includes(
+              row.status,
+            )
+          ? row.status
+          : "unresolved";
+    return {
+      status,
+      phase: row.phase,
+      reason: row.review_rejected
+        ? "confirmed_review_rejection"
+        : row.research_rejected
+          ? "confirmed_insufficient"
+          : status === "unresolved"
+            ? "unknown"
+            : null,
+      reservedMicros: row.reserved_micros,
+      monthReservedMicros: row.month_reserved_micros,
+      monthLimitMicros: monthBudgetMicros(row.month_jst),
+      runLimitMicros:
+        row.run_limit_micros ??
+        stageBudget(row.budget_version ?? CURRENT_BUDGET_VERSION).runMicros,
+      articleKey: row.article_key,
+      prUrl: status === "draft_pr" ? row.pr_url : null,
+    };
+  } catch {
+    return empty;
+  }
+}
+
 export async function editorialStatus(env: AppEnv, input: unknown) {
   if (
     !input ||
