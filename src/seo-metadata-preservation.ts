@@ -18,6 +18,7 @@ export function prepareEditorialTransport(
   metadataVersion = 1,
   editableFields: readonly string[] = [],
   syntaxPolicy = 1,
+  tokenRepair = 1,
 ) {
   const code = prepareCodePreservation(
     files,
@@ -26,6 +27,7 @@ export function prepareEditorialTransport(
     instruction,
     codeVersion,
     projectRoot,
+    tokenRepair,
   );
   if (metadataVersion === 1) return code;
   if (metadataVersion !== 2) return fail();

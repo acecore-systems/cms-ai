@@ -79,6 +79,7 @@ beforeEach(async () => {
     "0025_seo_review_output.sql",
     "0026_seo_metadata_preservation.sql",
     "0027_seo_october_budget_extension.sql",
+    "0028_seo_code_token_repair.sql",
   ])
     sql.exec(
       readFileSync(
@@ -117,12 +118,12 @@ beforeEach(async () => {
           if (legacyReview)
             for (const item of statements) {
               if (item.query.startsWith("INSERT INTO seo_editorial_jobs"))
-                item.args[item.args.length - 10] = 0;
+                item.args[item.args.length - 11] = 0;
             }
           if (legacyMetadata)
             for (const item of statements) {
               if (item.query.startsWith("INSERT INTO seo_editorial_jobs"))
-                item.args[item.args.length - 3] = 1;
+                item.args[item.args.length - 4] = 1;
             }
           const values = statements.map((item) => ({
             meta: {
@@ -271,7 +272,7 @@ async function claimed() {
 }
 
 describe("SEO durable editorial boundary", () => {
-  it.each(["valid", "foreign"])(
+  it.each(["valid", "foreign", "abbreviated"])(
     "version2 pt transport %s preserves the raw proposal and original locale code",
     async (variant) => {
       for (const file of files)
@@ -289,13 +290,15 @@ describe("SEO durable editorial boundary", () => {
       ).toBe(2);
       let japanese = "";
       for (let step = 0; step <= 4; step++) {
-        if (step === 4 && variant === "foreign") {
+        if (step === 4 && variant !== "valid") {
           const infer = mocks.infer.getMockImplementation()!;
           mocks.infer.mockImplementationOnce(async (...args) => {
             const result = await infer(...args);
             result.changes[0].content = result.changes[0].content.replace(
               "CMS_SEO_CODE_V1_F1_B0",
-              "CMS_SEO_CODE_V1_F0_B0",
+              variant === "foreign"
+                ? "CMS_SEO_CODE_V1_F0_B0"
+                : "CMS_SEO_CODE_V1_B0",
             );
             return result;
           });
@@ -335,6 +338,8 @@ describe("SEO durable editorial boundary", () => {
         .filter(([key]) => key.startsWith("seo-proposals/"))
         .at(-1)![1];
       expect(raw).toContain("CMS_SEO_CODE_V1_");
+      if (variant === "abbreviated")
+        expect(raw).toContain("CMS_SEO_CODE_V1_B0");
     },
   );
 
