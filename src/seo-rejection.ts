@@ -1,3 +1,7 @@
+import {
+  loadSourceRecovery,
+  recoveryDiscovery,
+} from "./seo-source-recovery.ts";
 import { externalScope } from "./seo-external-sources.ts";
 import { parseDiscovery, type Discovery } from "./seo-discovery.ts";
 import type { AppEnv } from "./env.ts";
@@ -203,7 +207,13 @@ export async function prepareRejection(
             context.sourceSha256,
             Date.now(),
             plan,
-            discovery,
+            context.sourceRecovery === 2 && discovery
+              ? await recoveryDiscovery(
+                  discovery,
+                  source,
+                  await loadSourceRecovery(env, context.jobId),
+                )
+              : discovery,
           );
           return fail();
         } catch (e) {
@@ -358,6 +368,7 @@ export async function finalizeRejection(
           retrievalVersion: job.retrieval_contract,
           researchContext: job.research_context,
           recovery: job.research_recovery,
+          sourceRecovery: job.source_recovery,
           referencePolicy: job.reference_policy,
           urlInstructions: job.url_instructions,
           discoveryInstructions: job.discovery_instructions,

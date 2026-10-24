@@ -1,3 +1,6 @@
+import { SeoRunner } from "../seo-runner/index.mjs";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { SeoBudget } from "../src/seo-budget.ts";
 import { deepseekPayload, SEO_DEEPSEEK } from "../src/seo-deepseek.ts";
 import { buildTextInferencePayload } from "../src/inference.ts";
@@ -95,6 +98,7 @@ beforeEach(async () => {
     "0032_seo_text_models.sql",
     "0033_seo_plan_contracts.sql",
     "0034_seo_generation_contracts.sql",
+    "0036_seo_source_recovery.sql",
   ])
     sql.exec(
       readFileSync(
@@ -986,6 +990,359 @@ describe("SEO durable editorial boundary", () => {
       sql.prepare("SELECT deadline FROM seo_budget_runs").get()?.deadline,
     ).toBe(now + 20 * 60_000);
   });
+  it.each([
+    "success",
+    "unrelated",
+    "review-fail",
+    "tamper-generation",
+    "tamper-review",
+    "tamper-publish",
+    "tamper-rejection",
+  ])(
+    "runs recovered evidence through real CMS and runner: %s",
+    async (variant) => {
+      env.SEO_RESEARCH_ENABLED = "true";
+      env.OPENAI_API_KEY_STORE = { get: async () => "fixture-secret" };
+      const reference = "https://geysermc.org/wiki/geyser/setup/";
+      const old = reference + "self/proxy-servers/";
+      const fallback = reference + "provider/proxy-servers/";
+      const excerpt =
+        "No other program can use the Geyser port, over either protocol. This includes programs that use UDP, such as voice chat mods or Query, and programs that use TCP, such as another server, a web map, or a website.";
+      files = files.map((f) => ({
+        ...f,
+        content:
+          f.content.replace(
+            "Original body with",
+            "Geyser port cannot be shared with UDP voice chat or Query. Original body with",
+          ) +
+          "\n[Existing setup](" +
+          reference +
+          ")\n",
+      }));
+      env.SEO_COORDINATOR!.rejectResearch = async () =>
+        ({ status: "recorded" }) as any;
+      env.SEO_COORDINATOR!.rejectReview = async () =>
+        ({ status: "recorded" }) as any;
+      const infer = mocks.infer.getMockImplementation()!;
+      mocks.infer.mockImplementation(async (...args) => {
+        const result = await infer(...args);
+        result.changes[0].content += "\n[Reference](" + reference + ")\n";
+        return result;
+      });
+      const fetchMock = vi.fn(async (_url, options) => {
+        if (String(_url).startsWith("https://geysermc.org/")) {
+          expect(options.redirect).toBe("manual");
+          if (String(_url) === reference)
+            return new Response(
+              variant === "unrelated" ? "Unrelated navigation page" : excerpt,
+              { headers: { "content-type": "text/html" } },
+            );
+          if (
+            [
+              old,
+              fallback,
+              reference + "self/",
+              reference + "provider/",
+            ].includes(String(_url))
+          )
+            return new Response(null, { status: 404 });
+          throw new Error("unexpected public HTTP");
+        }
+        expect(_url).toBe("https://api.openai.com/v1/responses");
+        const payload = JSON.parse(options.body);
+        const input = JSON.parse(payload.input);
+        if (input.discovery)
+          expect(input.discovery.retrievalUrls).toEqual([reference]);
+        const research = !!payload.tools;
+        const value = input.claims
+          ? {
+              verdict: "ready",
+              claimId: input.claims[0].id,
+              targetQuote: input.claims[0].contextParts.find(
+                (p: any) => p.selectable,
+              ).quote,
+              conditions: [
+                input.claims[0].contextParts.find((p: any) => p.selectable)
+                  .quote,
+              ],
+              anchors: ["Geyser"],
+              queries: ["Geyser port official documentation"],
+            }
+          : research
+            ? {
+                verdict: variant === "unrelated" ? "insufficient" : "verified",
+                sources:
+                  variant === "unrelated"
+                    ? []
+                    : [
+                        {
+                          url: reference,
+                          title: "Guide",
+                          claimId: "claim-1",
+                          excerpt: excerpt,
+                          assessment: "supports",
+                        },
+                      ],
+              }
+            : {
+                verdict: ["review-fail", "tamper-rejection"].includes(variant)
+                  ? "fail"
+                  : "pass",
+                files: input.files.map((f: any) => ({
+                  path: f.path,
+                  meaningPreserved: true,
+                  naturalLanguage: true,
+                  referencesSupported: true,
+                  issues: ["review-fail", "tamper-rejection"].includes(variant)
+                    ? ["Meaning not preserved"]
+                    : [],
+                })),
+              };
+        return new Response(
+          JSON.stringify({
+            id: "resp_fixture",
+            status: "completed",
+            usage: { input_tokens: 1000, output_tokens: 200 },
+            output: [
+              ...(research
+                ? [
+                    {
+                      type: "web_search_call",
+                      status: "completed",
+                      action: input.discovery
+                        ? { type: "open_page", url: reference }
+                        : {
+                            type: "search",
+                            queries: input.plan.queries,
+                            sources: [old, fallback].map((url) => ({
+                              type: "url",
+                              url,
+                            })),
+                          },
+                    },
+                  ]
+                : []),
+              {
+                type: "message",
+                status: "completed",
+                role: "assistant",
+                content: [
+                  {
+                    type: "output_text",
+                    text:
+                      research && !input.discovery
+                        ? JSON.stringify({
+                            verdict: "selected",
+                            selectedUrl: old,
+                            fallbackUrl: fallback,
+                            reason:
+                              "Synthetic relevant primary source candidate",
+                          })
+                        : research
+                          ? "Verified claim [1].\n```json\n" +
+                            JSON.stringify(
+                              input.discovery?.retrievalUrls
+                                ? {
+                                    ...value,
+                                    retrieval: [
+                                      {
+                                        url: input.discovery.retrievalUrls[0],
+                                        outcome: "retrieved",
+                                      },
+                                    ],
+                                  }
+                                : value,
+                            ) +
+                            "\n```"
+                          : JSON.stringify(
+                              input.discovery?.retrievalUrls
+                                ? {
+                                    ...value,
+                                    retrieval: [
+                                      {
+                                        url: input.discovery.retrievalUrls[0],
+                                        outcome: "retrieved",
+                                      },
+                                    ],
+                                  }
+                                : value,
+                            ),
+                    annotations: research
+                      ? [
+                          {
+                            type: "url_citation",
+                            url: reference,
+                            start_index: 15,
+                            end_index: 18,
+                          },
+                        ]
+                      : [],
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const started = await start();
+      const jobId = started.jobId!;
+      const workspace = await mkdtemp(
+        join(process.cwd(), ".source-recovery-test-"),
+      );
+      const spec = seoSite("portal")!;
+      const contents = [
+        ...files,
+        { path: "AGENTS.md", content: "# Guidance\n" },
+        ...spec.guidance.map((path) => ({
+          path,
+          content: "# Guide\nPreserve meaning.\n",
+        })),
+      ];
+      for (const f of contents) {
+        await mkdir(join(workspace, f.path, ".."), { recursive: true });
+        await writeFile(join(workspace, f.path), f.content);
+      }
+      const execute = vi.fn(async (command: string, args: string[]) => ({
+        stdout:
+          command === "git" && args[0] === "rev-parse"
+            ? baseSha + "\n"
+            : command === "git" && args[0] === "ls-files" && args[1] === "-z"
+              ? contents.map((f) => f.path).join("\0") + "\0"
+              : command === "git" &&
+                  args[0] === "diff" &&
+                  args[1] === "--name-only"
+                ? files.map((f) => f.path).join("\0") + "\0"
+                : "",
+      }));
+      const runner = new SeoRunner({
+        workspace,
+        now: () => now,
+        execute,
+        env: {
+          SEO_JOB_ID: jobId,
+          SEO_RUN_ID: runId,
+          GITHUB_REPOSITORY: spec.site.repository,
+          GITHUB_TOKEN: "fixture",
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture",
+        },
+      });
+      const operations: string[] = [];
+      vi.spyOn(runner, "request").mockImplementation(
+        async (operation = "", body?: any) => {
+          operations.push(operation);
+          const tamperAt = {
+            "tamper-generation": "propose",
+            "tamper-review": "review",
+            "tamper-publish": "publish",
+            "tamper-rejection": "review-reject",
+          }[variant];
+          if (operation === tamperAt)
+            objects.set(
+              "seo-editorial/" + jobId + "/source-recovery.json",
+              "{}",
+            );
+          return request(jobId, operation, body);
+        },
+      );
+      vi.spyOn(runner, "format").mockImplementation(async (paths: string[]) => {
+        for (const path of paths) {
+          const f = await runner.read(path);
+          await runner.write(
+            { path, content: await format(f.content, portalFormat) },
+            paths,
+          );
+        }
+      });
+      const github = vi
+        .spyOn(runner, "github")
+        .mockImplementation(
+          async (_path: string, method?: string, body?: any) => {
+            if (method !== "POST") return [];
+            expect(body.draft).toBe(true);
+            expect(operations).toContain("review");
+            expect(operations).toContain("publish");
+            return {
+              draft: true,
+              state: "open",
+              number: 999,
+              base: { sha: baseSha },
+              head: { ref: "codex/seo-" + jobId },
+              html_url:
+                "https://github.com/" + spec.site.repository + "/pull/999",
+            };
+          },
+        );
+      try {
+        const result = await runner.executeJob();
+        expect(
+          result,
+          JSON.stringify({
+            result,
+            stage: runner.stage,
+            failure: objects.get("seo-editorial/" + jobId + "/failure.json"),
+          }),
+        ).toMatchObject({
+          status: variant.startsWith("tamper-")
+            ? "unresolved"
+            : variant === "success"
+              ? "draft_pr"
+              : variant === "unrelated"
+                ? "research_rejected"
+                : "review_rejected",
+        });
+        expect(operations.includes("publish")).toBe(
+          ["success", "tamper-publish"].includes(variant),
+        );
+        expect(github.mock.calls.filter((c) => c[1] === "POST")).toHaveLength(
+          variant === "success" ? 1 : 0,
+        );
+        expect(mocks.infer).toHaveBeenCalledTimes(
+          ["unrelated", "tamper-generation"].includes(variant) ? 0 : 9,
+        );
+        const proof = JSON.parse(
+          objects.get("seo-editorial/" + jobId + "/source-recovery.json")!,
+        );
+        if (!variant.startsWith("tamper-"))
+          expect(proof.chains.map((c: any) => c.selected)).toEqual([
+            reference,
+            reference,
+          ]);
+        expect(
+          sql
+            .prepare("SELECT count(*) n FROM seo_source_recovery_results")
+            .get()!.n,
+        ).toBe(1);
+        const researchCalls = fetchMock.mock.calls.filter(
+          (c: any) =>
+            c[0] === "https://api.openai.com/v1/responses" &&
+            JSON.parse(c[1].body).tools,
+        );
+        expect(researchCalls).toHaveLength(2);
+        expect(JSON.parse(researchCalls[1][1].body).max_tool_calls).toBe(2);
+        if (variant === "success") {
+          const before = sql
+            .prepare("SELECT * FROM seo_budget_calls ORDER BY id")
+            .all();
+          const again = await runner.executeJob();
+          expect(again.status).toBe("unresolved");
+          expect(github.mock.calls.filter((c) => c[1] === "POST")).toHaveLength(
+            1,
+          );
+          expect(
+            sql.prepare("SELECT * FROM seo_budget_calls ORDER BY id").all(),
+          ).toEqual(before);
+          expect(row().status).toBe("draft_pr");
+        }
+      } finally {
+        if (
+          !workspace.startsWith(join(process.cwd(), ".source-recovery-test-"))
+        )
+          throw Error("cleanup boundary");
+        await rm(workspace, { recursive: true, force: true });
+      }
+    },
+  );
   it("keeps new research disabled by default and restricts the canary to its exact editorial ID", async () => {
     env.SEO_RESEARCH_CANARY_RUN_ID =
       "editorial-00000000-0000-4000-8000-000000000002";

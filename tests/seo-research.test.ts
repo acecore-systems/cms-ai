@@ -1393,3 +1393,16 @@ it("rejects total usage beyond the reserved review amount without refund", async
     "unresolved",
   );
 });
+
+it("legacy sourceRecovery1 makes no public HTTP calls and preserves replay without the new tables", async () => {
+  context.sourceRecovery = 1;
+  const first = await research();
+  expect(await research()).toEqual(first);
+  expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+    "https://api.openai.com/v1/responses",
+    "https://api.openai.com/v1/responses",
+  ]);
+  expect(
+    [...objects.keys()].some((k) => k.endsWith("source-recovery.json")),
+  ).toBe(false);
+});

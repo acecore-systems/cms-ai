@@ -37,6 +37,7 @@ export function referenceUrl(value: unknown, policy = 1): string {
 }
 
 export type ResearchEvidence = {
+  sourceRecovery?: { version: 2; url: string; proofSha256: string };
   version: 1;
   tableContext?: TableContext;
   referencePolicy?: 2;

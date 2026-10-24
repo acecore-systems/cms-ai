@@ -70,6 +70,7 @@ type Run = {
   created_at: number;
 };
 type EditorialJob = {
+  source_recovery: 1 | 2;
   model_version: 1 | 2;
   generation_output: 1 | 2;
   plan_instructions: 1 | 2;
@@ -120,7 +121,7 @@ const runRow = (env: AppEnv, runId: string) =>
     .first<Run>();
 const jobRow = (env: AppEnv, jobId: string) =>
   env.CMS_AI_DB.prepare(
-    "SELECT j.*,COALESCE(m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(g.version,1) AS generation_output FROM seo_editorial_jobs j LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id WHERE j.id=?",
+    "SELECT j.*,COALESCE(m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(g.version,1) AS generation_output,COALESCE(s.version,1) AS source_recovery FROM seo_editorial_jobs j LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id WHERE j.id=?",
   )
     .bind(jobId)
     .first<EditorialJob>();
@@ -359,6 +360,9 @@ async function advance(env: AppEnv, runId: string) {
     const transaction = await env.CMS_AI_DB.batch([
       ...(researchEnabled(env, runId)
         ? [
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_source_recovery_contracts(job_id,version) SELECT ?,2 WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+            ).bind(jobId, runId, run.candidate_index),
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_plan_contracts(job_id,version) SELECT ?,2 WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
             ).bind(jobId, runId, run.candidate_index),
@@ -1098,6 +1102,7 @@ function checkContext(job: EditorialJob, run: Run): CheckContext {
   return {
     modelVersion: job.model_version,
     planInstructions: job.plan_instructions,
+    sourceRecovery: job.source_recovery,
     jobId: job.id,
     runId: run.run_id,
     budgetRunId: run.budget_run_id,
