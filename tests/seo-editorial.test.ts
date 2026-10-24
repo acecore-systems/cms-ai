@@ -2329,7 +2329,7 @@ describe("read-only editorial report", () => {
       reason: null,
       reservedMicros: null,
       monthReservedMicros: 0,
-      monthLimitMicros: 11890000,
+      monthLimitMicros: 12100000,
       runLimitMicros: 1250000,
     });
     expect(sql.prepare("SELECT * FROM seo_editorial_runs").get()).toEqual(
@@ -2353,7 +2353,7 @@ describe("read-only editorial report", () => {
         (sum, b) => sum + Number(b.reserved_micros),
         0,
       ),
-      monthLimitMicros: 11890000,
+      monthLimitMicros: 12100000,
       runLimitMicros: 1250000,
       prUrl: null,
     });

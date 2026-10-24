@@ -39,7 +39,7 @@ it("D1 atomically requires audit and preserves October weekly reserve across com
         id(100 + i),
         "old" + i,
         hash,
-        i === 10 ? 639999 : 1000000,
+        i === 10 ? 849999 : 1000000,
         now,
         deadline,
         2,
@@ -130,7 +130,7 @@ it("D1 atomically requires audit and preserves October weekly reserve across com
       (await db
         .prepare("SELECT sum(reserved_micros) n FROM seo_budget_calls")
         .first())!.n,
-    ).toBe(10640000);
+    ).toBe(10850000);
     expect(
       (await db.prepare("SELECT count(*) n FROM seo_model_calls").first())!.n,
     ).toBe(1);

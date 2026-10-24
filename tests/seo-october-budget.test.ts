@@ -1,16 +1,20 @@
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { expect, it } from "vitest";
-import { jstMonth, monthBudgetMicros } from "../src/seo-budget.ts";
+import {
+  jstMonth,
+  monthBudgetMicros,
+  newJobMonthLimit,
+} from "../src/seo-budget.ts";
 
 const migration = (name: string) =>
   readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
 function setup() {
   const db = new DatabaseSync(":memory:");
-  db.exec(migration("0004_seo_budget.sql"));
-  db.exec(migration("0011_seo_month_budget.sql"));
-  db.exec("CREATE TABLE seo_editorial_jobs(id TEXT PRIMARY KEY)");
-  db.exec(migration("0012_seo_run_budget.sql"));
+  for (const name of readdirSync(new URL("../migrations/", import.meta.url))
+    .filter((n) => n.endsWith(".sql") && n >= "0004" && n < "0035")
+    .sort())
+    db.exec(migration(name));
   return db;
 }
 function call(
@@ -29,8 +33,8 @@ function call(
 }
 it.each([
   ["2026-09-30T14:59:59.999Z", "2026-09", 7000000],
-  ["2026-09-30T15:00:00.000Z", "2026-10", 11890000],
-  ["2026-10-31T14:59:59.999Z", "2026-10", 11890000],
+  ["2026-09-30T15:00:00.000Z", "2026-10", 12100000],
+  ["2026-10-31T14:59:59.999Z", "2026-10", 12100000],
   ["2026-10-31T15:00:00.000Z", "2026-11", 7000000],
   ["2027-09-30T15:00:00.000Z", "2027-10", 7000000],
 ])("agrees between preflight and SQL at %s", (time, month, cap) => {
@@ -38,10 +42,7 @@ it.each([
   expect(monthBudgetMicros(String(month))).toBe(cap);
   const db = setup();
   try {
-    db.exec(migration("0015_seo_october_budget.sql"));
-    db.exec(migration("0027_seo_october_budget_extension.sql"));
-    db.exec(migration("0029_seo_october_budget_1114.sql"));
-    db.exec(migration("0030_seo_october_budget_1189.sql"));
+    db.exec(migration("0035_seo_october_budget_1210.sql"));
     for (let i = 0, remaining = Number(cap); remaining > 0; i++) {
       const amount = Math.min(remaining, 1000000);
       call(db, `run${i}`, String(month), amount);
@@ -68,10 +69,7 @@ it("keeps old rows, unresolved reservations, deadlines, run ceilings and duplica
       db.prepare("SELECT * FROM seo_budget_runs").all(),
       db.prepare("SELECT * FROM seo_budget_calls").all(),
     ];
-    db.exec(migration("0015_seo_october_budget.sql"));
-    db.exec(migration("0027_seo_october_budget_extension.sql"));
-    db.exec(migration("0029_seo_october_budget_1114.sql"));
-    db.exec(migration("0030_seo_october_budget_1189.sql"));
+    db.exec(migration("0035_seo_october_budget_1210.sql"));
     expect([
       db.prepare("SELECT * FROM seo_budget_runs").all(),
       db.prepare("SELECT * FROM seo_budget_calls").all(),
@@ -92,5 +90,80 @@ it("rejects malformed month keys and does not extend the exception", () => {
   for (const m of ["2026-1", "2026-13", "2026-10 ", "2026-10-01", ""])
     expect(() => monthBudgetMicros(m)).toThrow("seo_invalid_budget_month");
   expect(monthBudgetMicros("2026-11")).toBe(7000000);
-  expect(9386313 + 1249533 + 1250000).toBeLessThanOrEqual(11890000);
+  expect(9386313 + 1249533 + 1250000).toBeLessThanOrEqual(12100000);
 });
+
+it("changes only the three approved trigger literals and keeps the exact weekly reserve", () => {
+  const db = setup();
+  try {
+    const before = db
+      .prepare(
+        "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name",
+      )
+      .all();
+    db.exec(migration("0035_seo_october_budget_1210.sql"));
+    const changed: string[] = [];
+    for (const row of before) {
+      const after = db
+        .prepare("SELECT type,name,sql FROM sqlite_master WHERE name=?")
+        .get(row.name!);
+      if (after?.sql !== row.sql) {
+        changed.push(String(row.name));
+        expect(after?.sql).toBe(
+          String(row.sql)
+            .replaceAll("11890000", "12100000")
+            .replaceAll("10640000", "10850000"),
+        );
+      }
+    }
+    expect(changed).toEqual([
+      "seo_budget_cap",
+      "seo_fallback_first_call_fit",
+      "seo_model_reservation",
+    ]);
+    const beforeSlot = Date.parse("2026-10-26T00:00:00Z") - 1;
+    expect(newJobMonthLimit("2026-10", beforeSlot)).toBe(10850000);
+    expect(
+      monthBudgetMicros("2026-10") - newJobMonthLimit("2026-10", beforeSlot),
+    ).toBe(1250000);
+    expect(newJobMonthLimit("2026-10", beforeSlot) - 9707766).toBe(1142234);
+    expect(newJobMonthLimit("2026-10", beforeSlot) - 9707766 - 1138828).toBe(
+      3406,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+it.each([0, 1])(
+  "fallback first-call full-stage maximum observes the October boundary (+%s)",
+  (excess) => {
+    const db = setup();
+    try {
+      db.exec(migration("0035_seo_october_budget_1210.sql"));
+      const maximum = 1138828;
+      for (let i = 0, left = 12100000 - maximum + excess; left > 0; i++) {
+        const n = Math.min(left, 1000000);
+        call(db, "held" + i, "2026-10", n);
+        left -= n;
+      }
+      db.exec(
+        "INSERT INTO seo_fallback_trials VALUES('root',1,1,2); INSERT INTO seo_fallback_attempts VALUES('root','root',1,'budget','article',NULL,1);",
+      );
+      db.exec(
+        "INSERT INTO seo_editorial_runs(run_id,budget_run_id,input_sha256,deadline,candidates_json,created_at) VALUES('root','budget','hash',2,'[{}]',1); INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,status) VALUES('job','root','wiki',0,'inspecting'); UPDATE seo_editorial_runs SET job_id='job' WHERE run_id='root';",
+      );
+      db.exec(
+        `INSERT INTO seo_fallback_preflights VALUES('job',${maximum},'{}',1);`,
+      );
+      if (excess)
+        expect(() => call(db, "first", "2026-10", 1, "budget")).toThrow(
+          "seo_fallback_preflight_changed",
+        );
+      else
+        expect(() => call(db, "first", "2026-10", 1, "budget")).not.toThrow();
+    } finally {
+      db.close();
+    }
+  },
+);

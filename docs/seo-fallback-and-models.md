@@ -12,7 +12,7 @@ CMS側の共有予算triggerとSEO側の受付fenceを併用し、試行間に�
 
 CMSの新規jobは明示設定 `SEO_AI_MODEL=@cf/deepseek-ai/deepseek-v4.1-flash-1017` のときだけprofile 2を保存する。文章判断・生成・校閲はWorkers AI Chat Completions、調査・検索はLuna hosted search。既存jobのprofile未登録はLunaのままで、設定切替後も変わらない。通常CMSモデルは変更しない。
 
-10月11.89 USD、通常月7 USDを維持する。新profileの10月26日00:00 UTC前の予約は月累積10.64 USDまでにSQLで制限し、月曜分1.25 USDを残す。全phaseに監査先行→予約の同一transactionを要求する。監査なし・上限超過は原子的に拒否し、失敗・不明な呼出しも予約額を保持する。候補数のmanualオプションは追加しない。
+10月12.10 USD、通常月7 USDを維持する。新profileの10月26日00:00 UTC前の予約は月累積10.85 USDまでにSQLで制限し、月曜分1.25 USDを残す。全phaseに監査先行→予約の同一transactionを要求する。監査なし・上限超過は原子的に拒否し、失敗・不明な呼出しも予約額を保持する。候補数のmanualオプションは追加しない。
 
 ## 通知と配備順序
 
