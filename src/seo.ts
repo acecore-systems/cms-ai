@@ -1,3 +1,4 @@
+import { reconsiderationProof } from "./seo-reconsideration.ts";
 import { seoRepositoryReader } from "./github.ts";
 import { seoSite } from "./sites.ts";
 import { editorialEligibility } from "./seo-eligibility.ts";
@@ -39,6 +40,9 @@ export class SeoGeneration extends WorkerEntrypoint<AppEnv> {
 
 // Explicit capability, separate from the read-only connection and proposal RPCs.
 export class SeoEditorial extends WorkerEntrypoint<AppEnv> {
+  async reconsideration(input: unknown) {
+    return reconsiderationProof(this.env, input);
+  }
   async eligibility(input: unknown) {
     const v = input as { site?: string; deadline?: number };
     const spec = v && typeof v.site === "string" ? seoSite(v.site) : null;

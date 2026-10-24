@@ -253,3 +253,84 @@ describe("SEO authenticated public repository reader", () => {
     }
   });
 });
+
+describe("SEO completed workflow read", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const { privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { format: "pem", type: "pkcs1" },
+    publicKeyEncoding: { format: "pem", type: "spki" },
+  });
+  const env = {
+    CMS_AI_GITHUB_APP_CLIENT_ID: "test",
+    CMS_AI_GITHUB_APP_INSTALLATION_ID: "123456",
+    CMS_AI_GITHUB_APP_PRIVATE_KEY: privateKey,
+  } as AppEnv;
+  const site = getSiteById("homepage-hatt")!;
+  it.each([
+    "success",
+    "in_progress",
+    "wrong_sha",
+    "wrong_repo",
+    "wrong_path",
+    "wrong_id",
+    "wrong_event",
+    "wrong_branch",
+    "failure",
+    "unavailable",
+    "scope",
+  ])(
+    "fails closed unless pinned workflow completed successfully: %s",
+    async (kind) => {
+      const { seoWorkflowCompleted } = await import("../src/github.ts");
+      const fetcher = vi.fn(async (url: any, init: any) => {
+        if (String(url).endsWith("/access_tokens")) {
+          expect(JSON.parse(init.body)).toEqual({
+            permissions: { actions: "read" },
+            repositories: ["homepage-hatt"],
+          });
+          return Response.json({
+            token: "fixture",
+            permissions: {
+              actions: kind === "scope" ? "write" : "read",
+              metadata: "read",
+            },
+          });
+        }
+        expect(String(url)).toBe(
+          "https://api.github.com/repos/acecore-systems/homepage-hatt/actions/runs/123",
+        );
+        expect(init.method).toBe("GET");
+        expect(init.redirect).toBe("manual");
+        expect(init.signal).toBeDefined();
+        if (kind === "unavailable") return new Response(null, { status: 503 });
+        return Response.json({
+          id: kind === "wrong_id" ? 124 : 123,
+          status: kind === "in_progress" ? "in_progress" : "completed",
+          conclusion: kind === "failure" ? "failure" : "success",
+          event: kind === "wrong_event" ? "push" : "workflow_dispatch",
+          path:
+            kind === "wrong_path"
+              ? "other"
+              : ".github/workflows/seo-content.yml",
+          head_branch: kind === "wrong_branch" ? "other" : "main",
+          head_sha: kind === "wrong_sha" ? "b".repeat(40) : "a".repeat(40),
+          repository: {
+            full_name: kind === "wrong_repo" ? "other" : site.repository,
+          },
+        });
+      });
+      vi.stubGlobal("fetch", fetcher);
+      const promise = seoWorkflowCompleted(
+        env,
+        site,
+        "123",
+        "a".repeat(40),
+        Date.now() + 15000,
+      );
+      if (kind === "scope") await expect(promise).rejects.toThrow();
+      else expect(await promise).toBe(kind === "success");
+      expect(fetcher).toHaveBeenCalledTimes(kind === "scope" ? 1 : 2);
+    },
+  );
+});

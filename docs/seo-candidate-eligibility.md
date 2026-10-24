@@ -52,3 +52,13 @@ CMSの新RPCを先に配置し、その後SEOの新規収集を配置する。D1
 現在の `seo_research_rejections` はrun単位でUNIQUE、receipt確定でjob/runを終端化し、job・budget run・article key・期限・checks・予算callの変更をtriggerで禁止する。`advance` が次候補へ進むのはclaim前のineligibleだけ。終端receipt後に同じrunを再開する変更は安全な小修正ではない。
 
 将来の実装案は親coordinatorで最大候補数を固定したattempt IDを新設し、各attemptのCMS run/job/receiptを独立に保持すること。記事lockの確定解放、重複通知の冪等性、親全体の累積予算上限・期限・月残を維持し、不明な失敗では進まない条件をCMS/SEO双方で合意・version化する必要がある。今回この契約・予算・migrationは変更しない。
+
+## 確定不足記事の一度だけの再検討
+
+SEO coordinatorの`article_reconsiderations`と組み合わせる読み取り専用Service RPC `reconsideration`を追加した。公開HTTP入力や旧run再送ではない。旧CMS job/runが確定不足の終端で、生成・公開・進行callがなくcallback済み、D1 receiptと不変R2 receiptが完全一致し、生成stepが存在しない場合だけproofを返す。保存済み計画契約がv1、現行の新jobがv2でsource SHAが同一という限定条件である。v2で不足になった記事やsource変更を理由とした再試行は許可しない。
+
+callbackはworkflow終了前に届くため、それだけで終了済みとは扱わない。保存済みGitHub run IDについて、repo限定`actions:read` tokenで1回GETし、repo・workflow path・main・base SHA・workflow_dispatch・completed/successの一致を確認する。通信失敗、権限不明、実行中、失敗終了は拒否する。認証の追加、権限拡張、dispatch、モデル呼出しは行わない。
+
+新jobはsource検証・予算preflightを通り、claiming状態をD1へ保存してからSEO claimを呼ぶ。SEOは旧lock ownerを読み、このCMS RPCへ新run IDを渡して再入する。新jobがclaiming/claim未記録、期限内、plan v2、同一sourceであることを照合する。待機中に旧処理を再開せず、DB transactionをService RPC越しに保持しない。SEO側の監査付きowner移行成功後、CMSがclaimedへ進む。途中障害は保守的に停止し、旧runを操作しない。
+
+CMS migrationは不要。配備側はSEO migration0023とCMSのRPC追加を先に用意し、SEO側の新収集・claimを有効にする。CMSだけ先行しても既存SEOは呼ばず、SEOだけ先行した場合のRPC欠落はlockを保持する。旧receipt/model/input/予算/期限は変更しない。ローカル合成fixtureは新claim→同期proof→claim確定の順序を確認するが、本番の新規AI・検索・生成・校閲・Draft成功は別の実確認が必要である。
