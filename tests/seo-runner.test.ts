@@ -576,11 +576,14 @@ it.each([false, true])(
 );
 
 it.each([
-  [1, 150000],
-  [2, 510000],
+  [1, "propose", 150000],
+  [2, "propose", 510000],
+  [1, "review", 150000],
+  [2, "review", 510000],
+  [2, "research", 150000],
 ])(
-  "pins generation %i RPC timeout and keeps the root deadline",
-  async (version, maximum) => {
+  "pins version %i %s RPC timeout and keeps the root deadline",
+  async (version, operation, maximum) => {
     const r = new SeoRunner({
       now: () => now,
       env: {
@@ -599,12 +602,13 @@ it.each([
         ),
     });
     r.generationOutput = version;
+    r.editorialScope = version;
     r.deadline = now + 1000000;
     const timeout = vi.spyOn(AbortSignal, "timeout");
-    await r.request("propose", { step: 0 });
+    await r.request(operation, { step: 0 });
     expect(timeout).toHaveBeenLastCalledWith(maximum);
     r.deadline = now + 10000;
-    await r.request("propose", { step: 0 });
+    await r.request(operation, { step: 0 });
     expect(timeout).toHaveBeenLastCalledWith(10000);
   },
 );

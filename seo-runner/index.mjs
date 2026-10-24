@@ -134,7 +134,8 @@ export class SeoRunner {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(
           Math.min(
-            operation === "propose" && this.generationOutput === 2
+            (operation === "propose" && this.generationOutput === 2) ||
+              (operation === "review" && this.editorialScope === 2)
               ? 510_000
               : ["propose", "research", "review"].includes(operation)
                 ? 150_000

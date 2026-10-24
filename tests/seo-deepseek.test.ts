@@ -268,6 +268,47 @@ it("new generation output reserves 48k at official output rate, caps deadline, a
   ).rejects.toThrow();
   expect(timeout).toHaveBeenLastCalledWith(20000);
 });
+it.each([
+  [6000, 120000],
+  [24000, 480000],
+])(
+  "bounds %i-token review wait without retry or budget changes",
+  async (tokens, maximum) => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const payload = { ...request(), max_completion_tokens: tokens };
+    const reserve = vi.fn(async (_model, actual) => {
+      expect(actual).toEqual(deepseekPayload(payload));
+      expect(deepseekUpperCost(actual)).toBe(
+        deepseekUpperCost(deepseekPayload(payload)),
+      );
+    });
+    const ai = vi.fn(async () => response());
+    await runTextModel(
+      { AI: { run: ai } } as unknown as AppEnv,
+      SEO_DEEPSEEK,
+      payload,
+      reserve,
+      now + 600000,
+      true,
+    );
+    expect(timeout).toHaveBeenLastCalledWith(maximum);
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(ai).toHaveBeenCalledTimes(1);
+    ai.mockRejectedValueOnce(new DOMException("timeout", "TimeoutError"));
+    await expect(
+      runTextModel(
+        { AI: { run: ai } } as unknown as AppEnv,
+        SEO_DEEPSEEK,
+        payload,
+        reserve,
+        now + 20000,
+        true,
+      ),
+    ).rejects.toThrow();
+    expect(timeout).toHaveBeenLastCalledWith(20000);
+    expect(ai).toHaveBeenCalledTimes(2);
+  },
+);
 it("bounds all 1..9 locale v2 generations without changing the old job maximum", () => {
   for (let count = 1; count <= 9; count++) {
     const allocation = allocateGenerationInputs(
