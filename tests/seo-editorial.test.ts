@@ -98,7 +98,9 @@ beforeEach(async () => {
     "0032_seo_text_models.sql",
     "0033_seo_plan_contracts.sql",
     "0034_seo_generation_contracts.sql",
+    "0035_seo_october_budget_1210.sql",
     "0036_seo_source_recovery.sql",
+    "0037_seo_october_budget_1248.sql",
   ])
     sql.exec(
       readFileSync(
@@ -2577,7 +2579,7 @@ it("binds the fixed generation allocation to persisted bytes and rejects tamperi
 it("skips before claim when the complete new run would exceed remaining monthly budget", async () => {
   env.SEO_RESEARCH_ENABLED = "true";
   const id = await inspecting();
-  for (let i = 0; i < 13; i++) {
+  for (let i = 0; i < 14; i++) {
     sql
       .prepare(
         "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline) VALUES(?,'other',?,?)",
@@ -2686,7 +2688,7 @@ describe("read-only editorial report", () => {
       reason: null,
       reservedMicros: null,
       monthReservedMicros: 0,
-      monthLimitMicros: 12100000,
+      monthLimitMicros: 12480000,
       runLimitMicros: 1250000,
     });
     expect(sql.prepare("SELECT * FROM seo_editorial_runs").get()).toEqual(
@@ -2710,7 +2712,7 @@ describe("read-only editorial report", () => {
         (sum, b) => sum + Number(b.reserved_micros),
         0,
       ),
-      monthLimitMicros: 12100000,
+      monthLimitMicros: 12480000,
       runLimitMicros: 1250000,
       prUrl: null,
     });
