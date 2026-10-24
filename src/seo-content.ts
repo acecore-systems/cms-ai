@@ -141,6 +141,44 @@ function codeBlocks(text: string) {
     ...text.matchAll(/(^|\n)(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\2(?=\n|$)/g),
   ].map((match) => match[0].trim());
 }
+// CommonMark code spans render as text. Do not mistake e.g. `[env.<name>]`
+// for a new HTML element. Mask only parser-confirmed spans in the body;
+// frontmatter, HTML blocks/attributes and unmatched delimiters stay protected.
+function protectedHtml(text: string) {
+  const normalized = normalizeLf(text);
+  const { body } = markdown(normalized);
+  const tree = fromMarkdown(body, {
+    extensions: [gfm()],
+    mdastExtensions: [gfmFromMarkdown()],
+  });
+  const ranges: { start: number; end: number }[] = [];
+  const visit = (node: any) => {
+    if (node.type === "inlineCode") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (
+        !Number.isInteger(start) ||
+        !Number.isInteger(end) ||
+        start < 0 ||
+        end <= start ||
+        end > body.length
+      )
+        throw new Error("seo_html_changed");
+      ranges.push({ start, end });
+    }
+    for (const child of node.children || []) visit(child);
+  };
+  visit(tree);
+  let masked = body;
+  for (const { start, end } of ranges.sort((a, b) => b.start - a.start))
+    masked =
+      masked.slice(0, start) +
+      masked.slice(start, end).replace(/[^\n]/g, " ") +
+      masked.slice(end);
+  return (normalized.slice(0, normalized.length - body.length) + masked).match(
+    /<\/?[A-Za-z][^>]*>|<!--/gu,
+  );
+}
 function assertContent(
   original: string,
   next: string,
@@ -179,10 +217,9 @@ function assertContent(
     )
   )
     throw new Error("seo_number_added");
-  const rawHtml = /<\/?[A-Za-z][^>]*>|<!--/gu;
   if (
-    JSON.stringify(original.match(rawHtml)) !==
-    JSON.stringify(next.match(rawHtml))
+    JSON.stringify(protectedHtml(original)) !==
+    JSON.stringify(protectedHtml(next))
   )
     throw new Error("seo_html_changed");
 }
