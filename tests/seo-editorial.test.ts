@@ -104,6 +104,7 @@ beforeEach(async () => {
     "0036_seo_source_recovery.sql",
     "0037_seo_october_budget_1248.sql",
     "0038_seo_japanese_editorial.sql",
+    "0039_seo_october_budget_1360.sql",
   ])
     sql.exec(
       readFileSync(
@@ -2724,7 +2725,7 @@ it("binds the fixed generation allocation to persisted bytes and rejects tamperi
 it("skips before claim when the complete new run would exceed remaining monthly budget", async () => {
   env.SEO_RESEARCH_ENABLED = "true";
   const id = await inspecting();
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < 15; i++) {
     sql
       .prepare(
         "INSERT INTO seo_budget_runs(id,article_key,created_at,deadline) VALUES(?,'other',?,?)",
@@ -2732,7 +2733,7 @@ it("skips before claim when the complete new run would exceed remaining monthly 
       .run("other" + i, now, now + 60000);
     sql
       .prepare(
-        "INSERT INTO seo_budget_calls(id,run_id,month_jst,request_sha256,reserved_micros,created_at,status) VALUES(?,?,'2026-10',?,850000,?,'complete')",
+        "INSERT INTO seo_budget_calls(id,run_id,month_jst,request_sha256,reserved_micros,created_at,status) VALUES(?,?,'2026-10',?,900000,?,'complete')",
       )
       .run("other" + i, "other" + i, "b".repeat(64), now);
   }
@@ -2835,7 +2836,7 @@ describe("read-only editorial report", () => {
       reason: null,
       reservedMicros: null,
       monthReservedMicros: 0,
-      monthLimitMicros: 12480000,
+      monthLimitMicros: 13600000,
       runLimitMicros: 1250000,
     });
     expect(sql.prepare("SELECT * FROM seo_editorial_runs").get()).toEqual(
@@ -2859,7 +2860,7 @@ describe("read-only editorial report", () => {
         (sum, b) => sum + Number(b.reserved_micros),
         0,
       ),
-      monthLimitMicros: 12480000,
+      monthLimitMicros: 13600000,
       runLimitMicros: 1250000,
       prUrl: null,
     });

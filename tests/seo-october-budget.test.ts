@@ -12,7 +12,7 @@ const migration = (name: string) =>
 function setup() {
   const db = new DatabaseSync(":memory:");
   for (const name of readdirSync(new URL("../migrations/", import.meta.url))
-    .filter((n) => n.endsWith(".sql") && n >= "0004" && n < "0037")
+    .filter((n) => n.endsWith(".sql") && n >= "0004" && n < "0039")
     .sort())
     db.exec(migration(name));
   return db;
@@ -33,8 +33,8 @@ function call(
 }
 it.each([
   ["2026-09-30T14:59:59.999Z", "2026-09", 7000000],
-  ["2026-09-30T15:00:00.000Z", "2026-10", 12480000],
-  ["2026-10-31T14:59:59.999Z", "2026-10", 12480000],
+  ["2026-09-30T15:00:00.000Z", "2026-10", 13600000],
+  ["2026-10-31T14:59:59.999Z", "2026-10", 13600000],
   ["2026-10-31T15:00:00.000Z", "2026-11", 7000000],
   ["2027-09-30T15:00:00.000Z", "2027-10", 7000000],
 ])("agrees between preflight and SQL at %s", (time, month, cap) => {
@@ -42,7 +42,7 @@ it.each([
   expect(monthBudgetMicros(String(month))).toBe(cap);
   const db = setup();
   try {
-    db.exec(migration("0037_seo_october_budget_1248.sql"));
+    db.exec(migration("0039_seo_october_budget_1360.sql"));
     for (let i = 0, remaining = Number(cap); remaining > 0; i++) {
       const amount = Math.min(remaining, 1000000);
       call(db, `run${i}`, String(month), amount);
@@ -74,7 +74,7 @@ it("keeps old rows, unresolved reservations, deadlines, run ceilings and duplica
     const allRows = () =>
       tables.map((t) => db.prepare('SELECT * FROM "' + t + '"').all());
     const before = allRows();
-    db.exec(migration("0037_seo_october_budget_1248.sql"));
+    db.exec(migration("0039_seo_october_budget_1360.sql"));
     expect(allRows()).toEqual(before);
     call(db, "finish", "2026-10", 250000, "unknown");
     expect(() => call(db, "excess", "2026-10", 1, "unknown")).toThrow(
@@ -92,7 +92,7 @@ it("rejects malformed month keys and does not extend the exception", () => {
   for (const m of ["2026-1", "2026-13", "2026-10 ", "2026-10-01", ""])
     expect(() => monthBudgetMicros(m)).toThrow("seo_invalid_budget_month");
   expect(monthBudgetMicros("2026-11")).toBe(7000000);
-  expect(9979519 + 1250000 + 1250000).toBeLessThanOrEqual(12480000);
+  expect(11091530 + 1250000 + 1250000).toBeLessThanOrEqual(13600000);
 });
 
 it("changes only the three approved trigger literals and keeps the exact weekly reserve", () => {
@@ -103,7 +103,7 @@ it("changes only the three approved trigger literals and keeps the exact weekly 
         "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name",
       )
       .all();
-    db.exec(migration("0037_seo_october_budget_1248.sql"));
+    db.exec(migration("0039_seo_october_budget_1360.sql"));
     const changed: string[] = [];
     for (const row of before) {
       const after = db
@@ -113,8 +113,8 @@ it("changes only the three approved trigger literals and keeps the exact weekly 
         changed.push(String(row.name));
         expect(after?.sql).toBe(
           String(row.sql)
-            .replaceAll("12100000", "12480000")
-            .replaceAll("10850000", "11230000"),
+            .replaceAll("12480000", "13600000")
+            .replaceAll("11230000", "12350000"),
         );
       }
     }
@@ -124,13 +124,13 @@ it("changes only the three approved trigger literals and keeps the exact weekly 
       "seo_model_reservation",
     ]);
     const beforeSlot = Date.parse("2026-10-26T00:00:00Z") - 1;
-    expect(newJobMonthLimit("2026-10", beforeSlot)).toBe(11230000);
+    expect(newJobMonthLimit("2026-10", beforeSlot)).toBe(12350000);
     expect(
       monthBudgetMicros("2026-10") - newJobMonthLimit("2026-10", beforeSlot),
     ).toBe(1250000);
-    expect(newJobMonthLimit("2026-10", beforeSlot) - 9979519).toBe(1250481);
-    expect(newJobMonthLimit("2026-10", beforeSlot) - 9979519 - 1250000).toBe(
-      481,
+    expect(newJobMonthLimit("2026-10", beforeSlot) - 11091530).toBe(1258470);
+    expect(newJobMonthLimit("2026-10", beforeSlot) - 11091530 - 1250000).toBe(
+      8470,
     );
   } finally {
     db.close();
@@ -142,9 +142,9 @@ it.each([0, 1])(
   (excess) => {
     const db = setup();
     try {
-      db.exec(migration("0037_seo_october_budget_1248.sql"));
+      db.exec(migration("0039_seo_october_budget_1360.sql"));
       const maximum = 1138828;
-      for (let i = 0, left = 12480000 - maximum + excess; left > 0; i++) {
+      for (let i = 0, left = 13600000 - maximum + excess; left > 0; i++) {
         const n = Math.min(left, 1000000);
         call(db, "held" + i, "2026-10", n);
         left -= n;
