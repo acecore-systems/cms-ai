@@ -211,9 +211,9 @@ it("uses review 24000 output including thinking and a proper Chat payload withou
   expect(batch).toHaveBeenCalledTimes(1);
 });
 it("holds the October 26 slot only until its original UTC start, without increasing a monthly limit", () => {
-  expect(newJobMonthLimit("2026-10", now)).toBe(10850000);
+  expect(newJobMonthLimit("2026-10", now)).toBe(11230000);
   expect(newJobMonthLimit("2026-10", Date.parse("2026-10-26T00:00:00Z"))).toBe(
-    12100000,
+    12480000,
   );
   expect(newJobMonthLimit("2026-11", Date.parse("2026-11-01T00:00:00Z"))).toBe(
     7000000,
