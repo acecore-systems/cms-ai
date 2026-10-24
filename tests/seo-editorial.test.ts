@@ -94,6 +94,7 @@ beforeEach(async () => {
     "0031_seo_fallback.sql",
     "0032_seo_text_models.sql",
     "0033_seo_plan_contracts.sql",
+    "0034_seo_generation_contracts.sql",
   ])
     sql.exec(
       readFileSync(
@@ -209,6 +210,8 @@ beforeEach(async () => {
       _feedback,
       beforeRequest,
       deadline,
+      _purpose,
+      seoProvider,
     ) => {
       expect(deadline).toBe(now + 20 * 60_000);
       const path = JSON.parse(
@@ -217,7 +220,12 @@ beforeEach(async () => {
       await beforeRequest(
         deepseekProfile ? SEO_DEEPSEEK : "gpt-6-luna",
         deepseekProfile
-          ? deepseekPayload(buildTextInferencePayload(_site, job, context))
+          ? deepseekPayload({
+              ...buildTextInferencePayload(_site, job, context),
+              ...(seoProvider?.maxCompletionTokens
+                ? { max_completion_tokens: seoProvider.maxCompletionTokens }
+                : {}),
+            })
           : {
               max_completion_tokens: 12000,
               service_tier: "default",
@@ -284,9 +292,15 @@ async function inspecting() {
 }
 async function claimed() {
   const jobId = await inspecting();
-  expect((await request(jobId, "claim", { baseSha, files })).status).toBe(
-    "claimed",
-  );
+  expect(
+    (
+      await request(jobId, "claim", {
+        baseSha,
+        files,
+        ...(deepseekProfile ? { generationOutput: 2 } : {}),
+      })
+    ).status,
+  ).toBe("claimed");
   return jobId;
 }
 
@@ -592,9 +606,15 @@ describe("SEO durable editorial boundary", () => {
       ]);
       jobId = started.jobId!;
       await request(jobId);
-      expect((await request(jobId, "claim", { baseSha, files })).status).toBe(
-        "claimed",
-      );
+      expect(
+        (
+          await request(jobId, "claim", {
+            baseSha,
+            files,
+            ...(deepseekProfile ? { generationOutput: 2 } : {}),
+          })
+        ).status,
+      ).toBe("claimed");
     } else jobId = await claimed();
     expect(
       (await request(jobId, "research", {})).status,
@@ -1215,7 +1235,13 @@ describe("SEO durable editorial boundary", () => {
   it("preserves a lost claim outcome, does not generate or try a second article", async () => {
     const jobId = await inspecting();
     claim.mockRejectedValueOnce(new Error("lost response"));
-    expect(await request(jobId, "claim", { baseSha, files })).toEqual({
+    expect(
+      await request(jobId, "claim", {
+        baseSha,
+        files,
+        ...(deepseekProfile ? { generationOutput: 2 } : {}),
+      }),
+    ).toEqual({
       status: "unresolved",
     });
     expect(mocks.infer).not.toHaveBeenCalled();
@@ -1851,9 +1877,15 @@ describe("baseline eligibility before paid work", () => {
         (_, i) =>
           `Fact number ${i} has enough original context to form a complete factual sentence.`,
       ).join("\n\n");
-    expect((await request(id, "claim", { baseSha, files })).status).toBe(
-      "skipped",
-    );
+    expect(
+      (
+        await request(id, "claim", {
+          baseSha,
+          files,
+          ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        })
+      ).status,
+    ).toBe("skipped");
     expect(claim).not.toHaveBeenCalled();
     expect(
       sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n,
@@ -1876,7 +1908,13 @@ describe("baseline eligibility before paid work", () => {
     files[3].content += "Third translation. ".repeat(6000);
     files[4].content += "Fourth translation. ".repeat(6000);
     files[5].content += "Fifth translation. ".repeat(6000);
-    expect(await request(jobId, "claim", { baseSha, files })).toEqual({
+    expect(
+      await request(jobId, "claim", {
+        baseSha,
+        files,
+        ...(deepseekProfile ? { generationOutput: 2 } : {}),
+      }),
+    ).toEqual({
       status: "skipped",
     });
     expect(claim).not.toHaveBeenCalled();
@@ -1904,9 +1942,15 @@ describe("baseline eligibility before paid work", () => {
       "DROP TRIGGER seo_retrieval_contract_immutable; UPDATE seo_editorial_jobs SET retrieval_contract=1",
     );
     files[8].content += "Known large translation. ".repeat(2200);
-    expect((await request(id, "claim", { baseSha, files })).status).toBe(
-      "skipped",
-    );
+    expect(
+      (
+        await request(id, "claim", {
+          baseSha,
+          files,
+          ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        })
+      ).status,
+    ).toBe("skipped");
     const receipt = JSON.parse(
       objects.get(`seo-editorial/${id}/eligibility-preflight.json`)!,
     );
@@ -1939,9 +1983,15 @@ describe("baseline eligibility before paid work", () => {
     const id = await inspecting();
     sql.exec("UPDATE seo_editorial_jobs SET research_contract=1");
     files[1].content += "Large translation. ".repeat(6000);
-    expect((await request(id, "claim", { baseSha, files })).status).toBe(
-      "claimed",
-    );
+    expect(
+      (
+        await request(id, "claim", {
+          baseSha,
+          files,
+          ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        })
+      ).status,
+    ).toBe("claimed");
     expect(objects.has(`seo-editorial/${id}/eligibility-preflight.json`)).toBe(
       false,
     );
@@ -1949,9 +1999,15 @@ describe("baseline eligibility before paid work", () => {
   it("stops before claim when private receipt persistence fails", async () => {
     const id = await inspecting();
     vi.spyOn(env.CMS_AI_IMAGES, "put").mockResolvedValueOnce(null);
-    expect((await request(id, "claim", { baseSha, files })).status).toBe(
-      "unresolved",
-    );
+    expect(
+      (
+        await request(id, "claim", {
+          baseSha,
+          files,
+          ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        })
+      ).status,
+    ).toBe("unresolved");
     expect(claim).not.toHaveBeenCalled();
     expect(
       sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n,
@@ -2177,9 +2233,15 @@ it("skips before claim when the complete new run would exceed remaining monthly 
       .run("other" + i, "other" + i, "b".repeat(64), now);
   }
   const before = sql.prepare("SELECT * FROM seo_budget_calls").all();
-  expect((await request(id, "claim", { baseSha, files })).status).toBe(
-    "skipped",
-  );
+  expect(
+    (
+      await request(id, "claim", {
+        baseSha,
+        files,
+        ...(deepseekProfile ? { generationOutput: 2 } : {}),
+      })
+    ).status,
+  ).toBe("skipped");
   expect(
     JSON.parse(objects.get(`seo-editorial/${id}/eligibility-preflight.json`)!)
       .reasons,
@@ -2200,7 +2262,13 @@ it("skips articles without external factual candidates before lock, budget or mo
     "Original body with [reference](https://example.org/guide).",
     "エースサーバーはJava版・統合版のどちらでも遊べる公開サーバーです。",
   );
-  expect(await request(id, "claim", { baseSha, files })).toEqual({
+  expect(
+    await request(id, "claim", {
+      baseSha,
+      files,
+      ...(deepseekProfile ? { generationOutput: 2 } : {}),
+    }),
+  ).toEqual({
     status: "skipped",
   });
   expect(claim).not.toHaveBeenCalled();
@@ -2453,7 +2521,13 @@ describe("fallback coordinator protocol 1", () => {
     ];
     await request(started.jobId!);
     expect(
-      (await request(started.jobId!, "claim", { baseSha, files })).status,
+      (
+        await request(started.jobId!, "claim", {
+          baseSha,
+          files,
+          ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        })
+      ).status,
     ).toBe("claimed");
     expect(
       sql
@@ -2540,7 +2614,13 @@ describe("fallback coordinator protocol 1", () => {
       ),
     }));
     expect(
-      (await request(started.jobId!, "claim", { baseSha, files })).status,
+      (
+        await request(started.jobId!, "claim", {
+          baseSha,
+          files,
+          ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        })
+      ).status,
     ).toBe("skipped");
     expect((await editorialStatus(env, { runId: nextId })).status).toBe(
       "no_eligible_article",
@@ -2789,7 +2869,13 @@ it("commits new claiming state before coordinator re-enters the CMS proof, then 
     return { status: "claimed" };
   });
   expect(
-    (await request(started.jobId!, "claim", { baseSha, files })).status,
+    (
+      await request(started.jobId!, "claim", {
+        baseSha,
+        files,
+        ...(deepseekProfile ? { generationOutput: 2 } : {}),
+      })
+    ).status,
   ).toBe("claimed");
   expect(
     sql
@@ -2803,4 +2889,30 @@ it("commits new claiming state before coordinator re-enters the CMS proof, then 
     sql.prepare("SELECT * FROM seo_editorial_jobs WHERE id=?").get(offer.jobId),
   ).toEqual(old);
   expect(mocks.infer).not.toHaveBeenCalled();
+});
+
+it("rejects an old runner before any AI for the new generation contract", async () => {
+  deepseekProfile = true;
+  env.SEO_AI_MODEL = SEO_DEEPSEEK;
+  env.SEO_RESEARCH_ENABLED = "true";
+  const id = await inspecting();
+  expect((await request(id, "claim", { baseSha, files })).status).toBe(
+    "unresolved",
+  );
+  expect(mocks.infer).not.toHaveBeenCalled();
+  expect(claim).not.toHaveBeenCalled();
+  expect(sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n).toBe(
+    0,
+  );
+});
+it("reports generation after research when output is unresolved without changing stored outcomes", async () => {
+  const id = await inspecting();
+  sql
+    .prepare("UPDATE seo_editorial_jobs SET generation_started=1 WHERE id=?")
+    .run(id);
+  const before = sql.prepare("SELECT * FROM seo_editorial_jobs").all();
+  expect(await editorialReport(env, { runId })).toMatchObject({
+    phase: "generation",
+  });
+  expect(sql.prepare("SELECT * FROM seo_editorial_jobs").all()).toEqual(before);
 });

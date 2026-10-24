@@ -48,7 +48,7 @@ export function deepseekUpperCost(
     request.store !== false ||
     request.reasoning_effort !== "high" ||
     request.stream !== false ||
-    ![6000, 12000, 24000].includes(output as number) ||
+    ![6000, 12000, 24000, 48000].includes(output as number) ||
     !Array.isArray(request.messages) ||
     request.messages.length !== 2 ||
     request.messages.some(

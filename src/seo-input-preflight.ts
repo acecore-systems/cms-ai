@@ -11,6 +11,7 @@ import { allocateGenerationInputs, stageBudget } from "./seo-stage-budget.ts";
 
 export type InputPreflightOptions = {
   model_version?: 1 | 2;
+  generation_output?: 1 | 2;
   plan_instructions?: 1 | 2;
   site_id: string;
   research_recovery: 1 | 2;
@@ -32,6 +33,7 @@ export function currentInputPreflightOptions(
   return {
     site_id: siteId,
     plan_instructions: 2,
+    generation_output: 2,
     research_recovery: 2,
     external_sources: 1,
     discovery_policy: 3,
@@ -133,6 +135,7 @@ export function inputPreflight(
       options.code_preservation === 2 || options.metadata_preservation === 2
         ? validateSourceFiles(site, transport.files)
         : transport.files,
+      options.model_version === 2 ? options.generation_output : 1,
     );
     return { path, locale: locale || "ja", bytes: bytes(request) };
   });

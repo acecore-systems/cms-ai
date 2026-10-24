@@ -133,9 +133,11 @@ export class SeoRunner {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(
           Math.min(
-            ["propose", "research", "review"].includes(operation)
-              ? 150_000
-              : 30_000,
+            operation === "propose" && this.generationOutput === 2
+              ? 510_000
+              : ["propose", "research", "review"].includes(operation)
+                ? 150_000
+                : 30_000,
             this.remaining(report),
           ),
         ),
@@ -435,6 +437,8 @@ export class SeoRunner {
       throw new Error("seo_job");
     this.active = true;
     this.deadline = job.deadline;
+    this.generationOutput = payload.policy?.generationOutput ?? 1;
+    if (![1, 2].includes(this.generationOutput)) throw new Error("seo_job");
     this.remaining();
     this.stage = "inspect";
     if ((await this.command("git", ["status", "--porcelain"])).trim())
@@ -470,7 +474,11 @@ export class SeoRunner {
     if (branches.trim()) throw new Error("seo_branch_exists");
     await this.latestMain(baseSha);
     this.stage = "claim";
-    const claim = await this.request("claim", { baseSha, files: originals });
+    const claim = await this.request("claim", {
+      baseSha,
+      files: originals,
+      ...(this.generationOutput === 2 ? { generationOutput: 2 } : {}),
+    });
     if (claim.status === "skipped") return { status: "skipped" };
     if (
       claim.status !== "claimed" ||

@@ -40,6 +40,7 @@ jobs:
         run: npm ci
       - name: SEO Draft PRを作成
         # 導入時に検証済みCMS commitの40桁SHAへ置き換える。
+        # generation v2は対応runner必須。全siteのpin/CI確認後に受付を復旧する。
         uses: acecore-systems/cms-ai/seo-runner@REPLACE_WITH_VERIFIED_COMMIT_SHA
         with:
           run-id: ${{ inputs.run_id }}
