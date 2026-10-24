@@ -22,7 +22,10 @@ import {
   type Discovery,
 } from "./seo-discovery.ts";
 import { shareText, SHARED_TEXT_INSTRUCTION } from "./seo-input-text.ts";
-import { SEO_WRITING_GUIDE } from "./seo-editorial-guide.ts";
+import {
+  writingGuideForScope,
+  SEO_JAPANESE_SCOPE_POLICY,
+} from "./seo-editorial-guide.ts";
 import {
   researchInputs,
   parsePlan,
@@ -60,6 +63,7 @@ import {
 } from "./seo-responses.ts";
 
 export type CheckContext = {
+  editorialScope?: 1 | 2;
   sourceRecovery?: 1 | 2;
   modelVersion?: 1 | 2;
   planInstructions?: 1 | 2;
@@ -838,6 +842,7 @@ export function buildReviewRequest(
   finalFiles: EditorialFile[],
   evidence: ResearchEvidence,
   reviewOutput = 1,
+  editorialScope: 1 | 2 = 1,
 ) {
   if (![1, 2].includes(reviewOutput)) throw new Error("seo_budget_version");
   const paths = [
@@ -855,7 +860,7 @@ export function buildReviewRequest(
       originalFiles.length + finalFiles.length,
     ),
     guides: packed.files.slice(originalFiles.length + finalFiles.length),
-    writingGuide: SEO_WRITING_GUIDE,
+    writingGuide: writingGuideForScope(editorialScope),
     evidence,
     locales: [
       { path: identity.source.path, locale: "ja" },
@@ -864,6 +869,7 @@ export function buildReviewRequest(
   };
   const request = responseRequest(
     SHARED_TEXT_INSTRUCTION +
+      (editorialScope === 2 ? SEO_JAPANESE_SCOPE_POLICY : "") +
       (evidence.sourceRecovery
         ? "404来歴で限定許可された既掲載公式URLをfresh本文で再検証した根拠。新規URLの追加は要求しないが、同じURLと適切な説明を全localeに保持する。取得先が200であることは支持の証明ではない。本文の適用範囲変更・矛盾を黙って補正せず、原文の意味保持と根拠が両立しなければfail。"
         : "") +
@@ -951,6 +957,7 @@ export async function reviewArticle(
       finalFiles,
       evidence,
       context.reviewOutput,
+      context.editorialScope,
     );
     const response = await seoResponse(env, {
       jobId: context.jobId,

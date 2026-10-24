@@ -1,3 +1,4 @@
+import { hasPendingSeoRevision } from "../src/seo-translation-pending.ts";
 import { evidenceReferences, referenceUrl } from "../src/seo-evidence.ts";
 import { execFile } from "node:child_process";
 import { lstat, readFile, writeFile } from "node:fs/promises";
@@ -330,14 +331,26 @@ export class SeoRunner {
         : true,
     );
     if (!selected) return null;
+    if (
+      this.editorialScope === 2 &&
+      target.spec.translationStaging &&
+      tracked.includes(target.spec.translationStaging.manifest) &&
+      (await hasPendingSeoRevision(
+        target.spec,
+        selected,
+        (await this.read(target.spec.translationStaging.manifest)).content,
+        async (path) => (await this.read(path)).content,
+      ))
+    )
+      return null;
     const filename = selected.path.slice(target.directory.length + 1);
     const files = [selected];
-    for (const locale of target.spec.locales) {
+    for (const locale of this.editorialScope === 2 ? [] : target.spec.locales) {
       const path = target.directory + "/" + locale + "/" + filename;
       if (!tracked.includes(path)) return null;
       files.push(await this.read(path));
     }
-    if (target.spec.statePath) {
+    if (this.editorialScope !== 2 && target.spec.statePath) {
       const state = JSON.parse(
         (await this.read(target.spec.statePath)).content,
       );
@@ -364,6 +377,7 @@ export class SeoRunner {
       candidate.url,
       files,
       this.now(),
+      this.editorialScope ?? 1,
     );
     if (!identity) return null;
     return { identity, files };
@@ -437,6 +451,8 @@ export class SeoRunner {
       throw new Error("seo_job");
     this.active = true;
     this.deadline = job.deadline;
+    this.editorialScope = payload.policy?.editorialScope ?? 1;
+    if (![1, 2].includes(this.editorialScope)) throw new Error("seo_job");
     this.generationOutput = payload.policy?.generationOutput ?? 1;
     if (![1, 2].includes(this.generationOutput)) throw new Error("seo_job");
     this.remaining();
@@ -459,7 +475,12 @@ export class SeoRunner {
       identity.source.path,
       ...identity.translations.map((t) => t.path),
     ];
-    const allowed = [...paths, ...(spec.statePath ? [spec.statePath] : [])];
+    const staging = this.editorialScope === 2 ? spec.translationStaging : null;
+    const allowed = [
+      ...paths,
+      ...(staging ? [staging.manifest] : []),
+      ...(this.editorialScope !== 2 && spec.statePath ? [spec.statePath] : []),
+    ];
     if (await this.overlapping(allowed)) {
       await this.request("skip", {});
       return { status: "skipped" };
@@ -477,6 +498,7 @@ export class SeoRunner {
     const claim = await this.request("claim", {
       baseSha,
       files: originals,
+      ...(this.editorialScope === 2 ? { editorialScope: 2 } : {}),
       ...(this.generationOutput === 2 ? { generationOutput: 2 } : {}),
     });
     if (claim.status === "skipped") return { status: "skipped" };
@@ -569,8 +591,29 @@ export class SeoRunner {
       research ? evidenceReferences(research) : [],
     );
     this.stage = "translation_state";
-    await this.updateState(spec);
-    if (spec.statePath) await this.format([spec.statePath], spec);
+    if (staging) {
+      if (!tracked.includes(staging.script))
+        throw new Error("seo_guidance_missing");
+      await this.safePath(staging.script);
+      await this.command(
+        process.execPath,
+        [
+          staging.script,
+          "--source",
+          identity.source.path,
+          "--base-sha",
+          baseSha,
+        ],
+        { cwd: this.workspace },
+      );
+      // The site validator verifies the baseline manifest; it is never an AI input.
+      await this.safePath(staging.manifest);
+      await this.format([staging.manifest], spec);
+    }
+    if (this.editorialScope !== 2) {
+      await this.updateState(spec);
+      if (spec.statePath) await this.format([spec.statePath], spec);
+    }
     await this.validation(spec);
     let reviewedHash = null;
     if (protocol === 2) {
@@ -636,7 +679,7 @@ export class SeoRunner {
       .split("\0")
       .filter(Boolean);
     if (
-      untracked.length ||
+      untracked.some((path) => path !== staging?.manifest) ||
       !changed.length ||
       changed.some((path) => !allowed.includes(path)) ||
       paths.some((path) => !changed.includes(path))
@@ -645,9 +688,10 @@ export class SeoRunner {
     await this.latestMain(baseSha);
     if (await this.overlapping(allowed))
       throw new Error("seo_pull_request_overlap");
+    const stagedPaths = [...new Set([...changed, ...untracked])];
     this.stage = "commit";
     await this.command("git", ["switch", "-c", branch]);
-    await this.command("git", ["add", "--", ...changed]);
+    await this.command("git", ["add", "--", ...stagedPaths]);
     await this.command("git", [
       "-c",
       "user.name=github-actions[bot]",
@@ -655,7 +699,9 @@ export class SeoRunner {
       "user.email=41898282+github-actions[bot]@users.noreply.github.com",
       "commit",
       "-m",
-      "SEO: 記事の構成と表現を改訂し翻訳を更新",
+      this.editorialScope === 2
+        ? "SEO: 日本語記事を改訂し翻訳工程へ引継ぐ"
+        : "SEO: 記事の構成と表現を改訂し翻訳を更新",
     ]);
     if (spec.key === "corporate") {
       const commitSha = (
@@ -724,9 +770,11 @@ export class SeoRunner {
         : [
             "- 外部再調査未実施、既存本文に基づく構成・表現改善です。参考リンクの原本を今回確認したとは扱っていません。",
           ]),
-      spec.locales.length
-        ? "- 既存localeを実際に改訂・翻訳し、サイトの翻訳契約と検証を同じPRにまとめました。"
-        : "- 日本語記事の構成・表現を改善しました（このsiteの記事localeは日本語のみ）。",
+      this.editorialScope === 2
+        ? "- 日本語記事だけを改訂・校閲しました。翻訳は統合後の既存工程へ引き継ぎます。既存翻訳とhashは変更していません。"
+        : spec.locales.length
+          ? "- 既存localeを実際に改訂・翻訳し、サイトの翻訳契約と検証を同じPRにまとめました。"
+          : "- 日本語記事の構成・表現を改善しました（このsiteの記事localeは日本語のみ）。",
       "- 統合・公開は別途レビューが必要です。",
       "",
       "対象: " + candidate.url,
@@ -752,7 +800,9 @@ export class SeoRunner {
             "更新日時field: unsupported（このsiteのstrict schemaに更新日時fieldがありません）。",
             "",
           ]),
-      "SEO予算は全言語共通で1回1 USD・月5 USD以内です。自動マージは行いません。",
+      this.editorialScope === 2
+        ? "SEO生成・校閲は保存済み予算・期限内で実施しています。翻訳予算は統合後の既存工程に従います。自動マージは行いません。"
+        : "SEO予算は全言語共通で1回1 USD・月5 USD以内です。自動マージは行いません。",
     ].join("\n");
     this.stage = "draft_pr";
     const pr = await this.github("/pulls", "POST", {

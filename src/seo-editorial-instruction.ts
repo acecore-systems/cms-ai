@@ -1,6 +1,9 @@
-import { SEO_WRITING_GUIDE } from "./seo-editorial-guide.ts";
+import {
+  SEO_WRITING_GUIDE,
+  SEO_JAPANESE_SCOPE_POLICY,
+} from "./seo-editorial-guide.ts";
 import type { ResearchEvidence } from "./seo-evidence.ts";
-export function buildEditorialInstruction({
+function legacyEditorialInstruction({
   step,
   paths,
   locale,
@@ -101,4 +104,51 @@ export function buildEditorialInstruction({
         "へ実際に翻訳し、変更したtitle・description・見出し・本文を対応させる。hashだけの更新は禁止。内部リンクを対象localeに合わせる。"
       : "タイトル・description・導入・見出し・本文を検索意図に沿って具体的に改善する。実測・経験・提案・未確認を区別する。",
   ].join("\n");
+}
+
+export function buildEditorialInstruction(
+  input: Parameters<typeof legacyEditorialInstruction>[0] & {
+    editorialScope?: 1 | 2;
+  },
+) {
+  if ((input.editorialScope ?? 1) === 1)
+    return legacyEditorialInstruction(input);
+  if (
+    input.editorialScope !== 2 ||
+    input.paths.length !== 1 ||
+    input.step !== 0 ||
+    input.locale ||
+    input.translationCount !== 0
+  )
+    throw new Error("seo_editorial_scope");
+  const policy = SEO_JAPANESE_SCOPE_POLICY;
+  return (
+    legacyEditorialInstruction(input)
+      .split("\n")
+      .map((line) => {
+        if (
+          line.startsWith("The controller revises/formats Japanese,") ||
+          line.startsWith("controllerは日本語正本の改訂・整形後") ||
+          line.startsWith("共通・対象サイトguideの全locale反映")
+        )
+          return policy;
+        return line
+          .replace(
+            "変更内容を既存localeのtitle・description・見出し・本文・リンク説明へ実際に翻訳する。",
+            "今回の変更は日本語正本のみとし、統合後に既存翻訳工程へ引き継ぐ。",
+          )
+          .replace("Japanese and EVERY locale", "Japanese")
+          .replace(
+            "and carry its link and explanation into every locale",
+            "with its explanation in Japanese",
+          )
+          .replace(
+            "The controller alone sets sourceHash and allowed update dates and synchronizes translated dates.",
+            "The controller alone sets allowed Japanese update dates; translation hashes and dates remain unchanged.",
+          );
+      })
+      .join("\n") +
+    "\n" +
+    policy
+  );
 }

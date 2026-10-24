@@ -10,6 +10,7 @@ import { buildSeoGenerationRequest } from "./seo-generation.ts";
 import { allocateGenerationInputs, stageBudget } from "./seo-stage-budget.ts";
 
 export type InputPreflightOptions = {
+  editorial_scope?: 1 | 2;
   model_version?: 1 | 2;
   generation_output?: 1 | 2;
   plan_instructions?: 1 | 2;
@@ -32,6 +33,7 @@ export function currentInputPreflightOptions(
 ): InputPreflightOptions {
   return {
     site_id: siteId,
+    editorial_scope: 2,
     plan_instructions: 2,
     generation_output: 2,
     research_recovery: 2,
@@ -86,6 +88,7 @@ export function inputPreflight(
         sources: [],
       },
       options.review_output,
+      options.editorial_scope,
     ),
   );
   // Unknown future research/JA growth cannot be forecast. This placeholder is
@@ -108,6 +111,7 @@ export function inputPreflight(
     );
     const instruction = buildEditorialInstruction({
       syntaxPolicy: options.generation_syntax,
+      editorialScope: options.editorial_scope,
       step,
       paths,
       locale,

@@ -262,6 +262,18 @@ export const SEO_SITES = {
   },
 } as const;
 export type SeoSiteId = keyof typeof SEO_SITES;
+export const SEO_TRANSLATION_STAGING: Partial<
+  Record<SeoSiteId, { script: string; manifest: string }>
+> = {
+  portal: {
+    script: "scripts/stage-seo-translation.mjs",
+    manifest: "src/i18n/pending-seo-revisions.json",
+  },
+  systems: {
+    script: "scripts/stage-seo-translation.mjs",
+    manifest: "src/i18n/pending-seo-revisions.json",
+  },
+};
 
 // Editorial scope decisions: owned declarations are not third-party factual research.
 export const SEO_RESEARCH_EXCLUSIONS: Partial<
@@ -276,7 +288,12 @@ export function seoSite(id: string) {
   );
   if (!entry) return null;
   const [key, spec] = entry;
-  return { key: key as SeoSiteId, ...spec, site: getSiteById(spec.cmsId)! };
+  return {
+    key: key as SeoSiteId,
+    ...spec,
+    translationStaging: SEO_TRANSLATION_STAGING[key as SeoSiteId] ?? null,
+    site: getSiteById(spec.cmsId)!,
+  };
 }
 export function seoArticleUrl(siteId: string, value: string) {
   const spec = seoSite(siteId);

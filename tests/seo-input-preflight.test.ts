@@ -36,7 +36,10 @@ it.each([1, 2, 3, 4, 5, 6, 7, 8, 9])(
         f.path.startsWith("docs/"),
     );
     const saved = JSON.stringify(actualFiles);
-    const options = currentInputPreflightOptions(spec.site.id);
+    const options = {
+      ...currentInputPreflightOptions(spec.site.id),
+      editorial_scope: 1 as const,
+    };
     const preflight = inputPreflight(
       spec.site,
       article,

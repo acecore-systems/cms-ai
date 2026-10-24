@@ -70,6 +70,7 @@ type Run = {
   created_at: number;
 };
 type EditorialJob = {
+  editorial_scope: 1 | 2;
   source_recovery: 1 | 2;
   model_version: 1 | 2;
   generation_output: 1 | 2;
@@ -121,7 +122,7 @@ const runRow = (env: AppEnv, runId: string) =>
     .first<Run>();
 const jobRow = (env: AppEnv, jobId: string) =>
   env.CMS_AI_DB.prepare(
-    "SELECT j.*,COALESCE(m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(g.version,1) AS generation_output,COALESCE(s.version,1) AS source_recovery FROM seo_editorial_jobs j LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id WHERE j.id=?",
+    "SELECT j.*,COALESCE(e.version,1) AS editorial_scope,COALESCE(m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(g.version,1) AS generation_output,COALESCE(s.version,1) AS source_recovery FROM seo_editorial_jobs j LEFT JOIN seo_editorial_scope_contracts e ON e.job_id=j.id LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id WHERE j.id=?",
   )
     .bind(jobId)
     .first<EditorialJob>();
@@ -358,6 +359,9 @@ async function advance(env: AppEnv, runId: string) {
     }
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
+      env.CMS_AI_DB.prepare(
+        "INSERT INTO seo_editorial_scope_contracts(job_id,version) SELECT ?,2 WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+      ).bind(jobId, runId, run.candidate_index),
       ...(researchEnabled(env, runId)
         ? [
             env.CMS_AI_DB.prepare(
@@ -515,7 +519,7 @@ export async function editorialReport(env: AppEnv, input: unknown) {
           ORDER BY CASE phase WHEN 'review' THEN 4 WHEN 'research' THEN 3 WHEN 'discovery' THEN 2 ELSE 1 END DESC LIMIT 1) END AS phase,
         EXISTS(SELECT 1 FROM seo_research_rejections WHERE job_id=j.id AND run_id=r.run_id) AS research_rejected,
         (EXISTS(SELECT 1 FROM seo_review_rejections WHERE job_id=j.id AND run_id=r.run_id) OR
-         EXISTS(SELECT 1 FROM seo_variable_review_rejections WHERE job_id=j.id AND run_id=r.run_id)) AS review_rejected
+         EXISTS(SELECT 1 FROM seo_variable_review_rejections WHERE job_id=j.id AND run_id=r.run_id) OR EXISTS(SELECT 1 FROM seo_japanese_review_rejections WHERE job_id=j.id AND run_id=r.run_id)) AS review_rejected
       FROM seo_editorial_runs r
       LEFT JOIN seo_editorial_jobs j ON j.id=r.job_id AND j.run_id=r.run_id
       LEFT JOIN seo_budget_runs b ON b.id=r.budget_run_id
@@ -696,6 +700,7 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
         protocolVersion: job.protocol_version,
         researchContract: job.research_contract,
         generationOutput: job.generation_output,
+        editorialScope: job.editorial_scope,
       },
     });
   try {
@@ -740,7 +745,13 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
       const candidate: Candidate = JSON.parse(run.candidates_json)[
         job.candidate_index
       ];
-      const article = sourceIdentity(candidate.site, candidate.url, originals);
+      const article = sourceIdentity(
+        candidate.site,
+        candidate.url,
+        originals,
+        Date.now(),
+        job.editorial_scope,
+      );
       if (!article || article.articleKey !== job.article_key)
         throw new Error("identity");
       const context = checkContext(job, run);
@@ -885,15 +896,30 @@ async function claimJob(
     throw new Error("source_commit");
   if (job.generation_output === 2 && body.generationOutput !== 2)
     throw new Error("seo_generation_runner_contract");
+  if ((body.editorialScope ?? 1) !== job.editorial_scope)
+    throw new Error("seo_editorial_runner_contract");
   const files = validateSourceFiles(identity.site, body.files);
   const candidate: Candidate = JSON.parse(run.candidates_json)[
     job.candidate_index
   ];
-  const article = sourceIdentity(candidate.site, candidate.url, files);
+  const article = sourceIdentity(
+    candidate.site,
+    candidate.url,
+    files,
+    Date.now(),
+    job.editorial_scope,
+  );
   if (!article) {
     await skipJob(env, job);
     return { status: "skipped" };
   }
+  if (
+    job.editorial_scope === 2 &&
+    files.some(
+      (f) => f.path !== article.source.path && !f.path.startsWith("docs/"),
+    )
+  )
+    throw new Error("seo_editorial_scope");
   const sourceHash = await sha256(normalizeLf(article.source.content));
   const paths = [
     article.source.path,
@@ -978,6 +1004,7 @@ async function claimJob(
           }
         : {}),
       researchContract: 2,
+      ...(job.editorial_scope === 2 ? { editorialScope: 2 } : {}),
       ...(job.plan_instructions === 2 ? { planInstructions: 2 } : {}),
       ...(job.research_recovery === 2 ? { recovery: 2 } : {}),
       ...(job.reference_policy === 2 ? { referencePolicy: 2 } : {}),
@@ -1101,6 +1128,7 @@ async function claimJob(
 function checkContext(job: EditorialJob, run: Run): CheckContext {
   return {
     modelVersion: job.model_version,
+    editorialScope: job.editorial_scope,
     planInstructions: job.plan_instructions,
     sourceRecovery: job.source_recovery,
     jobId: job.id,
@@ -1184,7 +1212,13 @@ async function propose(
   const candidate: Candidate = JSON.parse(run.candidates_json)[
     job.candidate_index
   ];
-  const article = sourceIdentity(candidate.site, candidate.url, files)!;
+  const article = sourceIdentity(
+    candidate.site,
+    candidate.url,
+    files,
+    Date.now(),
+    job.editorial_scope,
+  )!;
   if (!article || article.articleKey !== job.article_key)
     throw new Error("identity");
   const original = files.find((file) => file.path === path)!;
@@ -1218,6 +1252,7 @@ async function propose(
     if (
       !saved ||
       saved.retrievalContract !== 2 ||
+      (saved.editorialScope ?? 1) !== job.editorial_scope ||
       (saved.planInstructions ?? 1) !== job.plan_instructions ||
       (saved.referencePolicy ?? 1) !== job.reference_policy ||
       (saved.recovery ?? 1) !== job.research_recovery ||
@@ -1255,6 +1290,7 @@ async function propose(
     path,
     buildEditorialInstruction({
       syntaxPolicy: job.generation_syntax,
+      editorialScope: job.editorial_scope,
       step: job.next_step,
       paths,
       locale,

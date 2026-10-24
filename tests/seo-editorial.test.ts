@@ -55,6 +55,7 @@ let sql: DatabaseSync,
   clock: ReturnType<typeof vi.spyOn>;
 let deepseekProfile = false;
 let legacyReview = false;
+let japaneseOnly = false;
 let legacyMetadata = false;
 let claim: ReturnType<typeof vi.fn>, complete: ReturnType<typeof vi.fn>;
 
@@ -63,6 +64,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   deepseekProfile = false;
   legacyReview = false;
+  japaneseOnly = false;
   legacyMetadata = false;
   clock = vi.spyOn(Date, "now").mockReturnValue(now);
   sql = new DatabaseSync(":memory:");
@@ -101,6 +103,7 @@ beforeEach(async () => {
     "0035_seo_october_budget_1210.sql",
     "0036_seo_source_recovery.sql",
     "0037_seo_october_budget_1248.sql",
+    "0038_seo_japanese_editorial.sql",
   ])
     sql.exec(
       readFileSync(
@@ -134,6 +137,13 @@ beforeEach(async () => {
     CMS_AI_DB: {
       prepare,
       batch: async (statements: { query: string; args: unknown[] }[]) => {
+        if (!japaneseOnly)
+          statements = statements.filter(
+            (item) =>
+              !item.query.startsWith(
+                "INSERT INTO seo_editorial_scope_contracts",
+              ),
+          );
         sql.exec("BEGIN");
         try {
           if (legacyReview)
@@ -304,6 +314,7 @@ async function claimed() {
         baseSha,
         files,
         ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        ...(japaneseOnly ? { editorialScope: 2 } : {}),
       })
     ).status,
   ).toBe("claimed");
@@ -385,6 +396,18 @@ describe("SEO durable editorial boundary", () => {
   it.each([
     "valid",
     "deepseek-wiki-pass",
+    "ja-valid",
+    "ja-pass",
+    "ja-lost-callback",
+    "ja-missing-manifest",
+    "ja-budget-unknown",
+    "ja-source-changed",
+    "ja-publication",
+    "ja-bad-offer",
+    "ja-pr-exists",
+    "ja-malformed-review",
+    "ja-receipt-store-failure",
+    "ja-late",
     "wiki-pass",
     "wiki-valid",
     "wiki-lost-callback",
@@ -403,6 +426,12 @@ describe("SEO durable editorial boundary", () => {
     "malformed-review",
     "receipt-store-failure",
   ])("review rejection receipt: %s", async (variant) => {
+    if (variant.startsWith("ja-")) {
+      japaneseOnly = true;
+      variant = variant.slice(3);
+      files = files.slice(0, 1);
+    }
+    if (japaneseOnly && variant === "pass") variant = "wiki-pass";
     const deepseek = variant === "deepseek-wiki-pass";
     if (deepseek) {
       variant = "wiki-pass";
@@ -411,7 +440,7 @@ describe("SEO durable editorial boundary", () => {
       now = Date.parse("2026-10-23T00:00:00Z");
       clock.mockReturnValue(now);
     }
-    const wiki = variant.startsWith("wiki-");
+    const wiki = !japaneseOnly && variant.startsWith("wiki-");
     if (variant === "legacy-valid") {
       legacyReview = true;
       variant = "valid";
@@ -618,6 +647,7 @@ describe("SEO durable editorial boundary", () => {
             baseSha,
             files,
             ...(deepseekProfile ? { generationOutput: 2 } : {}),
+            ...(japaneseOnly ? { editorialScope: 2 } : {}),
           })
         ).status,
       ).toBe("claimed");
@@ -747,11 +777,39 @@ describe("SEO durable editorial boundary", () => {
       variant === "valid" ? "review_rejected" : "unresolved",
     );
     expect(
-      sql.prepare("SELECT count(*) n FROM seo_all_review_rejections").get()!.n,
+      sql
+        .prepare(
+          "SELECT count(*) n FROM (SELECT * FROM seo_all_review_rejections UNION ALL SELECT * FROM seo_japanese_review_rejections)",
+        )
+        .get()!.n,
     ).toBe(safe ? 1 : 0);
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(mocks.infer).toHaveBeenCalledTimes(wiki ? 1 : 9);
+    expect(mocks.infer).toHaveBeenCalledTimes(wiki || japaneseOnly ? 1 : 9);
     if (safe) {
+      const storedReceipt = JSON.parse(
+        objects.get("seo-editorial/" + jobId + "/review-rejection.json")!,
+      );
+      expect(storedReceipt.version).toBe(
+        japaneseOnly ? 4 : legacyReview ? 2 : 3,
+      );
+      if (japaneseOnly) {
+        expect(storedReceipt.calls).toHaveLength(5);
+        expect(storedReceipt.files).toHaveLength(1);
+        expect(storedReceipt).not.toHaveProperty("editorialScope");
+      }
+      if (japaneseOnly) {
+        for (const statement of [
+          "UPDATE seo_japanese_review_rejections SET receipt_json='{}'",
+          "DELETE FROM seo_japanese_review_rejections",
+          "UPDATE seo_editorial_runs SET status='pending'",
+          "UPDATE seo_editorial_jobs SET publication_started=1",
+          "UPDATE seo_discovery_checks SET status='complete'",
+          "DELETE FROM seo_editorial_checks",
+          "DELETE FROM seo_editorial_scope_contracts",
+          "INSERT OR REPLACE INTO seo_japanese_review_rejections SELECT * FROM seo_japanese_review_rejections",
+        ])
+          expect(() => sql.exec(statement)).toThrow();
+      }
       const budget = sql
         .prepare("SELECT * FROM seo_budget_calls ORDER BY id")
         .all();
@@ -784,7 +842,10 @@ describe("SEO durable editorial boundary", () => {
             "SELECT next_step,publication_started FROM seo_editorial_jobs",
           )
           .get(),
-      ).toEqual({ next_step: wiki ? 1 : 9, publication_started: 0 });
+      ).toEqual({
+        next_step: wiki || japaneseOnly ? 1 : 9,
+        publication_started: 0,
+      });
       for (const query of [
         "DELETE FROM seo_all_review_rejections",
         "UPDATE seo_editorial_jobs SET next_step=0",
@@ -996,6 +1057,12 @@ describe("SEO durable editorial boundary", () => {
     "success",
     "unrelated",
     "review-fail",
+    "ja-success",
+    "ja-review-fail",
+    "ja-tamper-format",
+    "ja-tamper-generation",
+    "ja-tamper-review",
+    "ja-tamper-publish",
     "tamper-generation",
     "tamper-review",
     "tamper-publish",
@@ -1003,6 +1070,10 @@ describe("SEO durable editorial boundary", () => {
   ])(
     "runs recovered evidence through real CMS and runner: %s",
     async (variant) => {
+      if (variant.startsWith("ja-")) {
+        japaneseOnly = true;
+        variant = variant.slice(3);
+      }
       env.SEO_RESEARCH_ENABLED = "true";
       env.OPENAI_API_KEY_STORE = { get: async () => "fixture-secret" };
       const reference = "https://geysermc.org/wiki/geyser/setup/";
@@ -1195,6 +1266,14 @@ describe("SEO durable editorial boundary", () => {
       const spec = seoSite("portal")!;
       const contents = [
         ...files,
+        ...(japaneseOnly
+          ? [
+              {
+                path: spec.translationStaging!.script,
+                content: "// synthetic staging fixture",
+              },
+            ]
+          : []),
         { path: "AGENTS.md", content: "# Guidance\n" },
         ...spec.guidance.map((path) => ({
           path,
@@ -1205,18 +1284,42 @@ describe("SEO durable editorial boundary", () => {
         await mkdir(join(workspace, f.path, ".."), { recursive: true });
         await writeFile(join(workspace, f.path), f.content);
       }
-      const execute = vi.fn(async (command: string, args: string[]) => ({
-        stdout:
-          command === "git" && args[0] === "rev-parse"
-            ? baseSha + "\n"
-            : command === "git" && args[0] === "ls-files" && args[1] === "-z"
-              ? contents.map((f) => f.path).join("\0") + "\0"
-              : command === "git" &&
-                  args[0] === "diff" &&
-                  args[1] === "--name-only"
-                ? files.map((f) => f.path).join("\0") + "\0"
-                : "",
-      }));
+      const execute = vi.fn(async (command: string, args: string[]) => {
+        if (japaneseOnly && args[0] === spec.translationStaging!.script) {
+          expect(args).toEqual([
+            spec.translationStaging!.script,
+            "--source",
+            sourcePath,
+            "--base-sha",
+            baseSha,
+          ]);
+          await mkdir(join(workspace, "src/i18n"), { recursive: true });
+          await writeFile(
+            join(workspace, spec.translationStaging!.manifest),
+            '{"fixture":true}\n',
+          );
+        }
+        return {
+          stdout:
+            command === "git" && args[0] === "rev-parse"
+              ? baseSha + "\n"
+              : command === "git" && args[0] === "ls-files" && args[1] === "-z"
+                ? contents.map((f) => f.path).join("\0") + "\0"
+                : command === "git" &&
+                    args[0] === "diff" &&
+                    args[1] === "--name-only"
+                  ? (japaneseOnly
+                      ? [sourcePath]
+                      : files.map((f) => f.path)
+                    ).join("\0") + "\0"
+                  : japaneseOnly &&
+                      command === "git" &&
+                      args[0] === "ls-files" &&
+                      args.includes("--others")
+                    ? spec.translationStaging!.manifest + "\0"
+                    : "",
+        };
+      });
       const runner = new SeoRunner({
         workspace,
         now: () => now,
@@ -1229,6 +1332,7 @@ describe("SEO durable editorial boundary", () => {
           ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture",
         },
       });
+      const updateState = vi.spyOn(runner, "updateState");
       const operations: string[] = [];
       vi.spyOn(runner, "request").mockImplementation(
         async (operation = "", body?: any) => {
@@ -1251,7 +1355,12 @@ describe("SEO durable editorial boundary", () => {
         for (const path of paths) {
           const f = await runner.read(path);
           await runner.write(
-            { path, content: await format(f.content, portalFormat) },
+            {
+              path,
+              content:
+                (await format(f.content, portalFormat)) +
+                (variant === "tamper-format" ? "\nInjected sentence.\n" : ""),
+            },
             paths,
           );
         }
@@ -1300,8 +1409,38 @@ describe("SEO durable editorial boundary", () => {
           variant === "success" ? 1 : 0,
         );
         expect(mocks.infer).toHaveBeenCalledTimes(
-          ["unrelated", "tamper-generation"].includes(variant) ? 0 : 9,
+          ["unrelated", "tamper-generation"].includes(variant)
+            ? 0
+            : japaneseOnly
+              ? 1
+              : 9,
         );
+        if (japaneseOnly) {
+          expect(updateState).not.toHaveBeenCalled();
+          for (const file of files.slice(1))
+            expect((await runner.read(file.path)).content).toBe(file.content);
+          if (variant === "success") {
+            const add = execute.mock.calls.find(
+              ([command, args]) => command === "git" && args[0] === "add",
+            )!;
+            expect(add[1]).toEqual([
+              "add",
+              "--",
+              sourcePath,
+              spec.translationStaging!.manifest,
+            ]);
+            expect(
+              sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n,
+            ).toBe(5);
+            const preflight = JSON.parse(
+              objects.get(
+                "seo-editorial/" + jobId + "/eligibility-preflight.json",
+              )!,
+            );
+            expect(preflight.editorialScope).toBe(2);
+            expect(preflight.generationAllocation).toHaveLength(1);
+          }
+        }
         const proof = JSON.parse(
           objects.get("seo-editorial/" + jobId + "/source-recovery.json")!,
         );
@@ -1599,6 +1738,7 @@ describe("SEO durable editorial boundary", () => {
         baseSha,
         files,
         ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        ...(japaneseOnly ? { editorialScope: 2 } : {}),
       }),
     ).toEqual({
       status: "unresolved",
@@ -2242,6 +2382,7 @@ describe("baseline eligibility before paid work", () => {
           baseSha,
           files,
           ...(deepseekProfile ? { generationOutput: 2 } : {}),
+          ...(japaneseOnly ? { editorialScope: 2 } : {}),
         })
       ).status,
     ).toBe("skipped");
@@ -2272,6 +2413,7 @@ describe("baseline eligibility before paid work", () => {
         baseSha,
         files,
         ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        ...(japaneseOnly ? { editorialScope: 2 } : {}),
       }),
     ).toEqual({
       status: "skipped",
@@ -2307,6 +2449,7 @@ describe("baseline eligibility before paid work", () => {
           baseSha,
           files,
           ...(deepseekProfile ? { generationOutput: 2 } : {}),
+          ...(japaneseOnly ? { editorialScope: 2 } : {}),
         })
       ).status,
     ).toBe("skipped");
@@ -2348,6 +2491,7 @@ describe("baseline eligibility before paid work", () => {
           baseSha,
           files,
           ...(deepseekProfile ? { generationOutput: 2 } : {}),
+          ...(japaneseOnly ? { editorialScope: 2 } : {}),
         })
       ).status,
     ).toBe("claimed");
@@ -2364,6 +2508,7 @@ describe("baseline eligibility before paid work", () => {
           baseSha,
           files,
           ...(deepseekProfile ? { generationOutput: 2 } : {}),
+          ...(japaneseOnly ? { editorialScope: 2 } : {}),
         })
       ).status,
     ).toBe("unresolved");
@@ -2598,6 +2743,7 @@ it("skips before claim when the complete new run would exceed remaining monthly 
         baseSha,
         files,
         ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        ...(japaneseOnly ? { editorialScope: 2 } : {}),
       })
     ).status,
   ).toBe("skipped");
@@ -2626,6 +2772,7 @@ it("skips articles without external factual candidates before lock, budget or mo
       baseSha,
       files,
       ...(deepseekProfile ? { generationOutput: 2 } : {}),
+      ...(japaneseOnly ? { editorialScope: 2 } : {}),
     }),
   ).toEqual({
     status: "skipped",
@@ -2885,6 +3032,7 @@ describe("fallback coordinator protocol 1", () => {
           baseSha,
           files,
           ...(deepseekProfile ? { generationOutput: 2 } : {}),
+          ...(japaneseOnly ? { editorialScope: 2 } : {}),
         })
       ).status,
     ).toBe("claimed");
@@ -2978,6 +3126,7 @@ describe("fallback coordinator protocol 1", () => {
           baseSha,
           files,
           ...(deepseekProfile ? { generationOutput: 2 } : {}),
+          ...(japaneseOnly ? { editorialScope: 2 } : {}),
         })
       ).status,
     ).toBe("skipped");
@@ -3233,6 +3382,7 @@ it("commits new claiming state before coordinator re-enters the CMS proof, then 
         baseSha,
         files,
         ...(deepseekProfile ? { generationOutput: 2 } : {}),
+        ...(japaneseOnly ? { editorialScope: 2 } : {}),
       })
     ).status,
   ).toBe("claimed");
@@ -3274,4 +3424,47 @@ it("reports generation after research when output is unresolved without changing
     phase: "generation",
   });
   expect(sql.prepare("SELECT * FROM seo_editorial_jobs").all()).toEqual(before);
+});
+
+it.each([undefined, 1, 3])(
+  "Japanese scope refuses a missing or mismatched runner handshake: %s",
+  async (scope) => {
+    japaneseOnly = true;
+    files = files.slice(0, 1);
+    const jobId = await inspecting();
+    expect((await request(jobId)).policy.editorialScope).toBe(2);
+    expect(
+      (
+        await request(jobId, "claim", {
+          baseSha,
+          files,
+          ...(scope === undefined ? {} : { editorialScope: scope }),
+        })
+      ).status,
+    ).toBe("unresolved");
+    expect(claim).not.toHaveBeenCalled();
+    expect(mocks.infer).not.toHaveBeenCalled();
+    expect(
+      sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n,
+    ).toBe(0);
+  },
+);
+it("Japanese scope refuses locale material in a canonical-only claim", async () => {
+  japaneseOnly = true;
+  const jobId = await inspecting();
+  expect(
+    (await request(jobId, "claim", { baseSha, files, editorialScope: 2 }))
+      .status,
+  ).toBe("unresolved");
+  expect(claim).not.toHaveBeenCalled();
+  expect(mocks.infer).not.toHaveBeenCalled();
+});
+it("historical job cannot be claimed with the Japanese-only runner contract", async () => {
+  const jobId = await inspecting();
+  expect((await request(jobId)).policy.editorialScope).toBe(1);
+  expect(
+    (await request(jobId, "claim", { baseSha, files, editorialScope: 2 }))
+      .status,
+  ).toBe("unresolved");
+  expect(claim).not.toHaveBeenCalled();
 });

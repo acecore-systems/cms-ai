@@ -41,11 +41,13 @@ export async function immutableReviewObject(
 export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
   const split = job.retrieval_contract === 2;
   const variable = job.variable_review === 1;
+  const japaneseOnly = job.editorial_scope === 2;
   const paths: string[] = JSON.parse(job.paths_json || "[]");
   const count = variable ? paths.length : 9;
   const expectedCalls = (split ? 4 : 3) + count;
   const table = split ? "seo_all_checks" : "seo_editorial_checks";
   if (
+    (japaneseOnly && (!variable || !split || count !== 1)) ||
     (variable &&
       (!split || job.allocation_version !== 2 || count < 1 || count > 9)) ||
     job.research_contract !== 2 ||
@@ -91,6 +93,8 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
       job.site_id,
       externalScope(job.site_id, canonical).sourceUrl,
       source.value,
+      Date.now(),
+      job.editorial_scope ?? 1,
     );
     if (
       !identity ||
@@ -241,7 +245,7 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
   }
   if (ids.size !== expectedCalls || !ids.has(job.call_id)) return fail();
   const offer = {
-    version: variable ? 3 : split ? 2 : 1,
+    version: japaneseOnly ? 4 : variable ? 3 : split ? 2 : 1,
     runId: run.run_id,
     jobId: job.id,
     articleKey: job.article_key,
@@ -260,7 +264,7 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
 }
 export async function reviewRejectionRow(env: AppEnv, jobId: string) {
   return env.CMS_AI_DB.prepare(
-    "SELECT receipt_sha256,receipt_json FROM seo_all_review_rejections WHERE job_id=?",
+    "SELECT receipt_sha256,receipt_json FROM (SELECT * FROM seo_all_review_rejections UNION ALL SELECT * FROM seo_japanese_review_rejections) WHERE job_id=?",
   )
     .bind(jobId)
     .first<{ receipt_sha256: string; receipt_json: string }>();
@@ -330,7 +334,7 @@ export async function finalizeReviewRejection(
       return fail();
     await immutableReviewObject(env, key(job.id, "review-rejection"), receipt);
     await env.CMS_AI_DB.prepare(
-      `INSERT INTO ${job.variable_review === 1 ? "seo_variable_review_rejections" : "seo_review_rejections"}(job_id,run_id,receipt_sha256,receipt_json,created_at) VALUES(?,?,?,?,?)`,
+      `INSERT INTO ${job.editorial_scope === 2 ? "seo_japanese_review_rejections" : job.variable_review === 1 ? "seo_variable_review_rejections" : "seo_review_rejections"}(job_id,run_id,receipt_sha256,receipt_json,created_at) VALUES(?,?,?,?,?)`,
     )
       .bind(job.id, run.run_id, hash, raw, Date.now())
       .run();

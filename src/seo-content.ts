@@ -77,7 +77,9 @@ export function sourceIdentity(
   url: string,
   files: EditorialFile[],
   now = Date.now(),
+  editorialScope: 1 | 2 = 1,
 ) {
+  if (![1, 2].includes(editorialScope)) throw new Error("seo_editorial_scope");
   const target = seoArticleUrl(siteId, url);
   if (!target) return null;
   const matches = files.filter((file) => {
@@ -112,12 +114,12 @@ export function sourceIdentity(
   )
     throw new Error("seo_article_id");
   const filename = source.path.slice(target.directory.length + 1);
-  const translations = (target.spec.locales as readonly string[]).map(
-    (locale) => ({
-      locale,
-      path: target.directory + "/" + locale + "/" + filename,
-    }),
-  );
+  const translations = (
+    editorialScope === 2 ? [] : (target.spec.locales as readonly string[])
+  ).map((locale) => ({
+    locale,
+    path: target.directory + "/" + locale + "/" + filename,
+  }));
   if (!translations.every((t) => files.some((f) => f.path === t.path)))
     return null;
   return {
