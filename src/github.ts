@@ -44,7 +44,7 @@ async function createInstallationToken(
   env: AppEnv,
   site: SiteConfig,
   deadline?: number,
-  purpose: "dispatch" | "eligibility" = "dispatch",
+  purpose: "dispatch" | "eligibility" | "workflow-read" = "dispatch",
   mark: (stage: string) => void = () => {},
 ) {
   mark("token_sign");
@@ -66,7 +66,7 @@ async function createInstallationToken(
         permissions:
           purpose === "eligibility"
             ? { contents: "read", pull_requests: "read" }
-            : { actions: "write" },
+            : { actions: purpose === "workflow-read" ? "read" : "write" },
         repositories: [repositoryName],
       }),
       headers: githubHeaders(appJwt),
@@ -119,7 +119,71 @@ async function createInstallationToken(
     )
       throw new SeoRepositoryReadError("token_scope_mismatch");
   }
+  if (purpose === "workflow-read") {
+    const permissions = (body as { permissions?: Record<string, unknown> })
+      .permissions;
+    if (
+      !permissions ||
+      permissions.actions !== "read" ||
+      Object.entries(permissions).some(
+        ([key, value]) =>
+          !["actions", "metadata"].includes(key) && value !== "none",
+      )
+    )
+      throw new SeoRepositoryReadError("token_scope_mismatch");
+  }
   return (body as { token: string }).token;
+}
+
+// One authenticated GET, no retries. Reconsideration cannot rely on a callback
+// that was sent before the old GitHub workflow actually stopped.
+export async function seoWorkflowCompleted(
+  env: AppEnv,
+  site: SiteConfig,
+  runId: string,
+  headSha: string,
+  deadline: number,
+) {
+  if (
+    !/^[1-9][0-9]*$/.test(runId) ||
+    !/^[a-f0-9]{40}$/.test(headSha) ||
+    Date.now() >= deadline
+  )
+    return false;
+  const token = await createInstallationToken(
+    env,
+    site,
+    deadline,
+    "workflow-read",
+  );
+  if (Date.now() >= deadline) return false;
+  const response = await fetch(
+    `${GITHUB_API}/repos/${site.repository}/actions/runs/${runId}`,
+    {
+      method: "GET",
+      headers: githubHeaders(token),
+      redirect: "manual",
+      signal: AbortSignal.timeout(
+        Math.max(1, Math.min(10000, deadline - Date.now())),
+      ),
+    },
+  );
+  if (!response.ok) {
+    await response.body?.cancel();
+    return false;
+  }
+  const body = (await response.json()) as any;
+  return (
+    Date.now() < deadline &&
+    String(body.id) === runId &&
+    body.status === "completed" &&
+    body.conclusion === "success" &&
+    body.event === "workflow_dispatch" &&
+    body.path === SEO_WORKFLOW_PATH &&
+    body.head_branch === site.branch &&
+    body.head_sha === headSha &&
+    body.repository?.full_name === site.repository
+  );
 }
 
 export class SeoRepositoryReadError extends Error {

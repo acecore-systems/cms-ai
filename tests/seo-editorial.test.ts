@@ -21,11 +21,13 @@ import { articleBody, portalFormat } from "./fixtures/seo-format.ts";
 
 const mocks = vi.hoisted(() => ({
   dispatch: vi.fn(),
+  workflow: vi.fn(),
   identity: null as unknown,
   infer: vi.fn(),
 }));
 vi.mock("../src/github.ts", () => ({
   dispatchSeoEditorialJob: mocks.dispatch,
+  seoWorkflowCompleted: mocks.workflow,
 }));
 vi.mock("../src/oidc.ts", () => ({
   authenticateRunner: async () => mocks.identity,
@@ -2708,4 +2710,97 @@ describe("new DeepSeek job profile", () => {
         .run(jobId, model),
     ).toThrow("seo_model_new_only");
   });
+});
+
+it("commits new claiming state before coordinator re-enters the CMS proof, then records claim without a model call", async () => {
+  const { reconsiderationProof } =
+    await import("../src/seo-reconsideration.ts");
+  const offer = await insufficientOffer();
+  expect(
+    (await request(offer.jobId, "research-reject", offer.body)).status,
+  ).toBe("research_rejected");
+  // Build a historical v1 fixture snapshot, before testing the new request path.
+  // No production UPDATE/DELETE path is used to downgrade a saved contract.
+  const schema = sql
+    .prepare(
+      "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END",
+    )
+    .all() as any[];
+  const records = schema
+    .filter((x) => x.type === "table")
+    .map((t) => ({
+      name: t.name,
+      rows: sql
+        .prepare(`SELECT * FROM ${t.name}`)
+        .all()
+        .filter(
+          (r) => t.name !== "seo_plan_contracts" || r.job_id !== offer.jobId,
+        ),
+    }));
+  const historical = new DatabaseSync(":memory:");
+  for (const item of schema.filter((x) => x.type !== "trigger"))
+    historical.exec(item.sql);
+  for (const t of records)
+    for (const row of t.rows) {
+      const keys = Object.keys(row);
+      historical
+        .prepare(
+          `INSERT INTO ${t.name}(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`,
+        )
+        .run(...Object.values(row));
+    }
+  for (const item of schema.filter((x) => x.type === "trigger"))
+    historical.exec(item.sql);
+  sql.close();
+  sql = historical;
+  const old = sql
+    .prepare("SELECT * FROM seo_editorial_jobs WHERE id=?")
+    .get(offer.jobId)!;
+  const next = "editorial-00000000-0000-4000-8000-000000000099";
+  const started = await startEditorial(env, {
+    runId: next,
+    deadline: now + 20 * 60000,
+    candidates: [candidate],
+  });
+  await request(started.jobId!);
+  const before = sql.prepare("SELECT * FROM seo_budget_calls").all();
+  mocks.workflow.mockResolvedValue(true);
+  claim.mockImplementationOnce(async (v: any) => {
+    expect(v.runId).toBe(next);
+    expect(
+      sql
+        .prepare(
+          "SELECT status,claim_recorded FROM seo_editorial_jobs WHERE id=?",
+        )
+        .get(started.jobId!),
+    ).toEqual({ status: "claiming", claim_recorded: 0 });
+    expect(
+      await reconsiderationProof(env, {
+        runId,
+        articleKey: v.articleKey,
+        newRunId: next,
+      }),
+    ).toMatchObject({
+      status: "eligible",
+      fromPlan: 1,
+      toPlan: 2,
+      newRunId: next,
+    });
+    return { status: "claimed" };
+  });
+  expect(
+    (await request(started.jobId!, "claim", { baseSha, files })).status,
+  ).toBe("claimed");
+  expect(
+    sql
+      .prepare(
+        "SELECT status,claim_recorded FROM seo_editorial_jobs WHERE id=?",
+      )
+      .get(started.jobId!),
+  ).toEqual({ status: "claimed", claim_recorded: 1 });
+  expect(sql.prepare("SELECT * FROM seo_budget_calls").all()).toEqual(before);
+  expect(
+    sql.prepare("SELECT * FROM seo_editorial_jobs WHERE id=?").get(offer.jobId),
+  ).toEqual(old);
+  expect(mocks.infer).not.toHaveBeenCalled();
 });
