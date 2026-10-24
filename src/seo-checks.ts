@@ -1,4 +1,11 @@
 import {
+  recoverSources,
+  recoveryDiscovery,
+  saveSourceRecovery,
+  loadSourceRecovery,
+  recoveredReference,
+} from "./seo-source-recovery.ts";
+import {
   buildRecoveryRetrievalRequest,
   assertRecoveryRetrieval,
 } from "./seo-research-recovery.ts";
@@ -53,6 +60,7 @@ import {
 } from "./seo-responses.ts";
 
 export type CheckContext = {
+  sourceRecovery?: 1 | 2;
   modelVersion?: 1 | 2;
   planInstructions?: 1 | 2;
   jobId: string;
@@ -378,12 +386,16 @@ export function parseResearch(
     new Set(sources.map((s: any) => s.url)).size !== sources.length ||
     !sources.some(
       (s: any) =>
-        !source.includes(s.url) && !inputs.existingUrls.includes(s.url),
+        (!source.includes(s.url) && !inputs.existingUrls.includes(s.url)) ||
+        recoveredReference(discovery, s.url),
     )
   )
     throw new Error("seo_research_no_new_source");
   return {
     version: 1,
+    ...(recoveredReference(discovery, sources[0].url)
+      ? { sourceRecovery: recoveredReference(discovery, sources[0].url) }
+      : {}),
     ...(plan?.tableContext ? { tableContext: plan.tableContext } : {}),
     ...(discovery?.referencePolicy === 2
       ? { referencePolicy: 2 as const }
@@ -707,7 +719,7 @@ export async function researchArticle(
     )
       throw new Error("seo_check_evidence");
   }
-  return (await check(
+  const researched = (await check(
     env,
     context,
     "research",
@@ -716,6 +728,7 @@ export async function researchArticle(
           sourceSha256: context.sourceSha256,
           plan,
           discovery,
+          ...(context.sourceRecovery === 2 ? { sourceRecovery: 2 } : {}),
           ...(context.urlInstructions === 2 ? { urlInstructions: 2 } : {}),
           ...(context.recovery === 2 ? { recovery: 2 } : {}),
           ...(context.researchContext === "high"
@@ -724,10 +737,21 @@ export async function researchArticle(
         }
       : { sourceSha256: context.sourceSha256, plan },
     async (callId) => {
-      const request = discovery
+      let retrieval = discovery;
+      if (context.sourceRecovery === 2 && discovery) {
+        const proof = await recoverSources(
+          discovery,
+          source.content,
+          context.deadline,
+        );
+        retrieval = await recoveryDiscovery(discovery, source.content, proof);
+        await saveSourceRecovery(env, context.jobId, proof);
+        await live(env, context);
+      }
+      const request = retrieval
         ? buildRetrievalRequest(
             focused,
-            discovery,
+            retrieval,
             context.researchContext,
             context.urlInstructions,
           )
@@ -749,10 +773,11 @@ export async function researchArticle(
         context.sourceSha256,
         Date.now(),
         plan,
-        discovery,
+        retrieval,
       );
     },
   )) as ResearchEvidence;
+  return context.sourceRecovery === 2 ? loadResearch(env, context) : researched;
 }
 
 export async function loadResearch(env: AppEnv, context: CheckContext) {
@@ -770,6 +795,39 @@ export async function loadResearch(env: AppEnv, context: CheckContext) {
     (await sha256(JSON.stringify(evidence))) !== row.result_sha256
   )
     throw new Error("seo_check_evidence");
+  if (context.sourceRecovery === 2) {
+    const proof = await loadSourceRecovery(env, context.jobId);
+    if (proof.checkedAt >= context.deadline || proof.checkedAt > Date.now())
+      throw new Error("seo_check_evidence");
+    const source = await env.CMS_AI_IMAGES.get(
+      "seo-editorial/" + context.jobId + "/source.json",
+    );
+    const savedDiscovery = await env.CMS_AI_IMAGES.get(
+      key(context, "discovery"),
+    );
+    if (!source || !savedDiscovery) throw new Error("seo_check_evidence");
+    const files = await source.json<EditorialFile[]>();
+    const canonical = files.find(
+      (f) =>
+        f.path ===
+        context.articleKey.slice(context.articleKey.indexOf(":") + 1),
+    );
+    if (
+      !canonical ||
+      (await sha256(normalizeLf(canonical.content))) !== context.sourceSha256
+    )
+      throw new Error("seo_check_evidence");
+    const derived = await recoveryDiscovery(
+      await savedDiscovery.json<Discovery>(),
+      canonical.content,
+      proof,
+    );
+    if (
+      JSON.stringify(evidence.sourceRecovery) !==
+      JSON.stringify(recoveredReference(derived, evidence.sources[0]?.url))
+    )
+      throw new Error("seo_check_evidence");
+  } else if (evidence.sourceRecovery) throw new Error("seo_check_evidence");
   evidenceReferences(evidence);
   return evidence;
 }
@@ -806,6 +864,9 @@ export function buildReviewRequest(
   };
   const request = responseRequest(
     SHARED_TEXT_INSTRUCTION +
+      (evidence.sourceRecovery
+        ? "404来歴で限定許可された既掲載公式URLをfresh本文で再検証した根拠。新規URLの追加は要求しないが、同じURLと適切な説明を全localeに保持する。取得先が200であることは支持の証明ではない。本文の適用範囲変更・矛盾を黙って補正せず、原文の意味保持と根拠が両立しなければfail。"
+        : "") +
       (evidence.tableContext
         ? "表の製品機能だけを外部確認した根拠であり、旧Wiki記録・現行導入不明の意味を全言語で保持する。導入済み・現行利用可能という断定への変更は必ずfail。"
         : "") +
@@ -855,7 +916,9 @@ export async function reviewArticle(
   );
   const newUrls = evidenceReferences(evidence).filter(
     (url) =>
-      !identity.source.content.includes(url) &&
+      (!identity.source.content.includes(url) ||
+        (context.sourceRecovery === 2 &&
+          evidence.sourceRecovery?.url === url)) &&
       articleReferenceLinks(finalFiles[0].content).has(url),
   );
   if (
@@ -938,6 +1001,7 @@ export async function assertReview(
   context: CheckContext,
   filesSha256: unknown,
 ) {
+  if (context.sourceRecovery === 2) await loadResearch(env, context);
   if (typeof filesSha256 !== "string" || !/^[a-f0-9]{64}$/.test(filesSha256))
     throw new Error("seo_check_files");
   const row = await env.CMS_AI_DB.prepare(

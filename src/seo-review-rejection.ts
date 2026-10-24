@@ -1,3 +1,8 @@
+import {
+  loadSourceRecovery,
+  recoveryDiscovery,
+  recoveredReference,
+} from "./seo-source-recovery.ts";
 import { sourceIdentity } from "./seo-content.ts";
 import { externalScope } from "./seo-external-sources.ts";
 import type { AppEnv } from "./env.ts";
@@ -62,6 +67,25 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
       job.source_sha256
   )
     return fail();
+  if (job.source_recovery === 2) {
+    const proof = await loadSourceRecovery(env, job.id);
+    const discovery = await read(env, key(job.id, "discovery"));
+    const research = await read(env, key(job.id, "research"));
+    const derived = await recoveryDiscovery(
+      discovery.value,
+      canonical.content,
+      proof,
+    );
+    if (
+      proof.checkedAt >= run.deadline ||
+      proof.checkedAt > Date.now() ||
+      JSON.stringify(research.value.sourceRecovery) !==
+        JSON.stringify(
+          recoveredReference(derived, research.value.sources[0]?.url),
+        )
+    )
+      return fail();
+  }
   if (variable) {
     const identity = sourceIdentity(
       job.site_id,
