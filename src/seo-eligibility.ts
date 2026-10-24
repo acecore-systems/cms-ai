@@ -1,3 +1,4 @@
+import { hasPendingSeoRevision } from "./seo-translation-pending.ts";
 import { stageBudget } from "./seo-stage-budget.ts";
 import {
   inputPreflight,
@@ -304,15 +305,8 @@ async function inspectEligibility(
       });
       continue;
     }
-    const filename = matches[0].path.slice(target.directory.length + 1);
-    const localePaths = target.spec.locales.map(
-      (locale) => `${target.directory}/${locale}/${filename}`,
-    );
-    const paths = [
-      matches[0].path,
-      ...localePaths,
-      ...(spec.statePath ? [spec.statePath] : []),
-    ];
+    const localePaths: string[] = [];
+    const paths = [matches[0].path, ...localePaths];
     if (
       paths.some((path) => {
         const e = entries.get(path);
@@ -328,8 +322,12 @@ async function inspectEligibility(
       });
       continue;
     }
+    const conflictPaths = [
+      ...paths,
+      ...(spec.translationStaging ? [spec.translationStaging.manifest] : []),
+    ];
     const conflicts = prs
-      .filter((pr) => pr.paths.some((path) => paths.includes(path)))
+      .filter((pr) => pr.paths.some((path) => conflictPaths.includes(path)))
       .map((pr) => pr.number);
     if (conflicts.length) {
       results.push({
@@ -343,17 +341,37 @@ async function inspectEligibility(
     }
     if (!target.spec.slugField)
       matches[0].content = await read(matches[0].path);
-    // sourceIdentity reads the real canonical body and checks every locale's path.
-    // Translation bodies are not needed to establish a file-overlap intersection.
-    const identity = sourceIdentity(v.site, url, [
-      matches[0],
-      ...localePaths.map((path) => ({ path, content: "" })),
-    ]);
+    // New jobs inspect only the real Japanese canonical body.
+    // Translation inputs and shared translation-state are outside this scope.
+    const identity = sourceIdentity(
+      v.site,
+      url,
+      [matches[0], ...localePaths.map((path) => ({ path, content: "" }))],
+      Date.now(),
+      2,
+    );
     if (!identity) {
       results.push({
         url,
         status: "ineligible" as const,
         reason: "source_identity_ineligible",
+      });
+      continue;
+    }
+    if (
+      spec.translationStaging &&
+      entries.has(spec.translationStaging.manifest) &&
+      (await hasPendingSeoRevision(
+        spec,
+        identity.source,
+        await read(spec.translationStaging.manifest),
+        read,
+      ))
+    ) {
+      results.push({
+        url,
+        status: "ineligible" as const,
+        reason: "translation_pending",
       });
       continue;
     }
@@ -365,20 +383,9 @@ async function inspectEligibility(
       });
       continue;
     }
-    if (
-      spec.statePath &&
-      JSON.parse(await read(spec.statePath)).pendingInsights?.[target.slug]
-    ) {
-      results.push({
-        url,
-        status: "ineligible" as const,
-        reason: "translation_pending",
-      });
-      continue;
-    }
     const options = currentInputPreflightOptions(spec.site.id);
     // A known plan overflow alone proves ineligibility. Do not spend bounded
-    // repository reads on translations that cannot change this result.
+    // repository reads on guidance that cannot change this result.
     if (
       planInputBytes(identity.source, options) >
       stageBudget(options.budget_version).limits.plan
@@ -396,7 +403,7 @@ async function inspectEligibility(
     for (const path of new Set([...paths, ...spec.guidance]))
       fullInputs.push({ path, content: await read(path) });
     const knownFiles = validateSourceFiles(spec.site, fullInputs);
-    const fullIdentity = sourceIdentity(v.site, url, knownFiles);
+    const fullIdentity = sourceIdentity(v.site, url, knownFiles, Date.now(), 2);
     if (!fullIdentity) return fail();
     const sourceHash = await sha256(normalizeLf(fullIdentity.source.content));
     // The eligibility RPC has no candidate reason. Empty is a lower bound;

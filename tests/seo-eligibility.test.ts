@@ -46,7 +46,7 @@ function fixture() {
     updated_at: "2026-10-23T00:00:00Z",
     changed_files: 1,
   };
-  let files: any[] = [{ filename: target.spec.statePath, status: "modified" }],
+  let files: any[] = [{ filename: path, status: "modified" }],
     truncated = false,
     open = true,
     mutate = false;
@@ -102,13 +102,13 @@ function fixture() {
   };
 }
 const input = () => ({ site, urls: [url], deadline: Date.now() + 60000 });
-it("excludes actual shared state overlap, retaining all nine locale blob identities", async () => {
+it("excludes canonical Japanese overlap, returning only its blob identity", async () => {
   const f = fixture(),
     r = await editorialEligibility(input(), f.fetcher);
   expect(r.results[0].status).toBe("conflict");
   expect(r.results[0].conflicts).toEqual([158]);
-  expect(r.results[0].paths).toHaveLength(10);
-  expect(r.proof.prs[0].paths).toEqual([f.target.spec.statePath]);
+  expect(r.results[0].paths).toHaveLength(1);
+  expect(r.proof.prs[0].paths).toEqual([f.target.directory + "/example.md"]);
   expect(r.complete).toBe(true);
   expect(JSON.stringify(r)).not.toContain("External product supports");
 });
@@ -121,7 +121,7 @@ it("keeps unrelated articles eligible and includes rename previous paths", async
   f.setFiles([
     {
       filename: "new-state.json",
-      previous_filename: f.target.spec.statePath,
+      previous_filename: f.target.directory + "/example.md",
       status: "renamed",
     },
   ]);
@@ -129,22 +129,22 @@ it("keeps unrelated articles eligible and includes rename previous paths", async
     (await editorialEligibility(input(), f.fetcher)).results[0].status,
   ).toBe("conflict");
 });
-it("checks translation paths, not just the canonical source", async () => {
+it("does not block Japanese revision on a translation-only PR", async () => {
   const f = fixture();
   f.setFiles([
     { filename: f.target.directory + "/ru/example.md", status: "modified" },
   ]);
   expect(
     (await editorialEligibility(input(), f.fetcher)).results[0].status,
-  ).toBe("conflict");
+  ).toBe("eligible");
 });
-it("missing source and missing locale are confirmed ineligible in a complete tree", async () => {
+it("missing translations do not block Japanese scope; missing source is ineligible", async () => {
   const f = fixture();
   f.setOpen(false);
   f.entries.splice(1, 1);
   expect(
     (await editorialEligibility(input(), f.fetcher)).results[0].status,
-  ).toBe("ineligible");
+  ).toBe("eligible");
   f.entries.splice(0, 1);
   expect(
     (await editorialEligibility(input(), f.fetcher)).results[0].reason,
@@ -227,7 +227,7 @@ it("proves complete multi-page files and rejects an endless/truncated listing", 
       filename: `unrelated-${i}.md`,
       status: "modified",
     })),
-    { filename: f.target.spec.statePath, status: "modified" },
+    { filename: f.target.directory + "/example.md", status: "modified" },
   ]);
   const r = await editorialEligibility(input(), f.fetcher);
   expect(r.proof.prs[0].pages).toBe(2);
@@ -350,7 +350,7 @@ it("excludes the reviewed owned philosophy page but not other wiki articles", as
     }
   }
 });
-it("reads complete locale and guide bytes before accepting a size-fitting candidate", async () => {
+it("reads full Japanese and guide bytes without fetching unrelated translations", async () => {
   const f = fixture();
   f.setOpen(false);
   const translation = f.target.directory + "/ru/example.md";
@@ -370,17 +370,17 @@ it("reads complete locale and guide bytes before accepting a size-fitting candid
       (f.fetcher as any).mock.calls.some((c: any[]) =>
         String(c[0]).includes("/git/blobs/" + sha),
       ),
-    ).toBe(true);
+    ).toBe(f.target.spec.guidance.includes(path as never));
   }
 });
-it.each(["guide-missing", "locale-corrupt", "guide-unavailable"])(
+it.each(["guide-missing", "source-corrupt", "guide-unavailable"])(
   "incomplete preflight input remains unknown: %s",
   async (kind) => {
     const f = fixture();
     f.setOpen(false);
     const guide = f.entries.find((x) => x.path === f.target.spec.guidance[0])!;
     if (kind === "guide-missing") f.entries.splice(f.entries.indexOf(guide), 1);
-    if (kind === "locale-corrupt") f.entries[1].size++;
+    if (kind === "source-corrupt") f.entries[0].size++;
     const fetcher: typeof fetch = (u, o) =>
       kind === "guide-unavailable" &&
       String(u).endsWith("/git/blobs/" + guide.sha)
@@ -391,7 +391,7 @@ it.each(["guide-missing", "locale-corrupt", "guide-unavailable"])(
     );
   },
 );
-it("excludes full-language generation overflow even when the canonical plan is small", async () => {
+it("ignores translation input sizes outside Japanese scope", async () => {
   const f = fixture();
   f.setOpen(false);
   for (let i = 1; i <= 8; i++)
@@ -403,8 +403,7 @@ it("excludes full-language generation overflow even when the canonical plan is s
   expect(
     (await editorialEligibility(input(), f.fetcher)).results[0],
   ).toMatchObject({
-    status: "ineligible",
-    reason: "known_input_budget_exceeded",
+    status: "eligible",
   });
 });
 it("excludes oversized known guide input without deleting or truncating it", async () => {
@@ -453,14 +452,15 @@ it("rejects a known plan overflow before fetching translation or guide bodies", 
   }
 });
 
-it("keeps malformed translation metadata unknown without a paid call", async () => {
+it("does not read malformed translations in Japanese scope", async () => {
   const f = fixture();
   f.setOpen(false);
   f.entries[1] = f.entry(f.entries[1].path, "Missing frontmatter");
-  await expect(editorialEligibility(input(), f.fetcher)).rejects.toThrow(
-    "seo_eligibility_unknown",
-  );
+  expect(
+    (await editorialEligibility(input(), f.fetcher)).results[0].status,
+  ).toBe("eligible");
 });
+
 it("rejects own case-study claims before fetching locale/guidance bodies, but retains independent facts", async () => {
   const f = fixture();
   f.setOpen(false);
@@ -486,4 +486,59 @@ it("rejects own case-study claims before fetching locale/guidance bodies, but re
   expect(
     (await editorialEligibility(input(), f.fetcher)).results[0].status,
   ).toBe("eligible");
+});
+
+it.each([true, false])(
+  "Japanese eligibility skips only remaining prior translations: %s",
+  async (pending) => {
+    const f = fixture();
+    f.setOpen(false);
+    const { sha256 } = await import("../src/seo-hash.ts");
+    const source =
+      '---\ntitle: Example\ndate: "2026-10-01T00:00:00Z"\n---\nExternal product supports verified configuration settings.';
+    const prior = source + " Previous wording.";
+    const oldTranslation = "Prior translation.\n";
+    const translations = Object.fromEntries(
+      await Promise.all(
+        f.target.spec.locales.map(async (locale) => [
+          locale,
+          await sha256(oldTranslation),
+        ]),
+      ),
+    );
+    const marker = {
+      version: 1,
+      revisions: {
+        [f.entries[0].path]: {
+          previousSource: prior,
+          previousSourceHash: await sha256(prior),
+          sourceHash: await sha256(source),
+          translations,
+        },
+      },
+    };
+    f.entries.push(
+      f.entry(
+        f.target.spec.translationStaging!.manifest,
+        JSON.stringify(marker),
+      ),
+    );
+    for (let i = 1; i <= 8; i++)
+      f.entries[i] = f.entry(
+        f.entries[i].path,
+        pending && i === 8 ? oldTranslation : "Updated translation.",
+      );
+    const result = await editorialEligibility(input(), f.fetcher);
+    expect(result.results[0].status).toBe(pending ? "ineligible" : "eligible");
+    if (pending) expect(result.results[0].reason).toBe("translation_pending");
+  },
+);
+it("pending manifest overlap blocks Japanese revision without fetching model inputs", async () => {
+  const f = fixture();
+  f.setFiles([
+    { filename: f.target.spec.translationStaging!.manifest, status: "added" },
+  ]);
+  expect(
+    (await editorialEligibility(input(), f.fetcher)).results[0].status,
+  ).toBe("conflict");
 });

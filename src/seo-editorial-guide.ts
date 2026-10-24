@@ -12,3 +12,16 @@ URL、コード、コマンド、数値、製品名の意味を維持する。ha
 記事の正本、執筆方針、schema、翻訳、検証は対象repositoryの提供guideを優先する。非公開guideを読者向け参考資料として掲載しない。
 レビュー用Draft PRが終点。統合、公開、公開後効果の確認は今回の生成の成果に含めない。
 `;
+
+export const SEO_JAPANESE_SCOPE_POLICY =
+  "承認済みSEO工程: 今回は日本語正本1ファイルだけを改訂・整形・独立AI校閲しDraft PRで終了する。翻訳ファイルや翻訳state/hashを変更しない。統合後の翻訳は対象サイトの既存翻訳工程へ引き継ぐ。提供guideの同一PR・全locale反映指示はこの新jobには適用しない。翻訳完了や公開を今回の成果として主張しない。";
+export function writingGuideForScope(scope: 1 | 2 = 1) {
+  return scope === 2
+    ? SEO_WRITING_GUIDE.replace(
+        "変更内容を既存localeのtitle・description・見出し・本文・リンク説明へ実際に翻訳する。",
+        "今回の変更は日本語正本のみとし、統合後に既存翻訳工程へ引き継ぐ。",
+      ) +
+        "\n" +
+        SEO_JAPANESE_SCOPE_POLICY
+    : SEO_WRITING_GUIDE;
+}

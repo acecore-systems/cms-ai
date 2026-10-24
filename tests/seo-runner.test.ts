@@ -608,3 +608,39 @@ it.each([
     expect(timeout).toHaveBeenLastCalledWith(10000);
   },
 );
+
+it("collect skips an existing pending Japanese revision before claim and does not return translation context", async () => {
+  const spec = seoSite("portal")!;
+  (runner as any).editorialScope = 2;
+  const marker = {
+    version: 1,
+    revisions: {
+      [sourcePath]: {
+        previousSource: source + "Previous version.",
+        previousSourceHash: await sha256(source + "Previous version."),
+        sourceHash: await sha256(source),
+        translations: Object.fromEntries(
+          await Promise.all(
+            SEO_LOCALES.map(async (locale, i) => [
+              locale,
+              await sha256(original[i + 1].content),
+            ]),
+          ),
+        ),
+      },
+    },
+  };
+  await mkdir(join(workspace, "src/i18n"), { recursive: true });
+  await writeFile(
+    join(workspace, spec.translationStaging!.manifest),
+    JSON.stringify(marker),
+  );
+  const tracked = [
+    ...original.map((f) => f.path),
+    "AGENTS.md",
+    ...spec.guidance,
+    spec.translationStaging!.manifest,
+  ];
+  expect(await runner.collect(candidate, tracked)).toBeNull();
+  expect(request).not.toHaveBeenCalled();
+});

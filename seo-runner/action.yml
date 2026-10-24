@@ -1,5 +1,5 @@
 name: Acecore SEO Editorial runner
-description: SEO記事の改訂・翻訳を検証し、Draft PRだけを作成します。
+description: 保存済みscopeに従ってSEO記事を改訂・校閲し、Draft PRだけを作成します。
 inputs:
   run-id:
     description: SEO coordinator run ID
