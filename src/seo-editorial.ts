@@ -71,6 +71,7 @@ type Run = {
 };
 type EditorialJob = {
   model_version: 1 | 2;
+  generation_output: 1 | 2;
   plan_instructions: 1 | 2;
   id: string;
   run_id: string;
@@ -119,7 +120,7 @@ const runRow = (env: AppEnv, runId: string) =>
     .first<Run>();
 const jobRow = (env: AppEnv, jobId: string) =>
   env.CMS_AI_DB.prepare(
-    "SELECT j.*,COALESCE(m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions FROM seo_editorial_jobs j LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id WHERE j.id=?",
+    "SELECT j.*,COALESCE(m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(g.version,1) AS generation_output FROM seo_editorial_jobs j LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id WHERE j.id=?",
   )
     .bind(jobId)
     .first<EditorialJob>();
@@ -368,6 +369,9 @@ async function advance(env: AppEnv, runId: string) {
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_job_models(job_id,version,text_model,search_model) SELECT ?,2,?,'gpt-6-luna' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
             ).bind(jobId, SEO_DEEPSEEK, runId, run.candidate_index),
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_generation_contracts(job_id,version,max_completion_tokens,reasoning_effort) SELECT ?,2,48000,'high' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+            ).bind(jobId, runId, run.candidate_index),
           ]
         : []),
       env.CMS_AI_DB.prepare(
@@ -502,9 +506,9 @@ export async function editorialReport(env: AppEnv, input: unknown) {
         END AS reserved_micros,
         (SELECT COALESCE(SUM(reserved_micros),0) FROM seo_budget_calls
           WHERE month_jst=strftime('%Y-%m', r.created_at / 1000 + 32400, 'unixepoch')) AS month_reserved_micros,
-        (SELECT phase FROM seo_all_checks WHERE job_id=j.id
+        CASE WHEN j.generation_started=1 AND NOT EXISTS(SELECT 1 FROM seo_all_checks WHERE job_id=j.id AND phase='review') THEN 'generation' ELSE (SELECT phase FROM seo_all_checks WHERE job_id=j.id
           AND phase IN ('plan','discovery','research','review')
-          ORDER BY CASE phase WHEN 'review' THEN 4 WHEN 'research' THEN 3 WHEN 'discovery' THEN 2 ELSE 1 END DESC LIMIT 1) AS phase,
+          ORDER BY CASE phase WHEN 'review' THEN 4 WHEN 'research' THEN 3 WHEN 'discovery' THEN 2 ELSE 1 END DESC LIMIT 1) END AS phase,
         EXISTS(SELECT 1 FROM seo_research_rejections WHERE job_id=j.id AND run_id=r.run_id) AS research_rejected,
         (EXISTS(SELECT 1 FROM seo_review_rejections WHERE job_id=j.id AND run_id=r.run_id) OR
          EXISTS(SELECT 1 FROM seo_variable_review_rejections WHERE job_id=j.id AND run_id=r.run_id)) AS review_rejected
@@ -687,6 +691,7 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
         draftOnly: true,
         protocolVersion: job.protocol_version,
         researchContract: job.research_contract,
+        generationOutput: job.generation_output,
       },
     });
   try {
@@ -874,6 +879,8 @@ async function claimJob(
     body.baseSha !== identity.workflowSha
   )
     throw new Error("source_commit");
+  if (job.generation_output === 2 && body.generationOutput !== 2)
+    throw new Error("seo_generation_runner_contract");
   const files = validateSourceFiles(identity.site, body.files);
   const candidate: Candidate = JSON.parse(run.candidates_json)[
     job.candidate_index
@@ -926,10 +933,11 @@ async function claimJob(
       run.run_id,
       generationAllocation,
       job.model_version,
+      job.generation_output,
     );
     const modelMaximum =
       job.model_version === 2 && generationAllocation
-        ? fallbackMaximum(generationAllocation, 2)
+        ? fallbackMaximum(generationAllocation, 2, job.generation_output)
         : undefined;
     const reasons = [
       ...(fallback && !fallback.fits ? ["shared_budget_insufficient"] : []),
@@ -1278,7 +1286,9 @@ async function propose(
       ...(generationInputCap !== undefined ? { generationInputCap } : {}),
       instruction: transport.instruction,
     },
-    job.model_version === 2 ? { jobId: job.id, version: 2 } : undefined,
+    job.model_version === 2
+      ? { jobId: job.id, version: 2, generationVersion: job.generation_output }
+      : undefined,
   );
   alive(run);
   if (

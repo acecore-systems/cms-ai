@@ -66,7 +66,11 @@ export async function runInference(
   ) => Promise<void>,
   requestDeadline?: number,
   purpose: "cms" | "seo" = "cms",
-  seoProvider?: { model: string; onResponse?: (raw: unknown) => Promise<void> },
+  seoProvider?: {
+    model: string;
+    maxCompletionTokens?: 48000;
+    onResponse?: (raw: unknown) => Promise<void>;
+  },
 ): Promise<InferenceResult> {
   const files = validateSourceFiles(site, sourceFiles);
   // Bound all image data per inference and prioritize the current turn.
@@ -84,6 +88,14 @@ export async function runInference(
     await buildConversationMessages(env, job, conversationJobs, imageBudget),
   );
   if (seoProvider && purpose !== "seo") throw Error("seo_model_not_allowed");
+  if (seoProvider?.maxCompletionTokens !== undefined) {
+    if (
+      seoProvider.model !== DEEPSEEK_MODEL ||
+      seoProvider.maxCompletionTokens !== 48000
+    )
+      throw Error("seo_model_not_allowed");
+    request.max_completion_tokens = seoProvider.maxCompletionTokens;
+  }
   const model =
     purpose === "seo"
       ? (seoProvider?.model ?? "gpt-6-luna")
@@ -653,7 +665,13 @@ export async function runTextModel(
         ) => Promise<unknown>
       )(model, input, {
         signal: AbortSignal.timeout(
-          Math.max(1, Math.min(120000, requestDeadline! - Date.now())),
+          Math.max(
+            1,
+            Math.min(
+              input.max_completion_tokens === 48000 ? 480000 : 120000,
+              requestDeadline! - Date.now(),
+            ),
+          ),
         ),
       });
       if (onResponse) await onResponse(raw);

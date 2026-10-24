@@ -32,7 +32,7 @@ export function generationReadiness(env: AppEnv) {
 export async function generateSeo(
   env: AppEnv,
   input: unknown,
-  modelProfile?: { jobId: string; version: 2 },
+  modelProfile?: { jobId: string; version: 2; generationVersion?: 1 | 2 },
 ) {
   if (String(env.SEO_GENERATION_ENABLED) !== "true")
     return { status: "disabled" as const };
@@ -169,6 +169,9 @@ export async function generateSeo(
       modelProfile
         ? {
             model: SEO_DEEPSEEK,
+            ...(modelProfile.generationVersion === 2
+              ? { maxCompletionTokens: 48000 as const }
+              : {}),
             onResponse: async (raw: unknown) => {
               if (
                 !(await env.CMS_AI_IMAGES.put(
@@ -280,10 +283,14 @@ export function buildSeoGenerationRequest(
   paths: string[],
   instruction: string,
   files: SourceFile[],
+  generationVersion = 1,
 ) {
-  return buildTextInferencePayload(
+  const request = buildTextInferencePayload(
     site,
     generationJob(site, articlePath, paths, instruction),
     files,
   );
+  return generationVersion === 2
+    ? { ...request, max_completion_tokens: 48000 }
+    : request;
 }

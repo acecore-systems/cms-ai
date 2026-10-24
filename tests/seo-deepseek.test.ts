@@ -219,3 +219,68 @@ it("holds the October 26 slot only until its original UTC start, without increas
     7000000,
   );
 });
+
+it("new generation output reserves 48k at official output rate, caps deadline, and never retries length", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  const payload = { ...request(), max_completion_tokens: 48000 };
+  const ai = vi.fn(async () => ({
+    ...response(),
+    choices: [
+      {
+        finish_reason: "length",
+        message: { role: "assistant", content: "incomplete" },
+      },
+    ],
+    usage: { prompt_tokens: 100, completion_tokens: 48000 },
+  }));
+  const reserve = vi.fn(async () => {}),
+    save = vi.fn(async () => {});
+  await expect(
+    runTextModel(
+      { AI: { run: ai } } as unknown as AppEnv,
+      SEO_DEEPSEEK,
+      payload,
+      reserve,
+      now + 600000,
+      true,
+      save,
+    ),
+  ).rejects.toThrow();
+  expect(timeout).toHaveBeenLastCalledWith(480000);
+  expect(ai).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(reserve).toHaveBeenCalledTimes(1);
+  expect(
+    deepseekUpperCost(deepseekPayload(payload)) -
+      deepseekUpperCost(
+        deepseekPayload({ ...payload, max_completion_tokens: 12000 }),
+      ),
+  ).toBe(43200);
+  await expect(
+    runTextModel(
+      { AI: { run: ai } } as unknown as AppEnv,
+      SEO_DEEPSEEK,
+      payload,
+      reserve,
+      now + 20000,
+      true,
+    ),
+  ).rejects.toThrow();
+  expect(timeout).toHaveBeenLastCalledWith(20000);
+});
+it("bounds all 1..9 locale v2 generations without changing the old job maximum", () => {
+  for (let count = 1; count <= 9; count++) {
+    const allocation = allocateGenerationInputs(
+      Array.from({ length: count }, (_, i) => ({
+        path: i + ".md",
+        bytes: 100,
+      })),
+      2,
+      2,
+    );
+    expect(
+      fallbackMaximum(allocation, 2, 2) - fallbackMaximum(allocation, 2, 1),
+    ).toBe(count * 43200);
+    expect(fallbackMaximum(allocation, 2, 2)).toBeLessThanOrEqual(1250000);
+  }
+});

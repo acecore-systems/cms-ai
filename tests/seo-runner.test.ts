@@ -574,3 +574,37 @@ it.each([false, true])(
     expect(github.mock.calls.some((c) => c[1] === "POST")).toBe(false);
   },
 );
+
+it.each([
+  [1, 150000],
+  [2, 510000],
+])(
+  "pins generation %i RPC timeout and keeps the root deadline",
+  async (version, maximum) => {
+    const r = new SeoRunner({
+      now: () => now,
+      env: {
+        SEO_JOB_ID: jobId,
+        ACTIONS_ID_TOKEN_REQUEST_URL: "https://example.test/token",
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture",
+      },
+      fetch: async (url: string) =>
+        new Response(
+          JSON.stringify(
+            String(url).includes("token")
+              ? { value: "oidc" }
+              : { status: "unresolved" },
+          ),
+          { status: 200 },
+        ),
+    });
+    r.generationOutput = version;
+    r.deadline = now + 1000000;
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    await r.request("propose", { step: 0 });
+    expect(timeout).toHaveBeenLastCalledWith(maximum);
+    r.deadline = now + 10000;
+    await r.request("propose", { step: 0 });
+    expect(timeout).toHaveBeenLastCalledWith(10000);
+  },
+);

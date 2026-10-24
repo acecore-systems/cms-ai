@@ -74,7 +74,13 @@ export function trialStatements(
 export function fallbackMaximum(
   allocation: Parameters<typeof assertGenerationAllocation>[0],
   modelVersion = 1,
+  generationOutput = 1,
 ) {
+  if (
+    ![1, 2].includes(generationOutput) ||
+    (generationOutput === 2 && modelVersion !== 2)
+  )
+    throw Error("seo_generation_contract");
   assertGenerationAllocation(allocation, 2, 2);
   let maximum =
     stageBudget(2, 2, 2).maximum -
@@ -90,7 +96,10 @@ export function fallbackMaximum(
       allocation.reduce((n, a) => n + a.maxBytes + 8192 + 12000 * 2, 0) -
       Math.ceil((32000 + 8192) * 0.3 + 6000) -
       Math.ceil((440000 + 8192) * 0.3 + 24000) +
-      allocation.reduce((n, a) => n + cost(a.maxBytes, 12000), 0) +
+      allocation.reduce(
+        (n, a) => n + cost(a.maxBytes, generationOutput === 2 ? 48000 : 12000),
+        0,
+      ) +
       cost(32000, 6000) +
       cost(440000, 24000);
   }
@@ -103,6 +112,7 @@ export async function fallbackPreflight(
   runId: string,
   allocation: Parameters<typeof fallbackMaximum>[0] | undefined,
   modelVersion = 1,
+  generationOutput = 1,
 ) {
   const group = await env.CMS_AI_DB.prepare(
     `SELECT t.deadline,
@@ -114,7 +124,7 @@ export async function fallbackPreflight(
   if (!group) return null;
   if (!allocation || group.deadline <= Date.now())
     throw Error("seo_fallback_preflight");
-  const maximum = fallbackMaximum(allocation, modelVersion);
+  const maximum = fallbackMaximum(allocation, modelVersion, generationOutput);
   return { maximum, held: group.held, fits: maximum + group.held <= 1250000 };
 }
 export async function fallbackTotals(env: AppEnv, rootRunId: string) {
