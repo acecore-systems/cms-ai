@@ -1,3 +1,4 @@
+import { SEO_PLAN_OUTPUT_TOKENS } from "./seo-deepseek.ts";
 import type { AppEnv } from "./env.ts";
 import { seoArticleUrl } from "./sites.ts";
 import { assertGenerationAllocation, stageBudget } from "./seo-stage-budget.ts";
@@ -100,7 +101,7 @@ export function fallbackMaximum(
         (n, a) => n + cost(a.maxBytes, generationOutput === 2 ? 48000 : 12000),
         0,
       ) +
-      cost(32000, 6000) +
+      cost(32000, SEO_PLAN_OUTPUT_TOKENS) +
       cost(440000, 24000);
   }
   if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 1250000)

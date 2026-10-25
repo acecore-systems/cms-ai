@@ -135,7 +135,8 @@ export class SeoRunner {
         signal: AbortSignal.timeout(
           Math.min(
             (operation === "propose" && this.generationOutput === 2) ||
-              (operation === "review" && this.editorialScope === 2)
+              (["research", "review"].includes(operation) &&
+                this.editorialScope === 2)
               ? 510_000
               : ["propose", "research", "review"].includes(operation)
                 ? 150_000

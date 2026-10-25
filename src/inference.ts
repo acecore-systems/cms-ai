@@ -668,7 +668,7 @@ export async function runTextModel(
           Math.max(
             1,
             Math.min(
-              // High-reasoning review (24k) needs the same bounded wait as
+              // High-reasoning plan/review (24k) needs the same bounded wait as
               // generation. The token reservation and root deadline stay fixed.
               input.max_completion_tokens === 48000 ||
                 input.max_completion_tokens === 24000

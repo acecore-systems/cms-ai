@@ -1,0 +1,15 @@
+# SEO planの出力上限と事前見積
+
+2026-10-25の実試行はprovider応答が保存され、finish_reason=length・completion_tokens=6000・content空で停止した。通信timeoutやJSON品質合格ではない。reasoning本文は転記しない。
+
+model_version=2のplan出力を6000から24000へ変更する。12000も比較したが既存推論待機は120秒で、24kはreviewと同じ480秒枠を利用できるため採用する。max_completion_tokensにはreasoningを含む。量を増やしてもJSON完成・意味判断・生成・校閲・Draft成功は保証しない。旧model_version=1のResponses上限は6000のまま。
+
+実request組立、planInputBytes、deepseekUpperCost、全工程fallbackMaximumを整合させる。入力32KB、通常run1.25 USD、10月14.60 USD、週次留保1.25 USD、元deadline、既存schemaは維持する。最大予約の増分は21,600 microUSD。旧6000前提の保存preflightは流用せず、plan課金前にjobへ結合したR2 preflightのhash・modelVersion・全工程最大・plan bytesを確認する。不一致は予約もAI呼出しも行わない。既存行や完了済みcheckは書き換えず、migrationは不要。
+
+SEO runnerの新editorialScope=2ではresearch RPCも510秒へ揃える。旧scopeは150秒のまま、いずれも元deadlineの残時間で制限する。research RPCはplan・discovery・researchを内包し、その合計が510秒を超える可能性は残る。期限延長や再送はしない。既存scope申告だけでは旧runnerの150秒実装を区別できないため、親担当は全対象サイトのrunner pin反映後にだけ新runを開始する。
+
+length・空content・schema不正・usage不明・超過は引き続き拒否する。rawを保存し、失敗予約はunresolvedで保持し、自動再送や返金をしない。診断契約は拡張しない。
+
+無課金の実保存source計算では、plan入力24,727 bytes、review48,968 bytes、生成既知入力48,283 bytes、入力超過理由なし。全工程最大539,963 microUSD（旧518,363）で、月予約12,116,736・留保1,250,000を除いた残額1,233,264内。sourceは不変。この値は当該候補の計算結果であり、別候補や実行直前の台帳確認を代替しない。
+
+テストは合成応答による6000/24000 length停止・raw保持・再送なし、旧見積/hash/入力サイズ不一致の課金前拒否、1〜9ファイルの全工程上限、provider/runnerの元期限制限を確認する。本番write・merge・deploy・追加AIは本担当では行わず、親担当へ引き継ぐ。今回消費済みの起動承認を本修正で再利用しない。
