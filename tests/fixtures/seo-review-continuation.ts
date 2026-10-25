@@ -45,7 +45,7 @@ export async function continuationFixture(now: number) {
     target +
     "\n";
   const files = [
-    { path, content },
+    { content, path },
     {
       path: "docs/writing.md",
       content: "# Synthetic guide\n原文の意味を保持する。\n",
