@@ -279,6 +279,45 @@ CREATE TABLE seo_model_calls(call_id,job_id,phase,request_sha256,budget_run_id);
 });
 afterEach(() => db.close());
 const input = { runId: "old", articleKey: article };
+it("retains the exact proof under delayed R2 reads with bounded concurrency and one fetch per object", async () => {
+  const original = env.CMS_AI_IMAGES.get.bind(env.CMS_AI_IMAGES),
+    calls = new Map<string, number>(),
+    bodies = new Map<string, number>();
+  let active = 0,
+    peak = 0;
+  env.CMS_AI_IMAGES.get = (async (key: string) => {
+    calls.set(key, (calls.get(key) ?? 0) + 1);
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise((r) => setTimeout(r, 10));
+    const object = await original(key);
+    active--;
+    return object
+      ? {
+          text: async () => {
+            bodies.set(key, (bodies.get(key) ?? 0) + 1);
+            await new Promise((r) => setTimeout(r, 5));
+            return object.text();
+          },
+        }
+      : null;
+  }) as typeof env.CMS_AI_IMAGES.get;
+  const proof = await reconsiderationProof(env, {
+    ...input,
+    deadline: Date.now() + 10000,
+  });
+  expect(proof).toMatchObject({ status: "eligible", version: 2 });
+  expect(Object.keys(proof)).toHaveLength(8);
+  expect(peak).toBeGreaterThan(1);
+  expect(peak).toBeLessThanOrEqual(4);
+  expect([...calls.values()].every((n) => n === 1)).toBe(true);
+  expect([...bodies.values()].every((n) => n === 1)).toBe(true);
+  expect(calls.size).toBe(19);
+  // A later proof must re-read; a changed object cannot inherit the earlier cache.
+  objects.set(key("plan"), "{}");
+  expect(await reconsiderationProof(env, input)).toEqual({ status: "denied" });
+  expect(calls.get(key("plan"))).toBe(2);
+});
 it("returns exact focus2 proof shape after unchanged SQL, R2 and completed-call validation without writes", async () => {
   const before = db.prepare("SELECT * FROM seo_editorial_jobs").all(),
     stored = [...objects];

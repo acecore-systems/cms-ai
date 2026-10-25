@@ -61,3 +61,13 @@ legacy1はversion=1/fromPlan=1/toPlan=2で、その他の共通fieldと任意new
 判定を変えず、`seo_reconsideration_result` の構造化ログを追加する。fieldはoutcome、stage、code、elapsedMs、remainingMs、stagesMsだけ。run/job/article、原稿、receipt、URL、token、例外message/stackは含めない。codeは固定のpredicate/deadline/exception/completeまたは既存GitHub readerの許可済みコードのみ。
 
 stageはinput、old-row、receipt、receipt-object、focus-evidence、new-job、workflow、publication。共有deadline消費、GitHub認証・scope・rate問題と通常の条件不一致を区別するために用いる。返却proofのshape、全拒否条件、10秒共有枠、取得回数・順序は変えない。ログに出た経過時間と本番read-only preflightで原因を確認してから、必要な改善を判断する。
+
+## proof内の読取短縮
+
+本番tailでfocus proof成功7,642ms（focus-evidence 5,410ms）、共有期限の残り1,033msを確認したため、独立したR2読取を最大4並列にする。共有10秒枠と元期限を延長しない。D1・GitHub読取の契約やAI call数は変更しない。
+
+cacheは単一proof内の最大32 objectに限定し、GET結果と原文textのPromiseを共有する。R2 streamは一度だけ消費し、同じ原文を既存のhash照合・再解析へ渡す。解析済み値や別proofの判定を再利用しない。不在は不在、取得/bodyエラーはエラーとして保持し、再試行やエラーから不在への変換をしない。source-recovery登録を含む実資料でGETが23→20回になった。
+
+receiptと旧jobの条件を確認してからsource/planを並列取得し、全3callのDB/receipt対応確認後に固定object群をprefetchする。必要な証跡の全hash・条件検査は従来のverifierで実行する。全並列処理の結果を回収してから返し、期限を過ぎた待機中の読取は開始しない。診断コードproof_read_deadline/proof_read_boundは固定文字列のみ。
+
+実資料にGET150ms/body50msの模擬遅延を加えたローカル比較では、同じeligibleのまま4,933→1,685msだった。通信を含む本番の短縮量を保証する数値ではない。遅延fixture、最大4並列、単一stream消費、proof間cache分離、エラー維持、deadline、既存の全拒否条件を試験する。実AI中の配備は行わず、本番反映とtail再確認は親担当。

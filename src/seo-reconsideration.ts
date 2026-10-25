@@ -1,4 +1,5 @@
 import { verifyFocusReconsideration } from "./seo-research-focus.ts";
+import { proofObjects } from "./seo-proof-objects.ts";
 import type { AppEnv } from "./env.ts";
 import { sha256 } from "./seo-hash.ts";
 import { seoWorkflowCompleted, seoPublicationAbsent } from "./github.ts";
@@ -87,18 +88,19 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
     )
       return reject();
     enter("receipt-object");
-    const saved = await env.CMS_AI_IMAGES.get(
-      `seo-editorial/${row.id}/rejection.json`,
-    );
-    if (
-      !saved ||
-      (await saved.text()) !== row.receipt_json ||
-      (await env.CMS_AI_IMAGES.get(`seo-editorial/${row.id}/step-0.json`))
-    )
+    const objects = proofObjects(env, deadline);
+    const [saved, generation] = await Promise.all([
+      objects.env.CMS_AI_IMAGES.get(`seo-editorial/${row.id}/rejection.json`),
+      objects.env.CMS_AI_IMAGES.get(`seo-editorial/${row.id}/step-0.json`),
+    ]);
+    if (!saved || (await saved.text()) !== row.receipt_json || generation)
       return reject();
     const focusUpgrade = row.plan_version === 2;
     enter("focus-evidence");
-    if (focusUpgrade && !(await verifyFocusReconsideration(env, row, receipt)))
+    if (
+      focusUpgrade &&
+      !(await verifyFocusReconsideration(env, row, receipt, objects))
+    )
       return reject();
     if (Date.now() >= deadline) return reject("deadline");
     enter("new-job");
@@ -156,6 +158,8 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
   } catch (error) {
     const code = (error as { code?: unknown })?.code;
     const allowed = [
+      "proof_read_deadline",
+      "proof_read_bound",
       "token_authentication",
       "token_permission_denied",
       "token_unavailable",

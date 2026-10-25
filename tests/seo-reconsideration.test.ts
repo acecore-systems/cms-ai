@@ -169,8 +169,8 @@ it("distinguishes evidence time consuming the shared deadline and makes no GitHu
   const record = JSON.parse(log.mock.calls.at(-1)![0]);
   expect(record).toMatchObject({
     outcome: "denied",
-    stage: "focus-evidence",
-    code: "deadline",
+    stage: "receipt-object",
+    code: "proof_read_deadline",
     elapsedMs: 1200,
     remainingMs: -200,
   });
