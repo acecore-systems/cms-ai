@@ -139,8 +139,10 @@ export class SeoRunner {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(
           Math.min(
-            this.reviewContinuation === 2 &&
-              ["claim", "publish", "review"].includes(operation)
+            this.reviewContinuation >= 2 &&
+              ["claim", "publish", "review", "review-reject"].includes(
+                operation,
+              )
               ? operation === "review"
                 ? SEO_CONTINUATION_REVIEW_RPC_MS
                 : SEO_CONTINUATION_RPC_MS
@@ -466,7 +468,7 @@ export class SeoRunner {
     this.deadline = job.deadline;
     this.editorialScope = payload.policy?.editorialScope ?? 1;
     if (![1, 2].includes(this.editorialScope)) throw new Error("seo_job");
-    const continuation = [1, 2].includes(payload.policy?.reviewContinuation);
+    const continuation = [1, 2, 3].includes(payload.policy?.reviewContinuation);
     this.reviewContinuation = continuation
       ? payload.policy.reviewContinuation
       : undefined;
@@ -705,6 +707,19 @@ export class SeoRunner {
         result.receipt.filesSha256 !== reviewedHash
       )
         throw new Error("seo_review");
+      if (result.receipt.version === 2) {
+        if (
+          !Array.isArray(result.receipt.files) ||
+          result.receipt.files.some((f) => !Array.isArray(f.baselineIssues))
+        )
+          throw new Error("seo_review");
+        this.baselineReviewIssues = result.receipt.files.flatMap((f) =>
+          f.baselineIssues.map((issue) => ({
+            path: f.path,
+            explanation: issue.explanation,
+          })),
+        );
+      }
     }
     this.stage = "diff";
     const changed = (await this.command("git", ["diff", "--name-only", "-z"]))
@@ -817,6 +832,25 @@ export class SeoRunner {
         : spec.locales.length
           ? "- 既存localeを実際に改訂・翻訳し、サイトの翻訳契約と検証を同じPRにまとめました。"
           : "- 日本語記事の構成・表現を改善しました（このsiteの記事localeは日本語のみ）。",
+      ...(this.baselineReviewIssues?.length
+        ? [
+            "",
+            "## 既存課題（今回未修正）",
+            "",
+            ...this.baselineReviewIssues.map(
+              (issue) =>
+                "- " +
+                String(issue.path + ": " + issue.explanation)
+                  .replace(/[\r\n\u0000-\u001f]/g, " ")
+                  .replace(/@/g, "＠")
+                  .replace(
+                    /[&<>]/g,
+                    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
+                  )
+                  .replace(/([\\`*_[\]{}()#!|])/g, "\\$1"),
+            ),
+          ]
+        : []),
       "- 統合・公開は別途レビューが必要です。",
       "",
       "対象: " + candidate.url,

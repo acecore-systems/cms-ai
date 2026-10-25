@@ -24,6 +24,7 @@ export type InputPreflightOptions = {
   allocation_version: 1 | 2;
   code_preservation?: 1 | 2;
   review_output?: 1 | 2;
+  review_scope?: 1 | 2;
   metadata_preservation?: 1 | 2;
   code_token_repair?: 1 | 2;
 };
@@ -46,6 +47,7 @@ export function currentInputPreflightOptions(
     allocation_version: 2,
     code_preservation: 2,
     review_output: 2,
+    review_scope: 2,
     metadata_preservation: 2,
     code_token_repair: 2,
   };
@@ -90,6 +92,7 @@ export function inputPreflight(
       },
       options.review_output,
       options.editorial_scope,
+      options.review_scope,
     ),
   );
   // Unknown future research/JA growth cannot be forecast. This placeholder is

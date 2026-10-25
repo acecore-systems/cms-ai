@@ -273,7 +273,8 @@ it("requires the same opened and cited URL and support; binds evidence policy to
         bind: () => ({
           first: async () =>
             q.includes("seo_review_continuations") ||
-            q.includes("seo_review_continuation_retries")
+            q.includes("seo_review_continuation_retries") ||
+            q.includes("seo_review_scope_reassessments")
               ? null
               : row,
         }),

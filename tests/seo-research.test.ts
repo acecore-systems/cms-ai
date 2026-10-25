@@ -126,6 +126,9 @@ beforeEach(async () => {
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),
     );
+  sql.exec(
+    "CREATE TABLE seo_review_scope_reassessments(job_id TEXT PRIMARY KEY)",
+  );
   sql.exec("CREATE TABLE seo_review_continuations(job_id TEXT PRIMARY KEY)");
   sql.exec(
     "CREATE TABLE seo_review_continuation_retries(job_id TEXT PRIMARY KEY)",

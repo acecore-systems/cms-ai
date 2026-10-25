@@ -305,3 +305,53 @@ it("0044 registers atomically in workerd D1 and holds the predecessor unchanged"
     await mf.dispose();
   }
 });
+
+it("0045 preserves all old schema/rows and forbids retrospective scope contracts", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    for (const name of migrations().filter((n) => n < "0045"))
+      db.exec(sql(name));
+    db.exec(old);
+    const schema = db
+      .prepare(
+        "SELECT name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'",
+      )
+      .all();
+    const tables = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+      )
+      .all();
+    const rows = () =>
+      tables.map((t) => db.prepare("SELECT * FROM " + t.name).all());
+    const before = rows();
+    db.exec(sql("0045_seo_review_scope.sql"));
+    expect(rows()).toEqual(before);
+    for (const row of schema)
+      expect(
+        db
+          .prepare("SELECT name,sql FROM sqlite_master WHERE name=?")
+          .get(row.name!),
+      ).toEqual(row);
+    expect(() =>
+      db.exec("INSERT INTO seo_review_scope_contracts VALUES('old-job',2)"),
+    ).toThrow();
+    db.exec(
+      "BEGIN;" +
+        freshRun +
+        ";INSERT INTO seo_review_scope_contracts VALUES('new-job',2);" +
+        freshJob +
+        ";COMMIT",
+    );
+    for (const q of [
+      "DELETE FROM seo_review_scope_contracts",
+      "UPDATE seo_review_scope_contracts SET version=2",
+      "INSERT OR REPLACE INTO seo_review_scope_contracts VALUES('new-job',2)",
+      "UPDATE seo_editorial_jobs SET id='other' WHERE id='new-job'",
+      "DELETE FROM seo_editorial_jobs WHERE id='new-job'",
+    ])
+      expect(() => db.exec(q)).toThrow();
+  } finally {
+    db.close();
+  }
+});

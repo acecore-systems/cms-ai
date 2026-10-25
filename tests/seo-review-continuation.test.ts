@@ -36,6 +36,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   f?.db.close();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 const input = () => ({
@@ -694,3 +695,232 @@ it("refuses a v1 runner at a v2 claim before source or AI", async () => {
       .get(id)!.n,
   ).toBe(0);
 });
+
+it.each(["pass", "fail"])(
+  "scope reassessment validates old raw fail and new HTTP review/publish or rejection: %s",
+  async (verdict) => {
+    const z = await zeroClaim();
+    const p: any = await reviewContinuationProof(f.env, z.input);
+    const started: any = await startReviewContinuation(f.env, {
+      oldRunId: z.input.oldRunId,
+      runId: z.input.newRunId,
+      deadline: z.input.deadline,
+      manifestSha256: p.manifestSha256,
+    });
+    expect(started.status).toBe("started");
+    const previousId = started.jobId;
+    mocks.identity = {
+      site: seoSite("portal")!.site,
+      runId: "987",
+      workflowSha: "d".repeat(40),
+    };
+    await request(previousId);
+    expect(
+      (
+        await request(previousId, "claim", {
+          baseSha: "d".repeat(40),
+          files: f.files.map(({ path, content }) => ({ path, content })),
+          editorialScope: 2,
+          generationOutput: 2,
+          reviewContinuation: 2,
+        })
+      ).status,
+    ).toBe("claimed");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now());
+    let scope = 1;
+    const ai = vi.fn(async () => ({
+      model: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: JSON.stringify({
+              verdict: scope === 1 ? "fail" : verdict,
+              files: f.final.map((file) => ({
+                path: file.path,
+                meaningPreserved: true,
+                naturalLanguage: scope === 2 && verdict === "pass",
+                referencesSupported: true,
+                issues:
+                  scope === 1
+                    ? ["Unchanged baseline concern"]
+                    : verdict === "pass"
+                      ? []
+                      : [
+                          {
+                            kind: "uncertain",
+                            originalQuote: "",
+                            finalQuote: file.content.slice(0, 40),
+                            explanation: "確認不能な変更",
+                          },
+                        ],
+                ...(scope === 2 ? { baselineIssues: [] } : {}),
+              })),
+            }),
+          },
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 100 },
+    }));
+    f.env.AI = { run: ai };
+    // Legacy inherited rejection is retained as unresolved; no false pass or normal-generation receipt.
+    await request(previousId, "review", { files: f.final });
+    f.db
+      .prepare(
+        "UPDATE seo_editorial_jobs SET status='unresolved',callback_recorded=1 WHERE id=?",
+      )
+      .run(previousId);
+    f.db
+      .prepare(
+        "UPDATE seo_editorial_runs SET status='unresolved' WHERE run_id=?",
+      )
+      .run(z.input.newRunId);
+    const previous = f.db
+      .prepare("SELECT * FROM seo_editorial_jobs WHERE id=?")
+      .get(previousId);
+    vi.setSystemTime(z.input.deadline + 1);
+    vi.spyOn(Date, "now").mockReturnValue(z.input.deadline + 1);
+    const args = {
+      oldRunId: z.input.newRunId,
+      newRunId: "editorial-77777777-7777-4777-8777-777777777777",
+      deadline: Date.now() + 1800000,
+    };
+    const proof: any = await reviewContinuationProof(f.env, args);
+    expect(proof).toMatchObject({
+      status: "eligible",
+      version: 3,
+      oldJobId: previousId,
+      manifestSha256: p.manifestSha256,
+      fromReviewScope: 1,
+      toReviewScope: 2,
+    });
+    expect(Object.keys(proof)).toHaveLength(14);
+    const rawKey = `seo-provider-responses/${f.db.prepare("SELECT call_id FROM seo_model_calls WHERE job_id=?").get(previousId)!.call_id}.json`;
+    const oldRaw = f.objects.get(rawKey)!;
+    f.objects.set(rawKey, "{}");
+    expect((await reviewContinuationProof(f.env, args)).status).toBe("denied");
+    f.objects.set(rawKey, oldRaw);
+    const { inspectScopeReassessment } =
+      await import("../src/seo-review-scope-reassessment.ts");
+    const checked = await inspectScopeReassessment(
+      f.env,
+      args.oldRunId,
+      args.deadline,
+    );
+    for (const patch of [
+      { extra: true },
+      { generationCalls: 1 },
+      { inheritedGenerationArtifacts: 0 },
+      { rootJobId: "wrong" },
+      { reviewScope: 2 },
+    ]) {
+      expect(() =>
+        f.db
+          .prepare(
+            "INSERT INTO seo_scope_review_rejections VALUES(?,?,1,?,?,?)",
+          )
+          .run(
+            previousId,
+            args.oldRunId,
+            checked.scope.rejected.rejectionSha256,
+            JSON.stringify({ ...checked.scope.rejected.receipt, ...patch }),
+            Date.now(),
+          ),
+      ).toThrow();
+    }
+    const next: any = await startReviewContinuation(f.env, {
+      oldRunId: args.oldRunId,
+      runId: args.newRunId,
+      deadline: args.deadline,
+      manifestSha256: proof.manifestSha256,
+    });
+    expect(next.status).toBe("started");
+    expect(
+      (
+        await reviewContinuationProof(f.env, {
+          ...args,
+          newRunId: args.newRunId.replace(/777$/, "776"),
+        })
+      ).status,
+    ).toBe("denied");
+    for (const query of [
+      "UPDATE seo_review_scope_reassessments SET version=3",
+      "DELETE FROM seo_review_scope_reassessments",
+      "UPDATE seo_editorial_jobs SET generation_started=1 WHERE id='" +
+        next.jobId +
+        "'",
+      "UPDATE seo_editorial_runs SET deadline=deadline+1 WHERE run_id='" +
+        args.newRunId +
+        "'",
+    ])
+      expect(() => f.db.exec(query)).toThrow();
+    scope = 2;
+    mocks.identity = {
+      site: seoSite("portal")!.site,
+      runId: "988",
+      workflowSha: "e".repeat(40),
+    };
+    await request(next.jobId);
+    expect(
+      (
+        await request(next.jobId, "claim", {
+          baseSha: "e".repeat(40),
+          files: f.files.map(({ path, content }) => ({ path, content })),
+          editorialScope: 2,
+          generationOutput: 2,
+          reviewContinuation: 3,
+        })
+      ).status,
+    ).toBe("claimed");
+    const reviewed = await request(next.jobId, "review", { files: f.final });
+    expect(reviewed.status).toBe(
+      verdict === "pass" ? "reviewed" : "review_failed",
+    );
+    if (verdict === "pass") {
+      expect(
+        (await request(next.jobId, "publish", { filesSha256: f.finalHash }))
+          .status,
+      ).toBe("publishing");
+      expect(
+        (
+          await request(next.jobId, "finish", {
+            prUrl:
+              "https://github.com/acecore-systems/aceserver-portal/pull/123",
+          })
+        ).status,
+      ).toBe("draft_pr");
+    } else {
+      const reject = vi.fn(async () => ({ status: "recorded" }));
+      (f.env.SEO_COORDINATOR as any).rejectReview = reject;
+      expect(
+        (
+          await request(next.jobId, "review-reject", {
+            baseSha: "e".repeat(40),
+            offerSha256: reviewed.offerSha256,
+            refs: [],
+            pullRequests: [],
+          })
+        ).status,
+      ).toBe("review_rejected");
+      const receipt = JSON.parse(
+        f.objects.get(`seo-editorial/${next.jobId}/review-rejection.json`)!,
+      );
+      expect(Object.keys(receipt)).toHaveLength(25);
+      expect(receipt).toMatchObject({
+        version: 5,
+        reviewScope: 2,
+        generationCalls: 0,
+        inheritedGenerationArtifacts: 1,
+      });
+    }
+    expect(
+      f.db
+        .prepare("SELECT * FROM seo_editorial_jobs WHERE id=?")
+        .get(previousId),
+    ).toEqual(previous);
+    expect(ai).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  },
+);

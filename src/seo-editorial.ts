@@ -1,3 +1,8 @@
+import { reviewScopeVersion } from "./seo-review-scope.ts";
+import {
+  prepareScopedRejection,
+  finalizeScopedRejection,
+} from "./seo-review-scope-reassessment.ts";
 import { inspectContinuationRequest } from "./seo-review-continuation-retry.ts";
 import {
   type ContinuationProgress,
@@ -145,6 +150,8 @@ async function continuationPolicy(env: AppEnv, jobId: string) {
   return row ? { reviewContinuation: row.version } : {};
 }
 const diagnosticCodes = new Set([
+  "seo_review_scope_evidence",
+  "seo_review_scope_response",
   "seo_continuation_retry_evidence",
   "seo_continuation_source",
   "seo_continuation_contract",
@@ -382,6 +389,9 @@ async function advance(env: AppEnv, runId: string) {
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
+        "INSERT INTO seo_review_scope_contracts(job_id,version) VALUES(?,2)",
+      ).bind(jobId),
+      env.CMS_AI_DB.prepare(
         "INSERT INTO seo_editorial_scope_contracts(job_id,version) SELECT ?,2 WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
       ).bind(jobId, runId, run.candidate_index),
       env.CMS_AI_DB.prepare(
@@ -550,7 +560,7 @@ export async function editorialReport(env: AppEnv, input: unknown) {
           ORDER BY CASE phase WHEN 'review' THEN 4 WHEN 'research' THEN 3 WHEN 'discovery' THEN 2 ELSE 1 END DESC LIMIT 1) END AS phase,
         EXISTS(SELECT 1 FROM seo_research_rejections WHERE job_id=j.id AND run_id=r.run_id) AS research_rejected,
         (EXISTS(SELECT 1 FROM seo_review_rejections WHERE job_id=j.id AND run_id=r.run_id) OR
-         EXISTS(SELECT 1 FROM seo_variable_review_rejections WHERE job_id=j.id AND run_id=r.run_id) OR EXISTS(SELECT 1 FROM seo_japanese_review_rejections WHERE job_id=j.id AND run_id=r.run_id)) AS review_rejected
+         EXISTS(SELECT 1 FROM seo_variable_review_rejections WHERE job_id=j.id AND run_id=r.run_id) OR EXISTS(SELECT 1 FROM seo_japanese_review_rejections WHERE job_id=j.id AND run_id=r.run_id) OR EXISTS(SELECT 1 FROM seo_scope_review_rejections WHERE job_id=j.id AND run_id=r.run_id)) AS review_rejected
       FROM seo_editorial_runs r
       LEFT JOIN seo_editorial_jobs j ON j.id=r.job_id AND j.run_id=r.run_id
       LEFT JOIN seo_budget_runs b ON b.id=r.budget_run_id
@@ -738,12 +748,11 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
   try {
     if (operation === "review-reject")
       return json(
-        await finalizeReviewRejection(
-          env,
-          job,
-          run,
-          await readJsonObject(request),
-        ),
+        await (
+          (await continuationRow(env, job.id))?.version === 3
+            ? finalizeScopedRejection
+            : finalizeReviewRejection
+        )(env, job, run, await readJsonObject(request)),
       );
     if (operation === "research-reject")
       return json(
@@ -824,19 +833,16 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
         Object.keys(body).join() !== "files"
       )
         throw new Error("state");
+      let inherited: Awaited<ReturnType<typeof loadContinuation>> = null;
       try {
-        const inherited = await loadContinuation(
-          env,
-          job.id,
-          run.deadline,
-          true,
-        );
+        inherited = await loadContinuation(env, job.id, run.deadline, true);
         if (
           inherited &&
           (JSON.stringify(body.files) !== JSON.stringify(inherited.final) ||
             JSON.stringify(originals) !== JSON.stringify(inherited.source))
         )
           throw Error("seo_check_files");
+        const inheritedStep = inherited?.step;
         const receipt = await reviewArticle(
           env,
           context,
@@ -844,11 +850,16 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
           originals,
           inherited
             ? inherited.source.map((f: EditorialFile) =>
-                f.path === job.article_path ? inherited.step : f,
+                f.path === job.article_path ? inheritedStep : f,
               )
             : await snapshot(env, job),
           body.files as EditorialFile[],
           inherited?.evidence,
+          inherited
+            ? inherited.continuationVersion === 3
+              ? 2
+              : 1
+            : await reviewScopeVersion(env, job.id),
         );
         return json({ status: "reviewed", receipt });
       } catch (error) {
@@ -859,7 +870,10 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
         )
           return json({
             status: "review_failed",
-            offerSha256: await prepareReviewRejection(env, job, run),
+            offerSha256:
+              inherited?.continuationVersion === 3
+                ? await prepareScopedRejection(env, job, run, inherited)
+                : await prepareReviewRejection(env, job, run),
           });
         throw error;
       }
@@ -1064,7 +1078,7 @@ async function claimJob(
       files,
       sourceHash,
       candidate.reason,
-      job,
+      { ...job, review_scope: await reviewScopeVersion(env, job.id) },
     );
     const monthJst = jstMonth(Date.now());
     const monthly =
@@ -1326,9 +1340,15 @@ export async function startReviewContinuation(env: AppEnv, input: unknown) {
     const now = Date.now();
     const manifestKey = `seo-editorial/${jobId}/continuation-manifest.json`;
     await immutableReviewObject(env, manifestKey, old.manifest);
-    const retryKey = `seo-editorial/${jobId}/continuation-retry.json`;
-    if (old.retry)
+    const retryKey = `seo-editorial/${jobId}/${old.scope ? "continuation-scope" : "continuation-retry"}.json`;
+    if (old.retry || old.scope)
       await immutableReviewObject(env, retryKey, old.registrationManifest);
+    if (old.scope)
+      await immutableReviewObject(
+        env,
+        `seo-editorial/${old.scope.previousJob.id}/review-rejection-v5.json`,
+        old.scope.rejected.receipt,
+      );
     const candidate = JSON.parse(old.run.candidates_json)[
       old.job.candidate_index
     ];
@@ -1371,15 +1391,31 @@ export async function startReviewContinuation(env: AppEnv, input: unknown) {
         old.job.article_key,
         now,
       ),
-      old.retry
+      ...(old.scope
+        ? [
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_review_scope_contracts(job_id,version) VALUES(?,2)",
+            ).bind(jobId),
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_scope_review_rejections(job_id,run_id,review_scope,receipt_sha256,receipt_json,created_at) VALUES(?,?,1,?,?,?)",
+            ).bind(
+              old.scope.previousJob.id,
+              v.oldRunId,
+              old.scope.rejected.rejectionSha256,
+              JSON.stringify(old.scope.rejected.receipt),
+              now,
+            ),
+          ]
+        : []),
+      old.scope
         ? env.CMS_AI_DB.prepare(
-            "INSERT INTO seo_review_continuation_retries(job_id,run_id,old_job_id,old_run_id,previous_job_id,previous_run_id,article_key,manifest_sha256,manifest_key,files_sha256,retry_sha256,retry_key,version,reasoning_effort,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,2,'low',?)",
+            "INSERT INTO seo_review_scope_reassessments(job_id,run_id,old_job_id,old_run_id,previous_job_id,previous_run_id,article_key,manifest_sha256,manifest_key,files_sha256,retry_sha256,retry_key,rejection_sha256,from_review_scope,to_review_scope,version,reasoning_effort,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,2,3,'low',?)",
           ).bind(
             jobId,
             v.runId,
             old.job.id,
             old.run.run_id,
-            old.retry.previousJob.id,
+            old.scope.previousJob.id,
             v.oldRunId,
             old.job.article_key,
             old.manifestSha256,
@@ -1387,21 +1423,40 @@ export async function startReviewContinuation(env: AppEnv, input: unknown) {
             old.manifest.filesSha256,
             old.registrationSha256,
             retryKey,
+            old.scope.rejected.rejectionSha256,
             now,
           )
-        : env.CMS_AI_DB.prepare(
-            "INSERT INTO seo_review_continuations(job_id,run_id,old_job_id,old_run_id,article_key,manifest_sha256,manifest_key,files_sha256,version,reasoning_effort,created_at) VALUES(?,?,?,?,?,?,?,?,1,'low',?)",
-          ).bind(
-            jobId,
-            v.runId,
-            old.job.id,
-            v.oldRunId,
-            old.job.article_key,
-            v.manifestSha256,
-            manifestKey,
-            old.manifest.filesSha256,
-            now,
-          ),
+        : old.retry
+          ? env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_review_continuation_retries(job_id,run_id,old_job_id,old_run_id,previous_job_id,previous_run_id,article_key,manifest_sha256,manifest_key,files_sha256,retry_sha256,retry_key,version,reasoning_effort,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,2,'low',?)",
+            ).bind(
+              jobId,
+              v.runId,
+              old.job.id,
+              old.run.run_id,
+              old.retry.previousJob.id,
+              v.oldRunId,
+              old.job.article_key,
+              old.manifestSha256,
+              manifestKey,
+              old.manifest.filesSha256,
+              old.registrationSha256,
+              retryKey,
+              now,
+            )
+          : env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_review_continuations(job_id,run_id,old_job_id,old_run_id,article_key,manifest_sha256,manifest_key,files_sha256,version,reasoning_effort,created_at) VALUES(?,?,?,?,?,?,?,?,1,'low',?)",
+            ).bind(
+              jobId,
+              v.runId,
+              old.job.id,
+              v.oldRunId,
+              old.job.article_key,
+              v.manifestSha256,
+              manifestKey,
+              old.manifest.filesSha256,
+              now,
+            ),
       ...[
         "seo_editorial_scope_contracts",
         "seo_plan_contracts",

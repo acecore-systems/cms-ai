@@ -1,4 +1,8 @@
 import {
+  validateScopedReview,
+  reviewScopeVersion,
+} from "./seo-review-scope.ts";
+import {
   loadSourceRecovery,
   recoveryDiscovery,
   recoveredReference,
@@ -39,6 +43,7 @@ export async function immutableReviewObject(
   return stored.hash;
 }
 export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
+  const reviewScope = await reviewScopeVersion(env, job.id);
   const split = job.retrieval_contract === 2;
   const variable = job.variable_review === 1;
   const japaneseOnly = job.editorial_scope === 2;
@@ -183,7 +188,9 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
         new Set(v.files.map((x: any) => x.path)).size !== count
       )
         return fail();
-      if (
+      if (reviewScope === 2) {
+        validateScopedReview(v, source.value, final.value);
+      } else if (
         v.files.some(
           (x: any) =>
             Object.keys(x).sort().join() !==
@@ -264,7 +271,7 @@ export async function prepareReviewRejection(env: AppEnv, job: any, run: any) {
 }
 export async function reviewRejectionRow(env: AppEnv, jobId: string) {
   return env.CMS_AI_DB.prepare(
-    "SELECT receipt_sha256,receipt_json FROM (SELECT * FROM seo_all_review_rejections UNION ALL SELECT * FROM seo_japanese_review_rejections) WHERE job_id=?",
+    "SELECT receipt_sha256,receipt_json FROM (SELECT * FROM seo_all_review_rejections UNION ALL SELECT * FROM seo_japanese_review_rejections UNION ALL SELECT job_id,run_id,receipt_sha256,receipt_json,created_at FROM seo_scope_review_rejections) WHERE job_id=?",
   )
     .bind(jobId)
     .first<{ receipt_sha256: string; receipt_json: string }>();

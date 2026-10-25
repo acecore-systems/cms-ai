@@ -272,7 +272,7 @@ describe("SEO action runtime", () => {
     expect(body).toContain("人の母語話者校閲は未実施");
   });
   it.each(
-    [1, 2].flatMap((version) =>
+    [1, 2, 3].flatMap((version) =>
       ["pass", "changed-hash", "review-unknown"].map(
         (kind) => [version, kind] as const,
       ),
@@ -320,6 +320,22 @@ describe("SEO action runtime", () => {
             evidence,
           };
         }
+        if (op === "review" && version === 3 && result.receipt)
+          result.receipt = {
+            ...result.receipt,
+            version: 2,
+            files: [
+              {
+                path: sourcePath,
+                baselineIssues: [
+                  {
+                    explanation:
+                      "既存課題 @everyone <script> [link](https://example.com)",
+                  },
+                ],
+              },
+            ],
+          };
         if (op === "review" && kind === "review-unknown")
           return { status: "unresolved" };
         return result;
@@ -333,6 +349,15 @@ describe("SEO action runtime", () => {
         kind === "pass",
       );
       expect(pushed).toBe(kind === "pass");
+      if (kind === "pass" && version === 3) {
+        const body = github.mock.calls.find(
+          ([, method]) => method === "POST",
+        )![2]!.body;
+        expect(body).toContain("既存課題（今回未修正）");
+        expect(body).toContain("＠everyone");
+        expect(body).not.toContain("<script>");
+        expect(body).not.toContain("[link](https://example.com)");
+      }
       if (kind === "pass")
         expect(request.mock.calls.find(([op]) => op === "publish")![1]).toEqual(
           { filesSha256: hash },
