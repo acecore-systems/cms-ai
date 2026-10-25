@@ -1,4 +1,5 @@
 import {
+  sameContinuationSource,
   continuationBudgetFits,
   continuationRow,
   continuationInput,
@@ -137,6 +138,10 @@ export const jobRow = (env: AppEnv, jobId: string) =>
     .first<EditorialJob>();
 const baseKey = (job: EditorialJob) => "seo-editorial/" + job.id;
 const diagnosticCodes = new Set([
+  "seo_continuation_source",
+  "seo_continuation_contract",
+  "seo_continuation_evidence",
+  "seo_continuation_claim",
   "seo_research_call",
   "seo_research_evidence",
   "seo_research_no_search",
@@ -1363,7 +1368,7 @@ async function claimReviewContinuation(
     body.generationOutput !== 2 ||
     Object.keys(body).sort().join() !==
       "baseSha,editorialScope,files,generationOutput,reviewContinuation" ||
-    JSON.stringify(body.files) !== JSON.stringify(data.source)
+    !sameContinuationSource(body.files, data.source)
   )
     throw Error("seo_continuation_source");
   const source = JSON.stringify(data.source);

@@ -24,6 +24,33 @@ import {
 function reject(): never {
   throw Error("seo_continuation_evidence");
 }
+// JSON property order is transport syntax, not article content. Keep the stored
+// bundle/manifest bytes unchanged and compare every exact path/content pair.
+export function sameContinuationSource(
+  value: unknown,
+  expected: { path: string; content: string }[],
+) {
+  if (!Array.isArray(value) || value.length !== expected.length) return false;
+  const byPath = new Map(expected.map((file) => [file.path, file.content]));
+  const seen = new Set<string>();
+  if (byPath.size !== expected.length) return false;
+  return value.every((file) => {
+    if (
+      !file ||
+      typeof file !== "object" ||
+      Array.isArray(file) ||
+      Object.keys(file).sort().join() !== "content,path" ||
+      typeof file.path !== "string" ||
+      typeof file.content !== "string" ||
+      seen.has(file.path) ||
+      !byPath.has(file.path) ||
+      byPath.get(file.path) !== file.content
+    )
+      return false;
+    seen.add(file.path);
+    return true;
+  });
+}
 const runId =
   /^(editorial|manual)-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export function continuationInput(input: any) {

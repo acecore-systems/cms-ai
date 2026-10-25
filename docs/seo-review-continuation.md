@@ -43,3 +43,11 @@ proof/startで実payloadの上限を見積もり、月残・10月26日留保・1
 0043の旧行/schema保持、SQLite/workerd D1 batch・immutability、low/high分離、runnerの固定hash→review→publishを回帰検証する。私的実fixtureは `SEO_CONTINUATION_REPLAY`（trial保存directory）と `SEO_CONTINUATION_EXTRA`（追加R2証跡directory）を指定して `tests/seo-review-continuation-replay.test.ts` で再現する。既存実証跡と模擬AI応答を使うローカル検証であり、実校閲passを意味しない。
 
 配備順は親担当でmigration0043→CMS merge/build→site runner pin更新→無課金proof/受付監査→専用continuation Workflow。実AI、DB/R2本番write、merge、配備、旧lock移管は実装担当から実行しない。実生成→新実校閲pass→自動Draftの受入は本番確認後に別途記録する。
+
+## claim の JSON キー順による誤拒否の修正
+
+保存 source は `{content,path}`、runner の読取結果は `{path,content}` となるため、JSON 文字列全体の比較は同一原稿でも claim を拒否していた。path ごとの厳密な content 一致へ変更し、全ファイルの件数・一意性・正確なキー集合も検査する。本文や guide の正規化・省略は行わず、保存 source と manifest の bytes/hash は維持する。
+
+固定診断コードのみを failure に残し、本文・例外メッセージは記録しない。既存の期限、予算、校閲、公開 gate は変更しない。自動再開 API や migration は追加していない。
+
+無課金の実資料 replay は `SEO_CONTINUATION_REPLAY` / `SEO_CONTINUATION_EXTRA` にローカル証拠、`SEO_CONTINUATION_SITE` に実サイト checkout を指定する。実 runner の collect → JSON HTTP claim →既存校閲・Draft gate を検証する。AI と GitHub/OIDC はテスト代替であり、実校閲成功や実 Draft 作成を示さない。私的 fixture はコミットしない。通常回帰は改変・欠落・重複・余分 field を拒否する。

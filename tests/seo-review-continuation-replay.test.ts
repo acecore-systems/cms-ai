@@ -1,10 +1,13 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { SeoRunner } from "../seo-runner/index.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { sha256 } from "../src/seo-hash.ts";
 import { it, expect, vi } from "vitest";
 import {
   inspectReviewContinuation,
+  sameContinuationSource,
   reviewContinuationProof,
 } from "../src/seo-review-continuation.ts";
 import { buildReviewRequest } from "../src/seo-checks.ts";
@@ -228,10 +231,38 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
           })
         ).status,
       ).toBe("stopped");
+      let wireFiles = data.source.map(({ path, content }: any) => ({
+        path,
+        content,
+      }));
+      let baseSha = "f".repeat(40);
+      if (process.env.SEO_CONTINUATION_SITE) {
+        const workspace = process.env.SEO_CONTINUATION_SITE;
+        const runner = new SeoRunner({ workspace, now: () => now });
+        runner.editorialScope = 2;
+        const tracked = execFileSync("git", ["ls-files", "-z"], {
+          cwd: workspace,
+          encoding: "utf8",
+        })
+          .split("\0")
+          .filter(Boolean);
+        const collected = await runner.collect(
+          JSON.parse(run.candidates_json)[old.candidate_index],
+          tracked,
+        );
+        expect(collected).not.toBeNull();
+        wireFiles = collected.files;
+        baseSha = execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: workspace,
+          encoding: "utf8",
+        }).trim();
+      }
+      expect(JSON.stringify(wireFiles)).not.toBe(JSON.stringify(data.source));
+      expect(sameContinuationSource(wireFiles, data.source)).toBe(true);
       mocks.identity = {
         site: identity.target.spec.site,
         runId: "999999",
-        workflowSha: "f".repeat(40),
+        workflowSha: baseSha,
       };
       const request = async (op = "", body?: any) => {
         const r = await handleSeoRunnerRequest(
@@ -250,8 +281,8 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
       };
       expect((await request()).policy.reviewContinuation).toBe(1);
       const claimed = await request("claim", {
-        baseSha: "f".repeat(40),
-        files: data.source,
+        baseSha,
+        files: wireFiles,
         editorialScope: 2,
         generationOutput: 2,
         reviewContinuation: 1,

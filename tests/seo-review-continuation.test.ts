@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, it, expect, vi } from "vitest";
 import { continuationFixture } from "./fixtures/seo-review-continuation.ts";
 import {
+  sameContinuationSource,
   reviewContinuationProof,
   inspectReviewContinuation,
 } from "../src/seo-review-continuation.ts";
@@ -81,7 +82,7 @@ async function claim() {
     (
       await request(id, "claim", {
         baseSha: "f".repeat(40),
-        files: f.files,
+        files: f.files.map(({ path, content }) => ({ path, content })),
         editorialScope: 2,
         generationOutput: 2,
         reviewContinuation: 1,
@@ -260,6 +261,13 @@ it.each([
             : {};
     expect((await request(id, op, body)).status).toBe("unresolved");
   }
+  if (kind === "changed-source") {
+    const failure = JSON.parse(
+      f.objects.get(`seo-editorial/${id}/failure.json`)!,
+    );
+    expect(failure.code).toBe("seo_continuation_source");
+    expect(JSON.stringify(failure)).not.toContain(files[0].content);
+  }
   expect(
     f.db
       .prepare("SELECT count(*) n FROM seo_model_calls WHERE job_id=?")
@@ -285,4 +293,18 @@ it("never dispatches twice or permits another new job for the same old work", as
     ).status,
   ).toBe("stopped");
   expect(mocks.dispatch).toHaveBeenCalledTimes(1);
+});
+
+it("compares all exact source/guide bytes independent of JSON key and array order", () => {
+  const wire = f.files.map(({ path, content }) => ({ path, content }));
+  expect(JSON.stringify(wire)).not.toBe(JSON.stringify(f.files));
+  expect(sameContinuationSource(wire, f.files)).toBe(true);
+  expect(sameContinuationSource([...wire].reverse(), f.files)).toBe(true);
+  for (const bad of [
+    wire.slice(1),
+    [wire[0], wire[0]],
+    wire.map((v, i) => (i ? { ...v, content: v.content + " " } : v)),
+    wire.map((v, i) => (i ? { ...v, extra: true } : v)),
+  ])
+    expect(sameContinuationSource(bad, f.files)).toBe(false);
 });
