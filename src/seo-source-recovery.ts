@@ -1,3 +1,4 @@
+import { SEO_SOURCE_RECOVERY_MS } from "./seo-time-bounds.ts";
 import type { AppEnv } from "./env.ts";
 import type { Discovery } from "./seo-discovery.ts";
 import { isNewExternalUrl } from "./seo-external-sources.ts";
@@ -11,7 +12,7 @@ export const SOURCE_RECOVERY_LIMITS = Object.freeze({
   parents: 3,
   bytes: 262144,
   totalBytes: 1048576,
-  ms: 10000,
+  ms: SEO_SOURCE_RECOVERY_MS,
   requestMs: 3000,
 });
 type Visit = {

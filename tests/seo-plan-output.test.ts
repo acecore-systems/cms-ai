@@ -1,3 +1,11 @@
+import {
+  SEO_LONG_TEXT_MS,
+  SEO_HOSTED_RESPONSE_MS,
+  SEO_SOURCE_RECOVERY_MS,
+  SEO_RESEARCH_OVERHEAD_MS,
+  SEO_RESEARCH_RPC_MS,
+} from "../src/seo-time-bounds.ts";
+import { SOURCE_RECOVERY_LIMITS } from "../src/seo-source-recovery.ts";
 import { readFileSync, readdirSync } from "node:fs";
 import * as miniflare from "miniflare";
 import { assertPlanOutputPreflight } from "../src/seo-plan-output.ts";
@@ -263,3 +271,18 @@ it("loads the generation contract from real D1 schema, preserves rows and reject
     await mf.dispose();
   }
 }, 30000);
+
+it("budgets the enclosing research RPC for every bounded stage plus normal overhead", () => {
+  expect(SEO_LONG_TEXT_MS).toBe(480000);
+  expect(SEO_HOSTED_RESPONSE_MS).toBe(120000);
+  expect(SOURCE_RECOVERY_LIMITS.ms).toBe(SEO_SOURCE_RECOVERY_MS);
+  expect(SEO_SOURCE_RECOVERY_MS).toBe(10000);
+  expect(SEO_RESEARCH_OVERHEAD_MS).toBe(80000);
+  expect(SEO_RESEARCH_RPC_MS).toBe(
+    SEO_LONG_TEXT_MS +
+      2 * SEO_HOSTED_RESPONSE_MS +
+      SOURCE_RECOVERY_LIMITS.ms +
+      SEO_RESEARCH_OVERHEAD_MS,
+  );
+  expect(SEO_RESEARCH_RPC_MS).toBe(810000);
+});

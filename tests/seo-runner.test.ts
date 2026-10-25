@@ -581,7 +581,7 @@ it.each([
   [1, "review", 150000],
   [2, "review", 510000],
   [1, "research", 150000],
-  [2, "research", 510000],
+  [2, "research", 810000],
 ])(
   "pins version %i %s RPC timeout and keeps the root deadline",
   async (version, operation, maximum) => {

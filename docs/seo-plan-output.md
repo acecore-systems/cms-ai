@@ -6,7 +6,7 @@ model_version=2のplan出力を6000から24000へ変更する。12000も比較�
 
 実request組立、planInputBytes、deepseekUpperCost、全工程fallbackMaximumを整合させる。入力32KB、通常run1.25 USD、10月14.60 USD、週次留保1.25 USD、元deadline、既存schemaは維持する。最大予約の増分は21,600 microUSD。旧6000前提の保存preflightは流用せず、plan課金前にjobへ結合したR2 preflightのhash・modelVersion・全工程最大・plan bytesを確認する。不一致は予約もAI呼出しも行わない。既存行や完了済みcheckは書き換えず、migrationは不要。
 
-SEO runnerの新editorialScope=2ではresearch RPCも510秒へ揃える。旧scopeは150秒のまま、いずれも元deadlineの残時間で制限する。research RPCはplan・discovery・researchを内包し、その合計が510秒を超える可能性は残る。期限延長や再送はしない。既存scope申告だけでは旧runnerの150秒実装を区別できないため、親担当は全対象サイトのrunner pin反映後にだけ新runを開始する。
+SEO runnerの新editorialScope=2ではresearch RPCを810秒へ揃える。plan480秒＋discovery120秒＋source recovery全体10秒＋research120秒＋保存・検証等の余裕80秒で、serverとrunnerが共通の上限定数を使う。review/proposeは510秒、旧scope researchは150秒のまま。いずれも元deadlineの残時間で制限し、合計分の時間が不足しても期限を延長しない。再送なし。既存scope申告だけでは旧runnerの150秒実装を区別できないため、親担当は全対象サイトのrunner pin反映後にだけ新runを開始する。
 
 length・空content・schema不正・usage不明・超過は引き続き拒否する。rawを保存し、失敗予約はunresolvedで保持し、自動再送や返金をしない。診断契約は拡張しない。
 

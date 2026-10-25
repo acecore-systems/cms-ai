@@ -1,3 +1,4 @@
+import { SEO_RESEARCH_RPC_MS } from "../src/seo-time-bounds.ts";
 import { hasPendingSeoRevision } from "../src/seo-translation-pending.ts";
 import { evidenceReferences, referenceUrl } from "../src/seo-evidence.ts";
 import { execFile } from "node:child_process";
@@ -134,13 +135,14 @@ export class SeoRunner {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(
           Math.min(
-            (operation === "propose" && this.generationOutput === 2) ||
-              (["research", "review"].includes(operation) &&
-                this.editorialScope === 2)
-              ? 510_000
-              : ["propose", "research", "review"].includes(operation)
-                ? 150_000
-                : 30_000,
+            operation === "research" && this.editorialScope === 2
+              ? SEO_RESEARCH_RPC_MS
+              : (operation === "propose" && this.generationOutput === 2) ||
+                  (operation === "review" && this.editorialScope === 2)
+                ? 510_000
+                : ["propose", "research", "review"].includes(operation)
+                  ? 150_000
+                  : 30_000,
             this.remaining(report),
           ),
         ),

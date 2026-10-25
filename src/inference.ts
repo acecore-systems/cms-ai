@@ -1,3 +1,4 @@
+import { SEO_LONG_TEXT_MS } from "./seo-time-bounds.ts";
 import {
   deepseekPayload,
   deepseekUpperCost,
@@ -672,7 +673,7 @@ export async function runTextModel(
               // generation. The token reservation and root deadline stay fixed.
               input.max_completion_tokens === 48000 ||
                 input.max_completion_tokens === 24000
-                ? 480000
+                ? SEO_LONG_TEXT_MS
                 : 120000,
               requestDeadline! - Date.now(),
             ),
