@@ -3,7 +3,11 @@ import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppEnv } from "../src/env.ts";
-import { dispatchCmsAiJob, seoRepositoryReader } from "../src/github.ts";
+import {
+  dispatchCmsAiJob,
+  seoRepositoryReader,
+  seoPublicationAbsent,
+} from "../src/github.ts";
 import type { Job } from "../src/models.ts";
 import { getSiteById } from "../src/sites.ts";
 
@@ -115,6 +119,56 @@ describe("SEO authenticated public repository reader", () => {
   const site = getSiteById("homepage-hatt")!;
   const url =
     "https://api.github.com/repos/acecore-systems/homepage-hatt/commits/main";
+  it("checks current refs and all-state PRs with read-only credentials, rejecting nonempty, unknown and paginated results", async () => {
+    const job = "11111111-1111-4111-8111-111111111111";
+    for (const kind of ["empty", "ref", "closed-pr", "unknown", "pages"]) {
+      const requests: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const current = String(input);
+          if (current.endsWith("/access_tokens")) {
+            expect(JSON.parse(String(init?.body)).permissions).toEqual({
+              contents: "read",
+              pull_requests: "read",
+            });
+            return Response.json({
+              token: "fixture",
+              permissions: { contents: "read", pull_requests: "read" },
+            });
+          }
+          requests.push(current);
+          expect(init?.method).toBe("GET");
+          const refs = current.includes("matching-refs");
+          expect(
+            refs
+              ? current.endsWith("/git/matching-refs/heads/codex/seo-" + job)
+              : new URL(current).searchParams.get("state") === "all",
+          ).toBe(true);
+          return Response.json(
+            kind === "unknown"
+              ? {}
+              : (kind === "ref" && refs) || (kind === "closed-pr" && !refs)
+                ? [{ state: "closed" }]
+                : [],
+            {
+              headers: {
+                "x-ratelimit-limit": "5000",
+                "x-ratelimit-remaining": "4900",
+                ...(kind === "pages"
+                  ? { link: '<https://api.github.com/next>; rel="next"' }
+                  : {}),
+              },
+            },
+          );
+        }),
+      );
+      expect(
+        await seoPublicationAbsent(env, site, job, Date.now() + 60000),
+      ).toBe(kind === "empty");
+      expect(requests.length).toBeLessThanOrEqual(2);
+    }
+  });
   function mock(status = 200, remaining = "4900", limit = "5000") {
     const fn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).endsWith("/access_tokens")) {

@@ -106,6 +106,7 @@ beforeEach(async () => {
     "0038_seo_japanese_editorial.sql",
     "0039_seo_october_budget_1360.sql",
     "0040_seo_october_budget_1460.sql",
+    "0041_seo_research_focus.sql",
   ])
     sql.exec(
       readFileSync(
@@ -3241,6 +3242,13 @@ describe("new DeepSeek job profile", () => {
       .prepare("SELECT * FROM seo_job_models WHERE job_id=?")
       .get(jobId)!;
     expect(pin.text_model).toBe(model);
+    expect(
+      sql
+        .prepare(
+          "SELECT version FROM seo_research_focus_contracts WHERE job_id=?",
+        )
+        .get(jobId)!.version,
+    ).toBe(2);
     expect(
       sql
         .prepare("SELECT version FROM seo_plan_contracts WHERE job_id=?")

@@ -49,6 +49,7 @@ it("real Service Binding re-entry observes claiming before proof and returns bef
     bundle: true,
     write: false,
     platform: "browser",
+    conditions: ["workerd"],
     format: "esm",
     external: ["cloudflare:workers"],
     plugins: [
@@ -57,7 +58,7 @@ it("real Service Binding re-entry observes claiming before proof and returns bef
         setup(b) {
           b.onLoad({ filter: /[\\/]github\.ts$/ }, () => ({
             contents:
-              "export async function seoWorkflowCompleted(){return true}",
+              "export async function seoWorkflowCompleted(){return true} export async function seoPublicationAbsent(){return true}",
             loader: "ts",
           }));
         },

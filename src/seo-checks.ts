@@ -68,6 +68,7 @@ export type CheckContext = {
   sourceRecovery?: 1 | 2;
   modelVersion?: 1 | 2;
   planInstructions?: 1 | 2;
+  researchFocus?: 1 | 2;
   jobId: string;
   runId: string;
   budgetRunId: string;
@@ -506,9 +507,18 @@ export function buildRetrievalRequest(
   discovery: Discovery,
   researchContext: "low" | "high" = "low",
   urlInstructions = 1,
+  researchFocus: 1 | 2 = 1,
 ) {
+  if (![1, 2].includes(researchFocus)) throw new Error("seo_research_focus");
+  if (researchFocus === 2 && discovery.version !== 5)
+    throw new Error("seo_research_focus");
   if (discovery.version === 5)
-    return buildRecoveryRetrievalRequest(focused, discovery, urlInstructions);
+    return buildRecoveryRetrievalRequest(
+      focused,
+      discovery,
+      urlInstructions,
+      researchFocus,
+    );
   if (!discovery.selectedUrl) throw new Error("seo_research_insufficient");
   if (!["low", "high"].includes(researchContext))
     throw new Error("seo_research_bound");
@@ -740,6 +750,7 @@ export async function researchArticle(
           ...(context.sourceRecovery === 2 ? { sourceRecovery: 2 } : {}),
           ...(context.urlInstructions === 2 ? { urlInstructions: 2 } : {}),
           ...(context.recovery === 2 ? { recovery: 2 } : {}),
+          ...(context.researchFocus === 2 ? { researchFocus: 2 } : {}),
           ...(context.researchContext === "high"
             ? { researchContext: "high" }
             : {}),
@@ -763,6 +774,7 @@ export async function researchArticle(
             retrieval,
             context.researchContext,
             context.urlInstructions,
+            context.researchFocus,
           )
         : buildSearchRequest(focused);
       const response = await seoResponse(env, {

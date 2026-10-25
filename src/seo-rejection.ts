@@ -21,7 +21,7 @@ async function read(env: AppEnv, path: string) {
   const raw = await object.text();
   return { value: JSON.parse(raw), hash: await sha256(raw), raw };
 }
-export async function prepareRejection(
+export async function verifyRejectionEvidence(
   env: AppEnv,
   context: CheckContext,
   source: string,
@@ -245,6 +245,14 @@ export async function prepareRejection(
     deadline: context.deadline,
     calls,
   };
+  return offer;
+}
+export async function prepareRejection(
+  env: AppEnv,
+  context: CheckContext,
+  source: string,
+) {
+  const offer = await verifyRejectionEvidence(env, context, source);
   const raw = JSON.stringify(offer),
     hash = await sha256(raw),
     path = key(context.jobId, "rejection-offer");
