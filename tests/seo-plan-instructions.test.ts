@@ -196,3 +196,47 @@ it("0033 leaves every old table row and schema definition untouched and cannot r
     db.close();
   }
 });
+
+it("keeps a compound event sentence exact and does not accept a weaker timing paraphrase", () => {
+  const quote =
+    "Navigatorの画面遷移を使う場合は、初期ロードだけでなく `page:ready` でも初期化します。";
+  const content = "---\ntitle: Synthetic events\n---\n" + quote + "\n";
+  const scope = externalScope("acecore-systems", {
+    path: "src/content/insights/example.md",
+    content,
+  });
+  const request = buildPlanRequest(content, 2, 5, scope, 2, 2);
+  expect(request.instructions).toContain(
+    "製品仕様とローカルな来歴・導入状況を一つの主張へ合成しない",
+  );
+  expect(request.instructions).toContain("容易な一節だけに縮めない");
+  expect(request.instructions).toContain("具体的な文書節");
+  const answer = {
+    verdict: "ready",
+    claimId: "claim-1",
+    targetQuote: quote,
+    conditions: [quote],
+    anchors: ["Navigator"],
+    queries: ["Navigator page:ready initial load navigation"],
+  };
+  const plan = parsePlan(answer, content, "a".repeat(64), 2, 2);
+  expect(plan.target?.quote).toBe(quote);
+  for (const targetQuote of [
+    "Navigatorのpage:readyは初期ロードでも発火します。",
+    "`page:ready` でも初期化します。",
+  ])
+    expect(() =>
+      parsePlan(
+        { ...answer, targetQuote, conditions: [targetQuote] },
+        content,
+        "a".repeat(64),
+        2,
+        2,
+      ),
+    ).toThrow();
+  const changed = structuredClone(plan);
+  changed.requiredConditions = [
+    { start: 0, end: 13, quote: "初期ロードで発火します。" },
+  ];
+  expect(() => focusedInput(content, "a".repeat(64), changed)).toThrow();
+});

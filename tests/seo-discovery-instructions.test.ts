@@ -187,3 +187,62 @@ it("0023 preserves every old table row, column and trigger and defaults old jobs
   ).toBe(2);
   db.close();
 });
+
+it("asks for a content-specific primary candidate rather than trusting a brand homepage", async () => {
+  const f = await fixture();
+  const request = buildDiscoveryRequest(f.focused, 5, f.scope, 2, 2, 2);
+  expect(request.instructions).toContain(
+    "concrete documentation page covering the required feature/section over a generic brand homepage",
+  );
+  expect(request.instructions).toContain(
+    "publisher/project ownership or documentation linkage",
+  );
+  expect(request.instructions).toContain(
+    "not a product-like domain name or 'official' label alone",
+  );
+  expect(request.instructions).toContain(
+    "if authority is unknown, return insufficient",
+  );
+  expect(request.instructions).toContain(
+    "do not invent a deeper path or append a section fragment",
+  );
+  const homepage = "https://example.org/";
+  f.response.output[0].action!.sources!.unshift({ type: "url", url: homepage });
+  const message = f.response.output[1].content![0];
+  const parse = () =>
+    parseDiscovery(
+      f.response,
+      f.source.content,
+      f.plan,
+      JSON.stringify(f.response),
+      5,
+      f.scope,
+      2,
+    );
+  message.text = JSON.stringify({
+    verdict: "selected",
+    selectedUrl: f.url,
+    fallbackUrl: null,
+    reason:
+      "Synthetic publisher-owned repository documentation; scoring section is relevant. Brand homepage alone does not establish authority or full relevance.",
+  });
+  expect((await parse()).selectedUrl).toBe(f.url);
+  // A model's unknown-authority verdict is never upgraded by domain branding.
+  message.text = JSON.stringify({
+    verdict: "insufficient",
+    selectedUrl: null,
+    fallbackUrl: null,
+    reason:
+      "Only a brand-like homepage remains; publisher authority is unknown.",
+  });
+  await expect(parse()).rejects.toThrow("seo_research_insufficient");
+  for (const unseen of [f.url + "#scoring", f.url + "/details"]) {
+    message.text = JSON.stringify({
+      verdict: "selected",
+      selectedUrl: unseen,
+      fallbackUrl: null,
+      reason: "Invented section location",
+    });
+    await expect(parse()).rejects.toThrow();
+  }
+});
