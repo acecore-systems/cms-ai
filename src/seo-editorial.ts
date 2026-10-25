@@ -76,6 +76,7 @@ type EditorialJob = {
   generation_output: 1 | 2;
   plan_instructions: 1 | 2;
   research_focus: 1 | 2;
+  retrieval_fallback: 1 | 2;
   id: string;
   run_id: string;
   site_id: string;
@@ -123,7 +124,7 @@ const runRow = (env: AppEnv, runId: string) =>
     .first<Run>();
 const jobRow = (env: AppEnv, jobId: string) =>
   env.CMS_AI_DB.prepare(
-    "SELECT j.*,COALESCE(e.version,1) AS editorial_scope,COALESCE(m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(g.version,1) AS generation_output,COALESCE(s.version,1) AS source_recovery,COALESCE(f.version,1) AS research_focus FROM seo_editorial_jobs j LEFT JOIN seo_editorial_scope_contracts e ON e.job_id=j.id LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id WHERE j.id=?",
+    "SELECT j.*,COALESCE(e.version,1) AS editorial_scope,COALESCE(m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(g.version,1) AS generation_output,COALESCE(s.version,1) AS source_recovery,COALESCE(f.version,1) AS research_focus,COALESCE(rf.version,1) AS retrieval_fallback FROM seo_editorial_jobs j LEFT JOIN seo_editorial_scope_contracts e ON e.job_id=j.id LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id LEFT JOIN seo_retrieval_fallback_contracts rf ON rf.job_id=j.id WHERE j.id=?",
   )
     .bind(jobId)
     .first<EditorialJob>();
@@ -367,6 +368,9 @@ async function advance(env: AppEnv, runId: string) {
         ? [
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_source_recovery_contracts(job_id,version) SELECT ?,2 WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+            ).bind(jobId, runId, run.candidate_index),
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_retrieval_fallback_contracts(job_id,version) SELECT ?,2 WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
             ).bind(jobId, runId, run.candidate_index),
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_research_focus_contracts(job_id,version) SELECT ?,2 WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
@@ -1135,6 +1139,7 @@ function checkContext(job: EditorialJob, run: Run): CheckContext {
     editorialScope: job.editorial_scope,
     planInstructions: job.plan_instructions,
     researchFocus: job.research_focus,
+    retrievalFallback: job.retrieval_fallback,
     sourceRecovery: job.source_recovery,
     jobId: job.id,
     runId: run.run_id,

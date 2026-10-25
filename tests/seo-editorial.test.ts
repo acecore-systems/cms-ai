@@ -107,6 +107,7 @@ beforeEach(async () => {
     "0039_seo_october_budget_1360.sql",
     "0040_seo_october_budget_1460.sql",
     "0041_seo_research_focus.sql",
+    "0042_seo_retrieval_fallback.sql",
   ])
     sql.exec(
       readFileSync(
@@ -3257,6 +3258,13 @@ describe("new DeepSeek job profile", () => {
     const preflight = JSON.parse(
       objects.get("seo-editorial/" + jobId + "/eligibility-preflight.json")!,
     );
+    expect(
+      sql
+        .prepare(
+          "SELECT version FROM seo_retrieval_fallback_contracts WHERE job_id=?",
+        )
+        .get(jobId)!.version,
+    ).toBe(2);
     expect(preflight.planInstructions).toBe(2);
     const offer = await request(jobId, "research", {});
     expect(offer.status).toBe("research_insufficient");

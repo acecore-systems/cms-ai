@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { sha256 } from "../src/seo-hash.ts";
 import { parsePlan, focusedInput } from "../src/seo-research-plan.ts";
-import { parseDiscovery } from "../src/seo-discovery.ts";
+import { parseDiscovery, buildDiscoveryRequest } from "../src/seo-discovery.ts";
 import { externalScope } from "../src/seo-external-sources.ts";
 import { buildRetrievalRequest, parseResearch } from "../src/seo-checks.ts";
 import { reconsiderationProof } from "../src/seo-reconsideration.ts";
@@ -107,7 +107,7 @@ beforeEach(async () => {
   db.exec(`CREATE TABLE seo_editorial_jobs(id,run_id,site_id,github_run_id,base_sha,source_sha256,article_key,article_path,status,generation_started,publication_started,next_step,call_id,callback_recorded,claim_recorded,research_contract,retrieval_contract,research_recovery,reference_policy);
 CREATE TABLE seo_editorial_runs(run_id,job_id,article_key,status,pr_url,deadline,budget_run_id);
 CREATE TABLE seo_research_rejections(job_id,run_id,receipt_sha256,receipt_json);
-CREATE TABLE seo_plan_contracts(job_id,version); CREATE TABLE seo_research_focus_contracts(job_id,version);
+CREATE TABLE seo_plan_contracts(job_id,version); CREATE TABLE seo_research_focus_contracts(job_id,version); CREATE TABLE seo_retrieval_fallback_contracts(job_id,version);
 CREATE TABLE seo_source_recovery_contracts(job_id,version);
 CREATE TABLE seo_all_checks(job_id,phase,call_id,input_sha256,status,result_sha256);
 CREATE TABLE seo_budget_calls(id,run_id,status,request_sha256);
@@ -279,6 +279,158 @@ CREATE TABLE seo_model_calls(call_id,job_id,phase,request_sha256,budget_run_id);
 });
 afterEach(() => db.close());
 const input = { runId: "old", articleKey: article };
+async function resealResponse(index: number, value: any) {
+  const raw = JSON.stringify(value);
+  objects.set("seo-responses/seo-call-" + index + ".json", raw);
+  const receipt = JSON.parse(objects.get(key("rejection"))!);
+  receipt.calls[index].responseSha256 = await sha256(raw);
+  const saved = JSON.stringify(receipt);
+  objects.set(key("rejection"), saved);
+  db.prepare(
+    "UPDATE seo_research_rejections SET receipt_json=?,receipt_sha256=?",
+  ).run(saved, await sha256(saved));
+}
+async function availabilityFixture() {
+  db.prepare("INSERT INTO seo_research_focus_contracts VALUES(?,2)").run(job);
+  db.exec("INSERT INTO seo_retrieval_fallback_contracts VALUES('new-job',2)");
+  rejected.output.at(-1).content[0].text =
+    "No page body was retrieved.\n```json\n" +
+    JSON.stringify({
+      verdict: "insufficient",
+      sources: [],
+      retrieval: [{ url, outcome: "unavailable" }],
+    }) +
+    "\n```";
+  await resealResponse(2, rejected);
+}
+it("proves availability retry only for old focus2/fallback1 and an exact new fallback2 job", async () => {
+  await availabilityFixture();
+  const before = db.prepare("SELECT * FROM seo_editorial_jobs").all(),
+    stored = [...objects];
+  const proof = await reconsiderationProof(env, input);
+  expect(proof).toEqual({
+    status: "eligible",
+    version: 3,
+    fromRetrievalFallback: 1,
+    toRetrievalFallback: 2,
+    runId: "old",
+    articleKey: article,
+    sourceSha256: hash,
+    receiptSha256: await sha256(objects.get(key("rejection"))!),
+  });
+  expect(
+    await reconsiderationProof(env, { ...input, newRunId: "new" }),
+  ).toEqual({ ...proof, newRunId: "new" });
+  expect(db.prepare("SELECT * FROM seo_editorial_jobs").all()).toEqual(before);
+  expect([...objects]).toEqual(stored);
+  expect(() =>
+    parseResearch(rejected, source, hash, Date.now(), plan, discovery),
+  ).toThrow("seo_research_insufficient");
+});
+it.each([
+  "INSERT INTO seo_retrieval_fallback_contracts VALUES('" + job + "',2)",
+  "DELETE FROM seo_retrieval_fallback_contracts WHERE job_id='new-job'",
+  "DELETE FROM seo_research_focus_contracts WHERE job_id='new-job'",
+  "UPDATE seo_budget_calls SET status='unresolved' WHERE id='seo-call-2'",
+  "UPDATE seo_editorial_jobs SET publication_started=1 WHERE run_id='old'",
+  "UPDATE seo_editorial_jobs SET generation_started=1 WHERE run_id='old'",
+  "UPDATE seo_editorial_jobs SET source_sha256='changed' WHERE run_id='new'",
+])("denies unsafe availability retry: %s", async (q) => {
+  await availabilityFixture();
+  db.exec(q);
+  expect(
+    await reconsiderationProof(env, { ...input, newRunId: "new" }),
+  ).toEqual({ status: "denied" });
+});
+it.each([
+  "retrieved",
+  "sources",
+  "wrong-url",
+  "missing-open",
+  "search",
+  "extra-open",
+])(
+  "rejects %s even when receipt hashes match the saved insufficient response",
+  async (kind) => {
+    await availabilityFixture();
+    const result = structuredClone(rejected),
+      part = result.output.at(-1).content[0],
+      value = JSON.parse(part.text.split("```json\n")[1].split("\n```")[0]);
+    if (kind === "retrieved") value.retrieval[0].outcome = "retrieved";
+    if (kind === "sources")
+      value.sources = [
+        {
+          url,
+          title: "Primary",
+          claimId: plan.claimId,
+          excerpt: "The retrieved page might explain the documented feature.",
+          assessment: "unverified",
+        },
+      ];
+    if (kind === "wrong-url")
+      value.retrieval[0].url = "https://docs.example.org/other";
+    if (kind === "missing-open") result.output.shift();
+    if (kind === "search")
+      result.output[0].action = { type: "search", queries: plan.queries };
+    if (kind === "extra-open")
+      result.output.unshift(structuredClone(result.output[0]));
+    part.text = "Unverified.\n```json\n" + JSON.stringify(value) + "\n```";
+    await resealResponse(2, result);
+    expect(await reconsiderationProof(env, input)).toEqual({
+      status: "denied",
+    });
+  },
+);
+it("rejects a valid saved discovery that already selected a fallback", async () => {
+  await availabilityFixture();
+  const raw = JSON.parse(objects.get("seo-responses/seo-call-1.json")!),
+    other = "https://docs.example.org/alternative";
+  raw.output[0].action.sources.push({ type: "url", url: other });
+  const selection = JSON.parse(raw.output.at(-1).content[0].text);
+  selection.fallbackUrl = other;
+  raw.output.at(-1).content[0].text = JSON.stringify(selection);
+  const next = await parseDiscovery(
+      raw,
+      source,
+      plan,
+      JSON.stringify(raw),
+      5,
+      externalScope(site, { path, content: source }),
+      2,
+    ),
+    saved = JSON.stringify(next);
+  objects.set(key("discovery"), saved);
+  db.prepare(
+    "UPDATE seo_all_checks SET result_sha256=? WHERE phase='discovery'",
+  ).run(await sha256(saved));
+  await resealResponse(1, raw);
+  expect(await reconsiderationProof(env, input)).toEqual({ status: "denied" });
+});
+it("versions fallback selection instructions without changing exact input, search count or null fallback acceptance", async () => {
+  const focused = focusedInput(source, hash, plan),
+    scope = externalScope(site, { path, content: source });
+  const old = buildDiscoveryRequest(focused, 5, scope, 2, 2, 2),
+    next = buildDiscoveryRequest(focused, 5, scope, 2, 2, 2, 2);
+  expect(old).toEqual(buildDiscoveryRequest(focused, 5, scope, 2, 2, 2, 1));
+  expect(old.input).toEqual(next.input);
+  expect(next.max_tool_calls).toBe(1);
+  expect(next.instructions).toContain(
+    "Actively secure an availability fallback",
+  );
+  expect(next.instructions).toContain(
+    "Null fallback is valid when only one suitable page exists",
+  );
+  expect(next.instructions).toContain(
+    "archived-version, preview, mirror or partial-support",
+  );
+  expect(next.instructions).toContain(
+    "retrieved-but-insufficient or contradictory content must still stop",
+  );
+  expect(discovery.fallbackUrl).toBeNull();
+  expect(() => buildDiscoveryRequest(focused, 4, scope, 2, 2, 1, 2)).toThrow(
+    "seo_retrieval_fallback",
+  );
+});
 it("retains the exact proof under delayed R2 reads with bounded concurrency and one fetch per object", async () => {
   const original = env.CMS_AI_IMAGES.get.bind(env.CMS_AI_IMAGES),
     calls = new Map<string, number>(),
@@ -339,55 +491,60 @@ it("returns exact focus2 proof shape after unchanged SQL, R2 and completed-call 
   expect([...objects]).toEqual(stored);
   expect(github.absent).toHaveBeenCalled();
 });
-it("executes the complete proof SQL against workerd D1 without writes", async () => {
-  const options = {
-    modules: true,
-    script: "export default {fetch(){return new Response(null)}}",
-    compatibilityDate: "2026-09-01",
-    d1Databases: ["DB"],
-  };
-  const convert = (miniflare as any).convertV4MiniflareOptions;
-  const mf = new miniflare.Miniflare(convert ? convert(options) : options);
-  try {
-    const d1 = await mf.getD1Database("DB"),
-      tables = db
-        .prepare("SELECT name,sql FROM sqlite_master WHERE type='table'")
-        .all() as any[];
-    for (const table of tables) {
-      await d1.exec(table.sql);
-      for (const row of db.prepare("SELECT * FROM " + table.name).all()) {
-        const values = Object.values(row);
-        await d1
-          .prepare(
-            `INSERT INTO ${table.name} VALUES(${values.map(() => "?").join(",")})`,
-          )
-          .bind(...values)
-          .run();
+it.each([2, 3])(
+  "executes proof %s SQL against workerd D1 without writes",
+  async (version) => {
+    if (version === 3) await availabilityFixture();
+    const options = {
+      modules: true,
+      script: "export default {fetch(){return new Response(null)}}",
+      compatibilityDate: "2026-09-01",
+      d1Databases: ["DB"],
+    };
+    const convert = (miniflare as any).convertV4MiniflareOptions;
+    const mf = new miniflare.Miniflare(convert ? convert(options) : options);
+    try {
+      const d1 = await mf.getD1Database("DB"),
+        tables = db
+          .prepare("SELECT name,sql FROM sqlite_master WHERE type='table'")
+          .all() as any[];
+      for (const table of tables) {
+        await d1.exec(table.sql);
+        for (const row of db.prepare("SELECT * FROM " + table.name).all()) {
+          const values = Object.values(row);
+          await d1
+            .prepare(
+              `INSERT INTO ${table.name} VALUES(${values.map(() => "?").join(",")})`,
+            )
+            .bind(...values)
+            .run();
+        }
       }
+      const local = { ...env, CMS_AI_DB: d1 } as AppEnv;
+      expect(
+        await reconsiderationProof(local, { ...input, newRunId: "new" }),
+      ).toMatchObject({ status: "eligible", version });
+      await d1
+        .prepare(
+          "UPDATE seo_budget_calls SET status='unresolved' WHERE id='seo-call-2'",
+        )
+        .run();
+      expect(await reconsiderationProof(local, input)).toEqual({
+        status: "denied",
+      });
+      expect(
+        (
+          await d1
+            .prepare("SELECT status FROM seo_editorial_jobs WHERE run_id='old'")
+            .first()
+        )?.status,
+      ).toBe("unresolved");
+    } finally {
+      await mf.dispose();
     }
-    const local = { ...env, CMS_AI_DB: d1 } as AppEnv;
-    expect(
-      await reconsiderationProof(local, { ...input, newRunId: "new" }),
-    ).toMatchObject({ status: "eligible", version: 2 });
-    await d1
-      .prepare(
-        "UPDATE seo_budget_calls SET status='unresolved' WHERE id='seo-call-2'",
-      )
-      .run();
-    expect(await reconsiderationProof(local, input)).toEqual({
-      status: "denied",
-    });
-    expect(
-      (
-        await d1
-          .prepare("SELECT status FROM seo_editorial_jobs WHERE run_id='old'")
-          .first()
-      )?.status,
-    ).toBe("unresolved");
-  } finally {
-    await mf.dispose();
-  }
-}, 30000);
+  },
+  30000,
+);
 it.each([
   "UPDATE seo_budget_calls SET status='unresolved' WHERE id='seo-call-2'",
   "UPDATE seo_model_calls SET request_sha256='changed' WHERE phase='research'",

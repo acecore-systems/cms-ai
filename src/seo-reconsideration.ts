@@ -1,3 +1,4 @@
+import { verifyAvailabilityReconsideration } from "./seo-availability-reconsideration.ts";
 import { verifyFocusReconsideration } from "./seo-research-focus.ts";
 import { proofObjects } from "./seo-proof-objects.ts";
 import type { AppEnv } from "./env.ts";
@@ -59,10 +60,10 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
     deadline = Math.min(Date.now() + 15000, v.deadline ?? Infinity);
     enter("old-row");
     const row = await env.CMS_AI_DB.prepare(
-      `SELECT j.*,r.deadline AS run_deadline,r.budget_run_id,COALESCE(p.version,1) AS plan_version,COALESCE(f.version,1) AS research_focus,x.receipt_sha256,x.receipt_json FROM seo_editorial_jobs j
+      `SELECT j.*,r.deadline AS run_deadline,r.budget_run_id,COALESCE(p.version,1) AS plan_version,COALESCE(f.version,1) AS research_focus,COALESCE(rf.version,1) AS retrieval_fallback,x.receipt_sha256,x.receipt_json FROM seo_editorial_jobs j
    JOIN seo_editorial_runs r ON r.run_id=j.run_id AND r.job_id=j.id JOIN seo_research_rejections x ON x.job_id=j.id AND x.run_id=r.run_id
-   LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id WHERE r.run_id=? AND j.article_key=? AND r.article_key=j.article_key
-   AND (COALESCE(p.version,1)=1 OR (p.version=2 AND COALESCE(f.version,1)=1)) AND j.status='unresolved' AND r.status='unresolved' AND r.pr_url IS NULL
+   LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id LEFT JOIN seo_retrieval_fallback_contracts rf ON rf.job_id=j.id WHERE r.run_id=? AND j.article_key=? AND r.article_key=j.article_key
+   AND (COALESCE(p.version,1)=1 OR (p.version=2 AND (COALESCE(f.version,1)=1 OR (f.version=2 AND COALESCE(rf.version,1)=1)))) AND j.status='unresolved' AND r.status='unresolved' AND r.pr_url IS NULL
    AND j.generation_started=0 AND j.publication_started=0 AND j.next_step=0 AND j.call_id IS NULL AND j.callback_recorded=1
    AND NOT EXISTS(SELECT 1 FROM seo_editorial_jobs k WHERE k.run_id=r.run_id AND k.status NOT IN ('unresolved','ineligible'))`,
     )
@@ -96,10 +97,13 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
     if (!saved || (await saved.text()) !== row.receipt_json || generation)
       return reject();
     const focusUpgrade = row.plan_version === 2;
-    enter("focus-evidence");
+    const availabilityUpgrade = focusUpgrade && row.research_focus === 2;
+    enter(availabilityUpgrade ? "availability-evidence" : "focus-evidence");
     if (
       focusUpgrade &&
-      !(await verifyFocusReconsideration(env, row, receipt, objects))
+      !(await (availabilityUpgrade
+        ? verifyAvailabilityReconsideration(env, row, receipt, objects)
+        : verifyFocusReconsideration(env, row, receipt, objects)))
     )
       return reject();
     if (Date.now() >= deadline) return reject("deadline");
@@ -107,14 +111,15 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
     if (v.newRunId !== undefined) {
       if (v.newRunId === v.runId) return reject();
       const fresh = await env.CMS_AI_DB.prepare(
-        `SELECT j.id,r.deadline FROM seo_editorial_jobs j JOIN seo_editorial_runs r ON r.run_id=j.run_id AND r.job_id=j.id JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id
+        `SELECT j.id,r.deadline FROM seo_editorial_jobs j JOIN seo_editorial_runs r ON r.run_id=j.run_id AND r.job_id=j.id JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id LEFT JOIN seo_retrieval_fallback_contracts rf ON rf.job_id=j.id
     WHERE r.run_id=? AND r.status='pending' AND r.deadline>? AND j.status='claiming' AND p.version=2
-    AND (?=0 OR f.version=2) AND j.article_key=? AND j.source_sha256=? AND j.claim_recorded=0 AND j.generation_started=0 AND j.publication_started=0`,
+    AND (?=0 OR f.version=2) AND (?=0 OR rf.version=2) AND j.article_key=? AND j.source_sha256=? AND j.claim_recorded=0 AND j.generation_started=0 AND j.publication_started=0`,
       )
         .bind(
           v.newRunId,
           Date.now(),
           focusUpgrade ? 1 : 0,
+          availabilityUpgrade ? 1 : 0,
           v.articleKey,
           row.source_sha256,
         )
@@ -146,9 +151,11 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
     report("eligible", "complete");
     return {
       status: "eligible" as const,
-      ...(focusUpgrade
-        ? { version: 2, fromResearchFocus: 1, toResearchFocus: 2 }
-        : { version: 1, fromPlan: 1, toPlan: 2 }),
+      ...(availabilityUpgrade
+        ? { version: 3, fromRetrievalFallback: 1, toRetrievalFallback: 2 }
+        : focusUpgrade
+          ? { version: 2, fromResearchFocus: 1, toResearchFocus: 2 }
+          : { version: 1, fromPlan: 1, toPlan: 2 }),
       runId: v.runId,
       articleKey: v.articleKey,
       sourceSha256: row.source_sha256,

@@ -14,7 +14,7 @@ beforeEach(async () => {
   sql.exec(`CREATE TABLE seo_editorial_jobs(id,run_id,site_id,github_run_id,base_sha,source_sha256,article_key,status,generation_started,publication_started,next_step,call_id,callback_recorded,claim_recorded);
  CREATE TABLE seo_editorial_runs(run_id,job_id,article_key,status,pr_url,deadline,budget_run_id);
  CREATE TABLE seo_research_rejections(job_id,run_id,receipt_sha256,receipt_json);
- CREATE TABLE seo_plan_contracts(job_id,version); CREATE TABLE seo_research_focus_contracts(job_id,version);
+ CREATE TABLE seo_plan_contracts(job_id,version); CREATE TABLE seo_research_focus_contracts(job_id,version); CREATE TABLE seo_retrieval_fallback_contracts(job_id,version);
  INSERT INTO seo_editorial_jobs VALUES('oldjob','old','aceserver-portal','123','${"b".repeat(40)}','${source}','${article}','unresolved',0,0,0,NULL,1,1);
  INSERT INTO seo_editorial_runs VALUES('old','oldjob','${article}','unresolved',NULL,1,'budget-old');
  INSERT INTO seo_editorial_jobs VALUES('newjob','new','aceserver-portal','456','${"b".repeat(40)}','${source}','${article}','claiming',0,0,0,NULL,0,0);

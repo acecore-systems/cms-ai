@@ -69,6 +69,7 @@ export type CheckContext = {
   modelVersion?: 1 | 2;
   planInstructions?: 1 | 2;
   researchFocus?: 1 | 2;
+  retrievalFallback?: 1 | 2;
   jobId: string;
   runId: string;
   budgetRunId: string;
@@ -660,6 +661,7 @@ export async function researchArticle(
         ...(context.referencePolicy === 2 ? { referencePolicy: 2 } : {}),
         ...(context.urlInstructions === 2 ? { urlInstructions: 2 } : {}),
         ...(context.recovery === 2 ? { recovery: 2 } : {}),
+        ...(context.retrievalFallback === 2 ? { retrievalFallback: 2 } : {}),
         ...(context.discoveryInstructions === 2
           ? { discoveryInstructions: 2 }
           : {}),
@@ -682,6 +684,7 @@ export async function researchArticle(
             context.referencePolicy,
             context.urlInstructions,
             context.discoveryInstructions,
+            context.retrievalFallback,
           ),
           phase: "discovery",
         });
