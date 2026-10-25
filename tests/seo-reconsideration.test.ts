@@ -54,7 +54,10 @@ beforeEach(async () => {
   } as unknown as AppEnv;
   workflow.mockReset().mockResolvedValue(true);
 });
-afterEach(() => sql.close());
+afterEach(() => {
+  sql.close();
+  vi.restoreAllMocks();
+});
 const input = { runId: "old", articleKey: article, newRunId: "new" };
 it("proves the historical v1 receipt during the new claiming state and checks the pinned completed workflow", async () => {
   expect(await reconsiderationProof(env, input)).toMatchObject({
@@ -112,5 +115,65 @@ it("caps GitHub checking at the supplied collection deadline and rejects expired
   expect(await reconsiderationProof(env, { ...input, deadline: 1 })).toEqual({
     status: "denied",
   });
+  expect(workflow).not.toHaveBeenCalled();
+});
+
+it("reports the denied stage and allowlisted code without identifiers or exception contents", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
+  workflow.mockRejectedValueOnce(
+    Object.assign(new Error("PRIVATE_TOKEN_AND_BODY"), {
+      code: "token_scope_mismatch",
+    }),
+  );
+  expect(await reconsiderationProof(env, input)).toEqual({ status: "denied" });
+  const record = JSON.parse(log.mock.calls.at(-1)![0]);
+  expect(record).toMatchObject({
+    event: "seo_reconsideration_result",
+    outcome: "denied",
+    stage: "workflow",
+    code: "token_scope_mismatch",
+  });
+  expect(Object.keys(record).sort()).toEqual(
+    [
+      "event",
+      "outcome",
+      "stage",
+      "code",
+      "elapsedMs",
+      "remainingMs",
+      "stagesMs",
+    ].sort(),
+  );
+  expect(JSON.stringify(record)).not.toContain("PRIVATE");
+  expect(JSON.stringify(record)).not.toContain(article);
+  workflow.mockRejectedValueOnce({
+    code: "PRIVATE_CODE",
+    message: "PRIVATE_BODY",
+  });
+  expect(await reconsiderationProof(env, input)).toEqual({ status: "denied" });
+  expect(JSON.parse(log.mock.calls.at(-1)![0]).code).toBe("exception");
+});
+
+it("distinguishes evidence time consuming the shared deadline and makes no GitHub request", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const original = env.CMS_AI_IMAGES.get.bind(env.CMS_AI_IMAGES);
+  env.CMS_AI_IMAGES.get = (async (key: string) => {
+    now += 600;
+    return original(key);
+  }) as typeof env.CMS_AI_IMAGES.get;
+  expect(
+    await reconsiderationProof(env, { ...input, deadline: now + 1000 }),
+  ).toEqual({ status: "denied" });
+  const record = JSON.parse(log.mock.calls.at(-1)![0]);
+  expect(record).toMatchObject({
+    outcome: "denied",
+    stage: "focus-evidence",
+    code: "deadline",
+    elapsedMs: 1200,
+    remainingMs: -200,
+  });
+  expect(record.stagesMs["receipt-object"]).toBe(1200);
   expect(workflow).not.toHaveBeenCalled();
 });
