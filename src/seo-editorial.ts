@@ -842,6 +842,7 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
             JSON.stringify(originals) !== JSON.stringify(inherited.source))
         )
           throw Error("seo_check_files");
+        const inheritedStep = inherited?.step;
         const receipt = await reviewArticle(
           env,
           context,
@@ -849,7 +850,7 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
           originals,
           inherited
             ? inherited.source.map((f: EditorialFile) =>
-                f.path === job.article_path ? inherited.step : f,
+                f.path === job.article_path ? inheritedStep : f,
               )
             : await snapshot(env, job),
           body.files as EditorialFile[],
