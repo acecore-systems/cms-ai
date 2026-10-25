@@ -25,7 +25,7 @@ export function deepseekPayload(
           { role: "user", content: request.input },
         ]
       : request.messages,
-    reasoning_effort: "high",
+    reasoning_effort: request.reasoning_effort === "low" ? "low" : "high",
     max_completion_tokens: responses
       ? request.max_output_tokens
       : request.max_completion_tokens,
@@ -47,7 +47,7 @@ export function deepseekUpperCost(
     Object.keys(request).sort().join() !==
       "max_completion_tokens,messages,reasoning_effort,response_format,store,stream" ||
     request.store !== false ||
-    request.reasoning_effort !== "high" ||
+    !["high", "low"].includes(request.reasoning_effort as string) ||
     request.stream !== false ||
     ![6000, 12000, 24000, 48000].includes(output as number) ||
     !Array.isArray(request.messages) ||

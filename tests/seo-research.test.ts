@@ -126,6 +126,7 @@ beforeEach(async () => {
     sql.exec(
       readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"),
     );
+  sql.exec("CREATE TABLE seo_review_continuations(job_id TEXT PRIMARY KEY)");
   const prepare = (query: string) => {
     const bound = (args: unknown[] = []) => ({
       query,

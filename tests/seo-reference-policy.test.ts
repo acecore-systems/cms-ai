@@ -269,7 +269,12 @@ it("requires the same opened and cited URL and support; binds evidence policy to
   const row = { result_sha256: await sha256(JSON.stringify(evidence)) };
   const env: any = {
     CMS_AI_DB: {
-      prepare: () => ({ bind: () => ({ first: async () => row }) }),
+      prepare: (q: string) => ({
+        bind: () => ({
+          first: async () =>
+            q.includes("seo_review_continuations") ? null : row,
+        }),
+      }),
     },
     CMS_AI_IMAGES: { get: async () => ({ json: async () => evidence }) },
   };

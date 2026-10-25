@@ -331,6 +331,8 @@ describe("SEO completed workflow read", () => {
     "wrong_event",
     "wrong_branch",
     "failure",
+    "expected-failure",
+    "unexpected-success",
     "unavailable",
     "scope",
   ])(
@@ -361,7 +363,9 @@ describe("SEO completed workflow read", () => {
         return Response.json({
           id: kind === "wrong_id" ? 124 : 123,
           status: kind === "in_progress" ? "in_progress" : "completed",
-          conclusion: kind === "failure" ? "failure" : "success",
+          conclusion: ["failure", "expected-failure"].includes(kind)
+            ? "failure"
+            : "success",
           event: kind === "wrong_event" ? "push" : "workflow_dispatch",
           path:
             kind === "wrong_path"
@@ -381,9 +385,15 @@ describe("SEO completed workflow read", () => {
         "123",
         "a".repeat(40),
         Date.now() + 15000,
+        ["expected-failure", "unexpected-success"].includes(kind)
+          ? "failure"
+          : "success",
       );
       if (kind === "scope") await expect(promise).rejects.toThrow();
-      else expect(await promise).toBe(kind === "success");
+      else
+        expect(await promise).toBe(
+          ["success", "expected-failure"].includes(kind),
+        );
       expect(fetcher).toHaveBeenCalledTimes(kind === "scope" ? 1 : 2);
     },
   );
