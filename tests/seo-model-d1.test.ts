@@ -33,13 +33,13 @@ it("D1 atomically requires audit and preserves October weekly reserve across com
       "seo-00000000-0000-4000-8000-" + String(n).padStart(12, "0");
     const budget = new SeoBudget(db as unknown as D1Database);
     // Historical rows are left intact; consume all but one micro of the retained-month cap.
-    for (let i = 0; i < 13; i++)
+    for (let i = 0; i < 14; i++)
       await budget.reserve(
         id(i),
         id(100 + i),
         "old" + i,
         hash,
-        i === 12 ? 349999 : 1000000,
+        i === 13 ? 349999 : 1000000,
         now,
         deadline,
         2,
@@ -130,7 +130,7 @@ it("D1 atomically requires audit and preserves October weekly reserve across com
       (await db
         .prepare("SELECT sum(reserved_micros) n FROM seo_budget_calls")
         .first())!.n,
-    ).toBe(12350000);
+    ).toBe(13350000);
     expect(
       (await db.prepare("SELECT count(*) n FROM seo_model_calls").first())!.n,
     ).toBe(1);
