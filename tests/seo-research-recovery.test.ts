@@ -504,3 +504,98 @@ it("retains trailing qualifications and rejects ambiguous subject anchors and no
   expect(request.instructions).toContain("conditionsは[featureMarkdown全文]");
   expect(request.instructions).toContain("リンク表示の製品名exactを必須");
 });
+
+// Prompt regressions and parser invariants; no live model or external retrieval.
+it("separates table preservation context from external proof without altering the fixed plan", async () => {
+  const f = await fixture();
+  const request = buildRetrievalRequest(f.focused, f.discovery, "high", 2);
+  expect(request.instructions).toContain(
+    "NOT external proof obligations or verified facts",
+  );
+  expect(request.instructions).toContain(
+    "lack of external confirmation of those caveats alone is not insufficient",
+  );
+  expect(request.instructions).toContain(
+    "Product version, negation, date and applicability conditions that limit the feature still require support",
+  );
+  expect(request.instructions).toContain("never rewrite or narrow it");
+  expect(request.instructions).toContain("unknown authority is insufficient");
+  expect(JSON.parse(request.input).plan).toEqual(f.plan);
+  const evidence = parseResearch(
+    retrieved(false),
+    source.content,
+    f.hash,
+    now,
+    f.plan,
+    f.discovery,
+  );
+  expect(evidence.sources[0].claim).toBe(row);
+  expect(evidence.sources[0].excerpt).not.toContain("旧Wiki");
+  expect(evidence.tableContext).toEqual(f.plan.tableContext);
+  expect(() =>
+    assertTableContextPreserved(
+      evidence.tableContext!,
+      source.content + "\n参考資料: https://docs.example.org/primary\n",
+    ),
+  ).not.toThrow();
+  expect(() =>
+    assertTableContextPreserved(
+      evidence.tableContext!,
+      source.content.replace(historical, "現在も導入されています。\n"),
+    ),
+  ).toThrow("seo_table_context_changed");
+});
+it.each(["insufficient", "unknown", "unverified", "contradicts"])(
+  "unchanged local caveats cannot turn %s external support into acceptance",
+  async (assessment) => {
+    const f = await fixture(),
+      result = retrieved(false);
+    rewrite(result, (v) => {
+      if (assessment === "insufficient") {
+        v.verdict = "insufficient";
+        v.sources = [];
+      } else v.sources[0].assessment = assessment;
+    });
+    expect(() =>
+      parseResearch(result, source.content, f.hash, now, f.plan, f.discovery),
+    ).toThrow();
+  },
+);
+it("retains all feature version, polarity and applicability conditions rather than relabeling them as context", () => {
+  const feature =
+    "LogBook v2は設定が有効な場合だけ記録し、無効な場合は記録しません。";
+  const content = source.content.replace(
+    "ブロックの設置や破壊などのログを記録します。",
+    feature,
+  );
+  const c = tableClaims(content)[0];
+  const answer = {
+    verdict: "ready",
+    claimId: c.id,
+    targetQuote: c.markdown,
+    conditions: [feature],
+    anchors: ["CoreProtect"],
+    queries: ["CoreProtect LogBook v2 enabled disabled logging"],
+  };
+  const plan = parsePlan(answer, content, "a".repeat(64), 2, 2);
+  expect(plan.requiredConditions.map((c) => c.quote)).toEqual([feature]);
+  for (const narrowed of [
+    "LogBookは記録します。",
+    "LogBook v2は設定が有効な場合だけ記録し",
+    "無効な場合は記録しません。",
+  ])
+    expect(() =>
+      parsePlan(
+        { ...answer, conditions: [narrowed] },
+        content,
+        "a".repeat(64),
+        2,
+        2,
+      ),
+    ).toThrow();
+  const changed = structuredClone(plan);
+  changed.tableContext!.featureMarkdown = "LogBookは常に記録します。";
+  expect(() => focusedInput(content, "a".repeat(64), changed)).toThrow(
+    "seo_research_plan_mismatch",
+  );
+});
