@@ -2,12 +2,14 @@ import type { AppEnv } from "./env.ts";
 import { sha256 } from "./seo-hash.ts";
 import { factualSentences } from "./seo-research-plan.ts";
 import { verifyRejectionEvidence } from "./seo-rejection.ts";
+import { proofObjects } from "./seo-proof-objects.ts";
 
 // Read-only eligibility for a NEW job. The old insufficient verdict stays final.
 export async function verifyFocusReconsideration(
   env: AppEnv,
   row: any,
   receipt: any,
+  objects = proofObjects(env, Infinity),
 ) {
   if (
     row.plan_version !== 2 ||
@@ -27,6 +29,7 @@ export async function verifyFocusReconsideration(
     receipt.calls.length !== 3
   )
     return false;
+  env = objects.env;
   const read = async (suffix: string) => {
     const object = await env.CMS_AI_IMAGES.get(
       `seo-editorial/${row.id}/${suffix}.json`,
@@ -34,14 +37,13 @@ export async function verifyFocusReconsideration(
     if (!object) throw new Error("seo_focus_evidence_missing");
     return JSON.parse(await object.text());
   };
-  const files = await read("source");
+  const [files, plan] = await Promise.all([read("source"), read("plan")]);
   if (!Array.isArray(files)) return false;
   const matches = files.filter((f: any) => f.path === row.article_path);
   if (matches.length !== 1 || typeof matches[0].content !== "string")
     return false;
   const source = matches[0].content.replace(/\r\n/g, "\n");
   if ((await sha256(source)) !== row.source_sha256) return false;
-  const plan = await read("plan");
   if (
     plan.version !== 2 ||
     plan.tableContext ||
@@ -107,6 +109,31 @@ export async function verifyFocusReconsideration(
   )
     .bind(row.id)
     .first<{ version: 2 }>();
+  // Only the fixed, already matched three calls are prefetched. Validation below
+  // still re-parses and hashes every original byte through the existing verifier.
+  if (
+    checks
+      .map((c) => c.phase)
+      .sort()
+      .join() !== "discovery,plan,research"
+  )
+    return false;
+  const base = `seo-editorial/${row.id}/`;
+  await objects.prefetch([
+    ...checks.flatMap((c) => [
+      { key: `seo-responses/${c.call_id}.json`, body: true },
+      { key: base + c.phase + "-call.json", body: true },
+      { key: `seo-proposals/${c.call_id}.json`, body: false },
+    ]),
+    ...[
+      "discovery",
+      "research-failure",
+      ...(recovery?.version === 2 ? ["source-recovery"] : []),
+    ].map((s) => ({ key: base + s + ".json", body: true })),
+    ...["research", "step-0", "step-0-call", "review", "review-call"].map(
+      (s) => ({ key: base + s + ".json", body: false }),
+    ),
+  ]);
   const offer = await verifyRejectionEvidence(
     env,
     {
