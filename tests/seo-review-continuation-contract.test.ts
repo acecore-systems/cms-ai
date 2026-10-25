@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
-import { it, expect } from "vitest";
+import { it, expect, vi } from "vitest";
 import { continuationInput } from "../src/seo-review-continuation.ts";
 
 const migrations = () =>
@@ -134,17 +134,30 @@ it("0043 audit and deferred job registration work in real workerd D1", async () 
   }
 });
 it("requires exact proof input and an independent bounded deadline", () => {
-  const valid = {
-    oldRunId: "editorial-00000000-0000-4000-8000-000000000001",
-    newRunId: "editorial-00000000-0000-4000-8000-000000000002",
-    deadline: Date.now() + 600000,
-  };
-  expect(continuationInput(valid)).toEqual(valid);
-  for (const bad of [
-    { ...valid, extra: true },
-    { ...valid, newRunId: valid.oldRunId },
-    { ...valid, deadline: Date.now() - 1 },
-    { ...valid, deadline: Date.now() + 1800001 },
-  ])
-    expect(() => continuationInput(bad)).toThrow();
+  const now = Date.parse("2026-10-25T07:00:00Z");
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+  try {
+    const valid = {
+      oldRunId: "editorial-00000000-0000-4000-8000-000000000001",
+      newRunId: "editorial-00000000-0000-4000-8000-000000000002",
+      deadline: now + 600000,
+    };
+    expect(continuationInput(valid)).toEqual(valid);
+    // Strict lower bound; inclusive upper bound. Both use the same clock.
+    for (const offset of [1, 1799999, 1800000]) {
+      const accepted = { ...valid, deadline: now + offset };
+      expect(continuationInput(accepted)).toEqual(accepted);
+    }
+    for (const bad of [
+      { ...valid, extra: true },
+      { ...valid, newRunId: valid.oldRunId },
+      ...[-1, 0, 1800001].map((offset) => ({
+        ...valid,
+        deadline: now + offset,
+      })),
+    ])
+      expect(() => continuationInput(bad)).toThrow();
+  } finally {
+    clock.mockRestore();
+  }
 });
