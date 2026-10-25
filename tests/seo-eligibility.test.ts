@@ -102,6 +102,32 @@ function fixture() {
   };
 }
 const input = () => ({ site, urls: [url], deadline: Date.now() + 60000 });
+it("resolves a translated URL to the same Japanese product-component claim and preflight", async () => {
+  const f = fixture();
+  f.setOpen(false);
+  const path = f.target.directory + "/example.md";
+  const content =
+    '---\ntitle: Example\ndate: "2026-10-01"\n---\n翻訳記事は言語別フォルダーに配置します。ExampleEngine の glob ローダーが `**/*.txt` パターンで再帰検出します。';
+  f.entries[0] = f.entry(path, content);
+  const translated = url.replace("/insights/", "/en/insights/");
+  const result = await editorialEligibility(
+    { ...input(), urls: [url, translated] },
+    f.fetcher,
+  );
+  expect(result.results.map((r) => r.status)).toEqual(["eligible", "eligible"]);
+  expect(result.results.map((r) => r.articleKey)).toEqual([
+    "systems:" + path,
+    "systems:" + path,
+  ]);
+  expect(result.results[0].sourceSha256).toBe(result.results[1].sourceSha256);
+  expect(result.results[0].paths).toEqual(result.results[1].paths);
+  // A translation cannot stand in for an absent canonical source.
+  f.entries.splice(0, 1);
+  expect(
+    (await editorialEligibility({ ...input(), urls: [translated] }, f.fetcher))
+      .results[0].reason,
+  ).toBe("canonical_source_missing_or_ambiguous");
+});
 it("excludes canonical Japanese overlap, returning only its blob identity", async () => {
   const f = fixture(),
     r = await editorialEligibility(input(), f.fetcher);

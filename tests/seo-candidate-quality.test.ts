@@ -3,8 +3,73 @@ import { hasResearchableCandidate } from "../src/seo-candidate-quality.ts";
 import {
   hasExternalClaimCandidate,
   plannerClaims,
+  parsePlan,
 } from "../src/seo-research-plan.ts";
 const source = (body: string) => "---\ntitle: 制作事例\n---\n" + body;
+it("recognizes a product component subject without dropping context, version or polarity", () => {
+  const quote =
+    "ExampleEngine の glob ローダーが `**/*.txt` パターンで再帰検出します。";
+  const paragraph = "翻訳記事は言語別フォルダーに配置します。" + quote;
+  const article = source(paragraph);
+  expect(hasResearchableCandidate(article)).toBe(true);
+  const claim = plannerClaims(article, 2, 2)[0];
+  expect(
+    "contextParts" in claim && claim.contextParts.map((p) => p.quote).join(""),
+  ).toBe(paragraph);
+  const answer = {
+    verdict: "ready",
+    claimId: claim.id,
+    targetQuote: quote,
+    conditions: [quote],
+    anchors: ["ExampleEngine"],
+    queries: ["ExampleEngine glob loader recursive pattern"],
+  };
+  const plan = parsePlan(answer, article, "a".repeat(64), 2, 2);
+  expect(plan.claimMarkdown).toBe(paragraph);
+  expect(plan.requiredConditions.map((c) => c.quote)).toEqual([quote]);
+  expect(() =>
+    parsePlan(
+      { ...answer, verdict: "insufficient" },
+      article,
+      "a".repeat(64),
+      2,
+      2,
+    ),
+  ).toThrow("seo_research_insufficient");
+  expect(() =>
+    parsePlan(
+      { ...answer, targetQuote: quote.replace("再帰", "") },
+      article,
+      "a".repeat(64),
+      2,
+      2,
+    ),
+  ).toThrow();
+  const negative =
+    "ExampleEngine 3 の glob ローダーがリンク先を再帰検出するわけではありません。";
+  expect(hasResearchableCandidate(source(negative))).toBe(true);
+  expect(() =>
+    parsePlan(
+      {
+        ...answer,
+        targetQuote: negative.replace("するわけではありません", "します"),
+        conditions: [negative],
+      },
+      source(negative),
+      "a".repeat(64),
+      2,
+      2,
+    ),
+  ).toThrow();
+});
+it.each([
+  "ExampleEngine のローダーが当サイトのファイルを読み込みます。",
+  "ExampleEngine のローダーが使える構成を採用しました。",
+  "ExampleEngine のローダーが稼働するように実装しました。",
+  "ExampleEngine のローダーが使えるか確認してください。",
+])("does not promote local deployment or instructions: %s", (quote) => {
+  expect(hasResearchableCandidate(source(quote))).toBe(false);
+});
 it.each([
   "Hattは、絵や小説、VRChat向けの3D制作など、複数の創作活動を行っています。",
   "Hattの活動は、サイト内だけで完結するものではありません。",

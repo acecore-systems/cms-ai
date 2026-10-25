@@ -32,6 +32,11 @@ export function externalClaimCandidate(quote: string, paragraph: string) {
     /^(?:[A-Za-z0-9][A-Za-z0-9 .+/#_-]{1,100})(?:は|では|には|の[^。]{0,40}は|を使うと)/u.test(
       text,
     ) ||
+    // A named product component can be the grammatical subject with が.
+    // Keep the complete sentence/context; this is not a supported-fact verdict.
+    /^[A-Za-z0-9][A-Za-z0-9 .+/#_-]{1,100}の[\p{Script=Han}\p{Script=Katakana}A-Za-z0-9 .+/#_ー・-]{1,40}が/u.test(
+      text,
+    ) ||
     /^[A-Z][A-Za-z0-9 .,+/'()_-]{10,}[.!?]$/u.test(text)
   );
 }
