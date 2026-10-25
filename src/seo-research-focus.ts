@@ -5,15 +5,16 @@ import { verifyRejectionEvidence } from "./seo-rejection.ts";
 import { proofObjects } from "./seo-proof-objects.ts";
 
 // Read-only eligibility for a NEW job. The old insufficient verdict stays final.
-export async function verifyFocusReconsideration(
+export async function verifyResearchReconsideration(
   env: AppEnv,
   row: any,
   receipt: any,
   objects = proofObjects(env, Infinity),
+  expectedFocus: 1 | 2 = 1,
 ) {
   if (
     row.plan_version !== 2 ||
-    row.research_focus !== 1 ||
+    row.research_focus !== expectedFocus ||
     row.research_contract !== 2 ||
     row.retrieval_contract !== 2 ||
     row.research_recovery !== 2 ||
@@ -170,4 +171,13 @@ export async function verifyFocusReconsideration(
     if (await env.CMS_AI_IMAGES.get(`seo-editorial/${row.id}/${suffix}.json`))
       return false;
   return true;
+}
+
+export async function verifyFocusReconsideration(
+  env: AppEnv,
+  row: any,
+  receipt: any,
+  objects = proofObjects(env, Infinity),
+) {
+  return verifyResearchReconsideration(env, row, receipt, objects, 1);
 }
