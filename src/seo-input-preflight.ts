@@ -34,6 +34,7 @@ export function currentInputPreflightOptions(
   return {
     site_id: siteId,
     editorial_scope: 2,
+    model_version: 2,
     plan_instructions: 2,
     generation_output: 2,
     research_recovery: 2,
