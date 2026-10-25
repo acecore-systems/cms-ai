@@ -25,7 +25,8 @@ const source = {
     "---\ntitle: 機能一覧\n---\n旧記録であり、現在の導入状況は未確認です。\n\n| プラグイン名 | 機能 |\n| --- | --- |\n| [CoreProtect](https://example.org/product) | ブロックの設置や破壊などのログを記録します。 |\n",
 };
 const scope = externalScope("aceserver-wiki", source);
-const request = (v = 1) => buildPlanRequest(source.content, 2, 5, scope, 2, v);
+const request = (v = 1, model = 1) =>
+  buildPlanRequest(source.content, 2, 5, scope, 2, v, model);
 const bytes = (v: unknown) =>
   new TextEncoder().encode(JSON.stringify(v)).length;
 
@@ -112,11 +113,11 @@ it("preflight measures the actual new Chat request and leaves explicit old-job b
   };
   expect(options.plan_instructions).toBe(2);
   expect(planInputBytes(source, options)).toBe(
-    bytes(deepseekPayload(request(2), true)),
+    bytes(deepseekPayload(request(2, 2), true)),
   );
   const old = { ...options, plan_instructions: 1 as const };
   expect(planInputBytes(source, old)).toBe(
-    bytes(deepseekPayload(request(), true)),
+    bytes(deepseekPayload(request(1, 2), true)),
   );
   expect(planInputBytes(source, { ...old, plan_instructions: undefined })).toBe(
     planInputBytes(source, old),

@@ -1,3 +1,4 @@
+import { assertPlanOutputPreflight } from "./seo-plan-output.ts";
 import type { AppEnv } from "./env.ts";
 import { runTextModel } from "./inference.ts";
 import { SeoBudget, sha256 } from "./seo-budget.ts";
@@ -35,6 +36,8 @@ export async function seoTextResponse(
       args.recovery,
       args.reviewOutput,
     );
+    if (args.phase === "plan")
+      await assertPlanOutputPreflight(env, args.jobId, args.runId, payload);
     const raw = await runTextModel(
       env,
       SEO_DEEPSEEK,

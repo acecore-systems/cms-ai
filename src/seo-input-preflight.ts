@@ -217,6 +217,7 @@ export function planInputBytes(
             : undefined,
           options.research_recovery,
           options.plan_instructions,
+          options.model_version,
         ),
       ),
     ),

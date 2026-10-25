@@ -1,5 +1,6 @@
 // Text-only SEO contract. Normal CMS inference does not use these stricter gates.
 export const SEO_DEEPSEEK = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+export const SEO_PLAN_OUTPUT_TOKENS = 24000;
 const bytes = (v: unknown) =>
   new TextEncoder().encode(JSON.stringify(v)).length;
 export function deepseekPayload(

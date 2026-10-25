@@ -1,3 +1,4 @@
+import { SEO_HOSTED_RESPONSE_MS } from "./seo-time-bounds.ts";
 import { seoTextResponse } from "./seo-text-response.ts";
 import { assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
@@ -155,7 +156,7 @@ export async function seoResponse(
       },
       body: JSON.stringify(args.request),
       signal: AbortSignal.timeout(
-        Math.min(120_000, args.deadline - Date.now()),
+        Math.min(SEO_HOSTED_RESPONSE_MS, args.deadline - Date.now()),
       ),
     });
     if (!response.ok) throw new Error("seo_research_provider");

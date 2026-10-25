@@ -1,3 +1,4 @@
+import { SEO_PLAN_OUTPUT_TOKENS } from "./seo-deepseek.ts";
 import {
   recoverSources,
   recoveryDiscovery,
@@ -419,6 +420,7 @@ export function buildPlanRequest(
   scope?: ExternalScope,
   recovery = 1,
   planInstructions = 1,
+  modelVersion = 1,
 ) {
   if (
     ![1, 2].includes(planInstructions) ||
@@ -473,6 +475,8 @@ export function buildPlanRequest(
       task: "検索可能な原文claimを1つ選んでreadyの計画を作る。通常候補は事実文、tableContext付きは表の行をexact指定する。裏付け判定と資料取得は後続段階。",
     });
   }
+  if (![1, 2].includes(modelVersion)) throw Error("seo_model_missing");
+  if (modelVersion === 2) request.max_output_tokens = SEO_PLAN_OUTPUT_TOKENS;
   return request;
 }
 
@@ -604,6 +608,7 @@ export async function researchArticle(
         scope,
         context.recovery,
         context.planInstructions,
+        context.modelVersion,
       );
       const response = await seoResponse(env, {
         jobId: context.jobId,
