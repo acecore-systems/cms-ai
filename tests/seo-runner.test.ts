@@ -271,9 +271,15 @@ describe("SEO action runtime", () => {
     expect(body).toContain("AI校閲ゲート通過");
     expect(body).toContain("人の母語話者校閲は未実施");
   });
-  it.each(["pass", "changed-hash", "review-unknown"])(
-    "uses the existing Draft pipeline for fixed continuation files: %s",
-    async (kind) => {
+  it.each(
+    [1, 2].flatMap((version) =>
+      ["pass", "changed-hash", "review-unknown"].map(
+        (kind) => [version, kind] as const,
+      ),
+    ),
+  )(
+    "uses the existing Draft pipeline for fixed continuation files v%i: %s",
+    async (version, kind) => {
       await v2();
       const prior = request.getMockImplementation()!;
       const final = [];
@@ -304,9 +310,9 @@ describe("SEO action runtime", () => {
       request.mockClear();
       request.mockImplementation(async (op = "", body: any) => {
         const result = await prior(op, body);
-        if (!op) result.policy.reviewContinuation = 1;
+        if (!op) result.policy.reviewContinuation = version;
         if (op === "claim") {
-          expect(body.reviewContinuation).toBe(1);
+          expect(body.reviewContinuation).toBe(version);
           result.continuation = {
             version: 1,
             files: final,
@@ -711,3 +717,42 @@ it("collect skips an existing pending Japanese revision before claim and does no
   expect(await runner.collect(candidate, tracked)).toBeNull();
   expect(request).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["claim", 150000],
+  ["publish", 150000],
+  ["review", 630000],
+])(
+  "bounds continuation-v2 %s including evidence validation",
+  async (operation, maximum) => {
+    const { SEO_CONTINUATION_VERIFY_MS, SEO_LONG_TEXT_MS } =
+      await import("../src/seo-time-bounds.ts");
+    expect(maximum).toBe(
+      SEO_CONTINUATION_VERIFY_MS +
+        (operation === "review" ? SEO_LONG_TEXT_MS : 0) +
+        30000,
+    );
+    const r = new SeoRunner({
+      now: () => now,
+      env: {
+        SEO_JOB_ID: jobId,
+        ACTIONS_ID_TOKEN_REQUEST_URL: "https://example.test/token",
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture",
+      },
+      fetch: async (url: string) =>
+        Response.json(
+          String(url).includes("token")
+            ? { value: "oidc" }
+            : { status: "unresolved" },
+        ),
+    });
+    r.reviewContinuation = 2;
+    r.deadline = now + 1800000;
+    const timer = vi.spyOn(AbortSignal, "timeout");
+    await r.request(operation, {});
+    expect(timer).toHaveBeenLastCalledWith(maximum);
+    r.deadline = now + 10000;
+    await r.request(operation, {});
+    expect(timer).toHaveBeenLastCalledWith(10000);
+  },
+);

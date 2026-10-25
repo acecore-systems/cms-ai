@@ -51,3 +51,37 @@ proof/startで実payloadの上限を見積もり、月残・10月26日留保・1
 固定診断コードのみを failure に残し、本文・例外メッセージは記録しない。既存の期限、予算、校閲、公開 gate は変更しない。自動再開 API や migration は追加していない。
 
 無課金の実資料 replay は `SEO_CONTINUATION_REPLAY` / `SEO_CONTINUATION_EXTRA` にローカル証拠、`SEO_CONTINUATION_SITE` に実サイト checkout を指定する。実 runner の collect → JSON HTTP claim →既存校閲・Draft gate を検証する。AI と GitHub/OIDC はテスト代替であり、実校閲成功や実 Draft 作成を示さない。私的 fixture はコミットしない。通常回帰は改変・欠落・重複・余分 field を拒否する。
+
+## 未消費claimの一回限定追加継続（0044）
+
+本番の2回目claimは、全R2 GETの後にGitHub installation token取得がHTTP522となって停止した（親のObservability確認）。旧failure.jsonは初回だけ保存するため、そのhashが不変でも最新例外を表さない。固定stage/code/経過時間をconsoleへ出し、例外本文・識別子・原稿を出力しない。workerd R2の条件付きputは正常に新規保存し、既存objectを上書きしないことをHTTP claim fixtureでも確認する。
+
+追加継続は、期限切れのv1 continuationがunresolved、claim0/base null/source不存在、model/check/budget run/budget call 0、生成・公開0、callback済みの場合だけ。旧CMS run/jobと既存continuation行を保持し、新run/jobと新30分期限を作る。元生成の原稿・guides・研究・拒否raw・予約・期限・manifestを再検証する。予算は既存の月上限・通常月7ドル・run1.25ドル・留保を使い、追加はreview1callだけ。rootの生成や旧reviewを再送しない。
+
+- `reviewContinuationProof({oldRunId,newRunId,deadline})` は同11keysのversion2。oldRunId/oldJobIdは直前zero-call試行。sourceSha256/manifestSha256/filesSha256は元生成と同一。
+- `startReviewContinuation({oldRunId,runId,deadline,manifestSha256})` は同4keys。開始時に再検査し、登録後の重複呼出しではdispatchしない。
+- `seo_review_continuation_retries` はprevious/rootのrun/jobを別々に保持。article・previous・rootごとの追加は1回だけ。root manifestは新jobのcontinuation-manifest.jsonに同一bytesで保存、直前試行の全行・attempts・failure hashの監査は別continuation-retry.jsonとretry_sha256へ保存。
+- SQLは新jobをreview-only/最大1call、識別情報・期限を不変にし、登録後の旧zero-call job/run更新・削除・置換と追加check/call/budgetを拒否する。旧0043とその行は変更しない。
+
+親が承認済みのCMS非公開R2に `seo-editorial/{previousJobId}/claim-attempts.json` を新規だけ保存する。完全一致shapeは次のとおり（値は例示）。2runはそれぞれGitHubのcompleted/failure、workflow_dispatch、正しいrepo/branch/workflow/head、run_attempt=1を再取得で確認し、後者は旧job.github_run_idと一致必須。refと全状態PRも不存在を再検査する。
+
+```json
+{
+  "version": 1,
+  "jobId": "previous-job-id",
+  "runId": "previous-run-id",
+  "failureSha256": "64-hex",
+  "attempts": [
+    { "runId": "first-actions-id", "headSha": "40-hex" },
+    { "runId": "second-actions-id", "headSha": "40-hex" }
+  ]
+}
+```
+
+読取用tokenだけ、network/指定5xx時に期限内で最大1回再取得する。401/403/422、権限不一致は再取得しない。dispatch、publication、AI、GitHub GETの再送は追加しない。通常collection等はopt-inしない限り従来どおり。
+
+新retryのrunner policy/claim flagはreviewContinuation:2。旧runnerは未知versionで停止するため、新headへのsite pin更新が必要。新v2のclaim/publishは証拠検証120秒+余裕30秒、reviewは検証120秒+既存AI480秒+余裕30秒を待つ。すべて原run deadline以下。通常jobとv1 runner待機は変更しない。HTTP review内で一度全検証した継承原稿・研究だけをreviewArticleへ渡し、同じ保存物を3回検査する経路を避ける。reviewArticleの意味・参照・自然言語・原稿hash・予算/AI gateとpublish/finishは既存実装を使う。
+
+私的実fixtureは従来環境変数に加え、SEO_CONTINUATION_ZEROに直前試行snapshotのディレクトリ、SEO_CONTINUATION_ATTEMPTSにローカルattempts JSONを指定する。実runner collect/読取→HTTP claim→本物のreviewArticle→publish→finishを検証し、AI/GitHub/OIDCだけテスト代替とする。ローカルfixture成功は実AI校閲・実Draft成功の証拠ではない。本番R2保存・migration適用・merge/deploy・次の実試行は親担当。
+
+実装検証: 全923テスト成功・既存5skip、最終guard/実R2対象42テスト成功。親がR2から読み戻したattempts JSONを用いる実保存fixtureも新v2からclaim、reviewArticle、publish、finishまで成功。元manifest/files hash・旧全行を保持し、review見積48,041 microUSDを確認した。types/typecheck/format/dry-run成功。私的ログはSEO作業rootの `.local/review-continuation-20261025/retry-*.log` に保管し、本文・provider raw・fixtureをGitへ含めない。

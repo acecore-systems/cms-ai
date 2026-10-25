@@ -1,4 +1,8 @@
-import { SEO_RESEARCH_RPC_MS } from "../src/seo-time-bounds.ts";
+import {
+  SEO_RESEARCH_RPC_MS,
+  SEO_CONTINUATION_RPC_MS,
+  SEO_CONTINUATION_REVIEW_RPC_MS,
+} from "../src/seo-time-bounds.ts";
 import { hasPendingSeoRevision } from "../src/seo-translation-pending.ts";
 import { evidenceReferences, referenceUrl } from "../src/seo-evidence.ts";
 import { execFile } from "node:child_process";
@@ -135,14 +139,19 @@ export class SeoRunner {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(
           Math.min(
-            operation === "research" && this.editorialScope === 2
-              ? SEO_RESEARCH_RPC_MS
-              : (operation === "propose" && this.generationOutput === 2) ||
-                  (operation === "review" && this.editorialScope === 2)
-                ? 510_000
-                : ["propose", "research", "review"].includes(operation)
-                  ? 150_000
-                  : 30_000,
+            this.reviewContinuation === 2 &&
+              ["claim", "publish", "review"].includes(operation)
+              ? operation === "review"
+                ? SEO_CONTINUATION_REVIEW_RPC_MS
+                : SEO_CONTINUATION_RPC_MS
+              : operation === "research" && this.editorialScope === 2
+                ? SEO_RESEARCH_RPC_MS
+                : (operation === "propose" && this.generationOutput === 2) ||
+                    (operation === "review" && this.editorialScope === 2)
+                  ? 510_000
+                  : ["propose", "research", "review"].includes(operation)
+                    ? 150_000
+                    : 30_000,
             this.remaining(report),
           ),
         ),
@@ -457,7 +466,10 @@ export class SeoRunner {
     this.deadline = job.deadline;
     this.editorialScope = payload.policy?.editorialScope ?? 1;
     if (![1, 2].includes(this.editorialScope)) throw new Error("seo_job");
-    const continuation = payload.policy?.reviewContinuation === 1;
+    const continuation = [1, 2].includes(payload.policy?.reviewContinuation);
+    this.reviewContinuation = continuation
+      ? payload.policy.reviewContinuation
+      : undefined;
     if (payload.policy?.reviewContinuation !== undefined && !continuation)
       throw new Error("seo_job");
     this.generationOutput = payload.policy?.generationOutput ?? 1;
@@ -505,7 +517,7 @@ export class SeoRunner {
     const claim = await this.request("claim", {
       baseSha,
       files: originals,
-      ...(continuation ? { reviewContinuation: 1 } : {}),
+      ...(continuation ? { reviewContinuation: this.reviewContinuation } : {}),
       ...(this.editorialScope === 2 ? { editorialScope: 2 } : {}),
       ...(this.generationOutput === 2 ? { generationOutput: 2 } : {}),
     });

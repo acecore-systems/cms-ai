@@ -925,8 +925,12 @@ export async function reviewArticle(
   originals: EditorialFile[],
   accepted: EditorialFile[],
   finalFiles: EditorialFile[],
+  verifiedContinuationEvidence?: ResearchEvidence,
 ) {
-  const evidence = await loadResearch(env, context);
+  // Supplied only by the same HTTP handler after full loadContinuation validation.
+  // Normal jobs continue loading their own persisted research contract.
+  const evidence =
+    verifiedContinuationEvidence ?? (await loadResearch(env, context));
   const paths = [
     identity.source.path,
     ...identity.translations.map((t) => t.path),

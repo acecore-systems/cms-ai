@@ -398,3 +398,177 @@ describe("SEO completed workflow read", () => {
     },
   );
 });
+
+describe("continuation read-token transient bound", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+  const { privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { format: "pem", type: "pkcs1" },
+    publicKeyEncoding: { format: "pem", type: "spki" },
+  });
+  const env = {
+    CMS_AI_GITHUB_APP_CLIENT_ID: "test",
+    CMS_AI_GITHUB_APP_INSTALLATION_ID: "123456",
+    CMS_AI_GITHUB_APP_PRIVATE_KEY: privateKey,
+  } as AppEnv;
+  const site = getSiteById("homepage-hatt")!;
+  it.each([
+    "522",
+    "network",
+    "401",
+    "403",
+    "422",
+    "twice",
+    "network-then-522",
+    "expired",
+    "opt-out",
+  ])("bounds token requests for %s", async (kind) => {
+    const { seoWorkflowCompleted } = await import("../src/github.ts");
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    let tokens = 0,
+      gets = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: any) => {
+        if (String(url).endsWith("/access_tokens")) {
+          tokens++;
+          if (tokens === 1) {
+            if (kind === "expired") clock.mockReturnValue(now + 60000);
+            if (kind.startsWith("network"))
+              throw new TypeError("private network error");
+            return new Response(null, {
+              status: ["401", "403", "422"].includes(kind) ? Number(kind) : 522,
+            });
+          }
+          if (kind === "twice" || kind === "network-then-522")
+            return new Response(null, { status: 522 });
+          return Response.json({
+            token: "fixture",
+            permissions: { actions: "read" },
+          });
+        }
+        gets++;
+        return Response.json({
+          id: 123,
+          status: "completed",
+          conclusion: "failure",
+          event: "workflow_dispatch",
+          path: ".github/workflows/seo-content.yml",
+          head_branch: site.branch,
+          head_sha: "a".repeat(40),
+          repository: { full_name: site.repository },
+        });
+      }),
+    );
+    const call = seoWorkflowCompleted(
+      env,
+      site,
+      "123",
+      "a".repeat(40),
+      now + 60000,
+      "failure",
+      kind !== "opt-out",
+    );
+    if (["522", "network"].includes(kind)) {
+      expect(await call).toBe(true);
+      expect(gets).toBe(1);
+    } else {
+      await expect(call).rejects.toThrow();
+      expect(gets).toBe(0);
+    }
+    expect(tokens).toBe(
+      ["401", "403", "422", "expired", "opt-out"].includes(kind) ? 1 : 2,
+    );
+  });
+  it("does not retry a repository GET after obtaining a transient read token", async () => {
+    const { seoPublicationAbsent } = await import("../src/github.ts");
+    let tokens = 0,
+      gets = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: any) => {
+        if (String(url).endsWith("/access_tokens")) {
+          tokens++;
+          return tokens === 1
+            ? new Response(null, { status: 522 })
+            : Response.json({
+                token: "fixture",
+                permissions: { contents: "read", pull_requests: "read" },
+              });
+        }
+        gets++;
+        return new Response(null, { status: 522 });
+      }),
+    );
+    await expect(
+      seoPublicationAbsent(
+        env,
+        site,
+        "12345678-1234-4234-8234-123456789abc",
+        Date.now() + 60000,
+        true,
+      ),
+    ).rejects.toThrow();
+    expect(tokens).toBe(2);
+    expect(gets).toBe(1);
+  });
+});
+
+it.each([1, 2, undefined])(
+  "continuation retry requires GitHub run_attempt 1: %s",
+  async (attempt) => {
+    const { seoWorkflowCompleted } = await import("../src/github.ts");
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { format: "pem", type: "pkcs1" },
+      publicKeyEncoding: { format: "pem", type: "spki" },
+    });
+    const env = {
+      CMS_AI_GITHUB_APP_CLIENT_ID: "test",
+      CMS_AI_GITHUB_APP_INSTALLATION_ID: "123456",
+      CMS_AI_GITHUB_APP_PRIVATE_KEY: privateKey,
+    } as AppEnv;
+    const site = getSiteById("homepage-hatt")!;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: any) =>
+        String(url).endsWith("/access_tokens")
+          ? Response.json({
+              token: "fixture",
+              permissions: { actions: "read" },
+            })
+          : Response.json({
+              id: 123,
+              run_attempt: attempt,
+              status: "completed",
+              conclusion: "failure",
+              event: "workflow_dispatch",
+              path: ".github/workflows/seo-content.yml",
+              head_branch: site.branch,
+              head_sha: "a".repeat(40),
+              repository: { full_name: site.repository },
+            }),
+      ),
+    );
+    try {
+      expect(
+        await seoWorkflowCompleted(
+          env,
+          site,
+          "123",
+          "a".repeat(40),
+          Date.now() + 60000,
+          "failure",
+          true,
+          1,
+        ),
+      ).toBe(attempt === 1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
