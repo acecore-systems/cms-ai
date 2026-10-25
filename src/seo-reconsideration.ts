@@ -6,6 +6,36 @@ import { getSiteById } from "./sites.ts";
 // Read-only service proof. Never replays an old job, model call or callback.
 export async function reconsiderationProof(env: AppEnv, input: unknown) {
   const denied = { status: "denied" as const };
+  const started = Date.now();
+  let stage = "input",
+    deadline: number | undefined;
+  const timings: Record<string, number> = {};
+  let stageStarted = started;
+  const enter = (next: string) => {
+    timings[stage] = Date.now() - stageStarted;
+    stage = next;
+    stageStarted = Date.now();
+  };
+  const report = (outcome: "denied" | "eligible", code = "predicate") => {
+    // Never log input, identifiers, source/receipt contents, error messages or tokens.
+    console.info(
+      JSON.stringify({
+        event: "seo_reconsideration_result",
+        outcome,
+        stage,
+        code,
+        elapsedMs: Date.now() - started,
+        ...(deadline === undefined
+          ? {}
+          : { remainingMs: deadline - Date.now() }),
+        stagesMs: { ...timings, [stage]: Date.now() - stageStarted },
+      }),
+    );
+  };
+  const reject = (code = "predicate") => {
+    report("denied", code);
+    return denied;
+  };
   try {
     const v = input as any;
     if (
@@ -19,13 +49,14 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
       (v.deadline !== undefined &&
         (!Number.isSafeInteger(v.deadline) || v.deadline <= Date.now()))
     )
-      return denied;
+      return reject();
     if (
       env.SEO_RESEARCH_ENABLED !== "true" ||
       env.SEO_EDITORIAL_ENABLED !== "true"
     )
-      return denied;
-    let deadline = Math.min(Date.now() + 15000, v.deadline ?? Infinity);
+      return reject();
+    deadline = Math.min(Date.now() + 15000, v.deadline ?? Infinity);
+    enter("old-row");
     const row = await env.CMS_AI_DB.prepare(
       `SELECT j.*,r.deadline AS run_deadline,r.budget_run_id,COALESCE(p.version,1) AS plan_version,COALESCE(f.version,1) AS research_focus,x.receipt_sha256,x.receipt_json FROM seo_editorial_jobs j
    JOIN seo_editorial_runs r ON r.run_id=j.run_id AND r.job_id=j.id JOIN seo_research_rejections x ON x.job_id=j.id AND x.run_id=r.run_id
@@ -37,7 +68,8 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
       .bind(v.runId, v.articleKey)
       .first<any>();
     if (!row || (await sha256(row.receipt_json)) !== row.receipt_sha256)
-      return denied;
+      return reject();
+    enter("receipt");
     const receipt = JSON.parse(row.receipt_json);
     if (
       receipt.reason !== "confirmed_insufficient" ||
@@ -53,7 +85,8 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
       !Array.isArray(receipt.pullRequests) ||
       receipt.pullRequests.length
     )
-      return denied;
+      return reject();
+    enter("receipt-object");
     const saved = await env.CMS_AI_IMAGES.get(
       `seo-editorial/${row.id}/rejection.json`,
     );
@@ -62,13 +95,15 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
       (await saved.text()) !== row.receipt_json ||
       (await env.CMS_AI_IMAGES.get(`seo-editorial/${row.id}/step-0.json`))
     )
-      return denied;
+      return reject();
     const focusUpgrade = row.plan_version === 2;
+    enter("focus-evidence");
     if (focusUpgrade && !(await verifyFocusReconsideration(env, row, receipt)))
-      return denied;
-    if (Date.now() >= deadline) return denied;
+      return reject();
+    if (Date.now() >= deadline) return reject("deadline");
+    enter("new-job");
     if (v.newRunId !== undefined) {
-      if (v.newRunId === v.runId) return denied;
+      if (v.newRunId === v.runId) return reject();
       const fresh = await env.CMS_AI_DB.prepare(
         `SELECT j.id,r.deadline FROM seo_editorial_jobs j JOIN seo_editorial_runs r ON r.run_id=j.run_id AND r.job_id=j.id JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id
     WHERE r.run_id=? AND r.status='pending' AND r.deadline>? AND j.status='claiming' AND p.version=2
@@ -82,9 +117,10 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
           row.source_sha256,
         )
         .first();
-      if (!fresh) return denied;
+      if (!fresh) return reject();
       deadline = Math.min(deadline, Number(fresh.deadline));
     }
+    enter("workflow");
     const site = getSiteById(row.site_id);
     if (
       !site ||
@@ -98,12 +134,14 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
         deadline,
       ))
     )
-      return denied;
+      return reject();
+    enter("publication");
     if (
       focusUpgrade &&
       !(await seoPublicationAbsent(env, site, row.id, deadline))
     )
-      return denied;
+      return reject();
+    report("eligible", "complete");
     return {
       status: "eligible" as const,
       ...(focusUpgrade
@@ -115,7 +153,22 @@ export async function reconsiderationProof(env: AppEnv, input: unknown) {
       receiptSha256: row.receipt_sha256,
       ...(v.newRunId === undefined ? {} : { newRunId: v.newRunId }),
     };
-  } catch {
-    return denied;
+  } catch (error) {
+    const code = (error as { code?: unknown })?.code;
+    const allowed = [
+      "token_authentication",
+      "token_permission_denied",
+      "token_unavailable",
+      "token_scope_mismatch",
+      "read_authentication",
+      "read_forbidden",
+      "read_unavailable",
+      "rate_evidence_missing",
+      "rate_insufficient",
+      "request_bound",
+    ];
+    return reject(
+      typeof code === "string" && allowed.includes(code) ? code : "exception",
+    );
   }
 }

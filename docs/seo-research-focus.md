@@ -53,3 +53,11 @@ legacy1はversion=1/fromPlan=1/toPlan=2で、その他の共通fieldと任意new
 私的原稿・provider応答・ログはGitへ追加しない。任意の保存資料replayは `SEO_FOCUS_REPLAY` にsource/plan/discovery/research-responseのJSONを含むローカルdirectoryを設定し、`npx vitest run tests/seo-research-focus-replay.test.ts` で行う。最終回答の結論と根拠文だけを照合し、raw reasoningを読まない。ログはhash・byte数・判定のみ。通常CIではこの私的fixture試験をskipする。
 
 本番migration適用・merge・deploy・台帳確認・新AI試行は親担当。ローカル/CI成功と実AI成功を区別する。
+
+## 候補0件の読み取り専用診断
+
+配備後の無課金collectionで対象lockが残ったため、実snapshotと保存R2を使って再検証した。focus検証とproof全体はローカルでeligibleとなった。追加取得したGitHub workflow成功・固定head一致・refs空・全状態PR空のレスポンスでも、GitHub関数を含む全体が通過した。認証はローカル合成鍵/HTTP fixtureなので、本番資格情報・rate制限・遅延が通過した証拠ではない。実AIは起動していない。
+
+判定を変えず、`seo_reconsideration_result` の構造化ログを追加する。fieldはoutcome、stage、code、elapsedMs、remainingMs、stagesMsだけ。run/job/article、原稿、receipt、URL、token、例外message/stackは含めない。codeは固定のpredicate/deadline/exception/completeまたは既存GitHub readerの許可済みコードのみ。
+
+stageはinput、old-row、receipt、receipt-object、focus-evidence、new-job、workflow、publication。共有deadline消費、GitHub認証・scope・rate問題と通常の条件不一致を区別するために用いる。返却proofのshape、全拒否条件、10秒共有枠、取得回数・順序は変えない。ログに出た経過時間と本番read-only preflightで原因を確認してから、必要な改善を判断する。
