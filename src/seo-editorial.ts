@@ -1,4 +1,7 @@
+import { inspectContinuationRequest } from "./seo-review-continuation-retry.ts";
 import {
+  type ContinuationProgress,
+  type ContinuationStage,
   sameContinuationSource,
   continuationBudgetFits,
   continuationRow,
@@ -137,7 +140,12 @@ export const jobRow = (env: AppEnv, jobId: string) =>
     .bind(jobId)
     .first<EditorialJob>();
 const baseKey = (job: EditorialJob) => "seo-editorial/" + job.id;
+async function continuationPolicy(env: AppEnv, jobId: string) {
+  const row = await continuationRow(env, jobId);
+  return row ? { reviewContinuation: row.version } : {};
+}
 const diagnosticCodes = new Set([
+  "seo_continuation_retry_evidence",
   "seo_continuation_source",
   "seo_continuation_contract",
   "seo_continuation_evidence",
@@ -724,9 +732,7 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
         researchContract: job.research_contract,
         generationOutput: job.generation_output,
         editorialScope: job.editorial_scope,
-        ...((await continuationRow(env, job.id))
-          ? { reviewContinuation: 1 }
-          : {}),
+        ...(await continuationPolicy(env, job.id)),
       },
     });
   try {
@@ -836,8 +842,13 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
           context,
           article,
           originals,
-          await snapshot(env, job),
+          inherited
+            ? inherited.source.map((f: EditorialFile) =>
+                f.path === job.article_path ? inherited.step : f,
+              )
+            : await snapshot(env, job),
           body.files as EditorialFile[],
+          inherited?.evidence,
         );
         return json({ status: "reviewed", receipt });
       } catch (error) {
@@ -942,9 +953,67 @@ async function claimJob(
     body.baseSha !== identity.workflowSha
   )
     throw new Error("source_commit");
-  const continuation = await loadContinuation(env, job.id, run.deadline, true);
-  if (continuation)
-    return claimReviewContinuation(env, job, run, body, continuation);
+  const started = Date.now();
+  let stage: ContinuationStage | undefined;
+  const progress: ContinuationProgress = (next) => {
+    stage = next;
+  };
+  const report = (outcome: "claimed" | "failed", error?: unknown) => {
+    if (!stage) return;
+    const code =
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      [
+        "proof_read_deadline",
+        "proof_read_bound",
+        "token_authentication",
+        "token_permission_denied",
+        "token_unavailable",
+        "token_scope_mismatch",
+      ].includes(error.code)
+        ? error.code
+        : error instanceof Error && diagnosticCodes.has(error.message)
+          ? error.message
+          : outcome === "claimed"
+            ? "ok"
+            : "exception";
+    console.info(
+      JSON.stringify({
+        event: "seo_continuation_claim",
+        outcome,
+        stage,
+        code,
+        elapsedMs: Date.now() - started,
+        remainingMs: run.deadline - Date.now(),
+      }),
+    );
+  };
+  try {
+    const continuation = await loadContinuation(
+      env,
+      job.id,
+      run.deadline,
+      true,
+      progress,
+    );
+    if (continuation) {
+      const result = await claimReviewContinuation(
+        env,
+        job,
+        run,
+        body,
+        continuation,
+        progress,
+      );
+      report("claimed");
+      return result;
+    }
+  } catch (error) {
+    report("failed", error);
+    throw error;
+  }
   if (body.reviewContinuation !== undefined)
     throw Error("seo_continuation_contract");
   if (job.generation_output === 2 && body.generationOutput !== 2)
@@ -1229,7 +1298,7 @@ export async function startReviewContinuation(env: AppEnv, input: unknown) {
       deadline: v.deadline,
     });
     if (!enabled(env)) throw Error("disabled");
-    const old = await inspectReviewContinuation(env, v.oldRunId, v.deadline);
+    const old = await inspectContinuationRequest(env, v.oldRunId, v.deadline);
     if (!(await continuationBudgetFits(env, old.reviewMicros)))
       throw Error("budget");
     if (old.manifestSha256 !== v.manifestSha256) throw Error("manifest");
@@ -1239,7 +1308,7 @@ export async function startReviewContinuation(env: AppEnv, input: unknown) {
         existing.job_id && (await continuationRow(env, existing.job_id));
       if (
         !c ||
-        c.old_run_id !== v.oldRunId ||
+        (c.previous_run_id ?? c.old_run_id) !== v.oldRunId ||
         c.manifest_sha256 !== v.manifestSha256 ||
         existing.deadline !== v.deadline
       )
@@ -1257,6 +1326,9 @@ export async function startReviewContinuation(env: AppEnv, input: unknown) {
     const now = Date.now();
     const manifestKey = `seo-editorial/${jobId}/continuation-manifest.json`;
     await immutableReviewObject(env, manifestKey, old.manifest);
+    const retryKey = `seo-editorial/${jobId}/continuation-retry.json`;
+    if (old.retry)
+      await immutableReviewObject(env, retryKey, old.registrationManifest);
     const candidate = JSON.parse(old.run.candidates_json)[
       old.job.candidate_index
     ];
@@ -1299,19 +1371,37 @@ export async function startReviewContinuation(env: AppEnv, input: unknown) {
         old.job.article_key,
         now,
       ),
-      env.CMS_AI_DB.prepare(
-        "INSERT INTO seo_review_continuations(job_id,run_id,old_job_id,old_run_id,article_key,manifest_sha256,manifest_key,files_sha256,version,reasoning_effort,created_at) VALUES(?,?,?,?,?,?,?,?,1,'low',?)",
-      ).bind(
-        jobId,
-        v.runId,
-        old.job.id,
-        v.oldRunId,
-        old.job.article_key,
-        v.manifestSha256,
-        manifestKey,
-        old.manifest.filesSha256,
-        now,
-      ),
+      old.retry
+        ? env.CMS_AI_DB.prepare(
+            "INSERT INTO seo_review_continuation_retries(job_id,run_id,old_job_id,old_run_id,previous_job_id,previous_run_id,article_key,manifest_sha256,manifest_key,files_sha256,retry_sha256,retry_key,version,reasoning_effort,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,2,'low',?)",
+          ).bind(
+            jobId,
+            v.runId,
+            old.job.id,
+            old.run.run_id,
+            old.retry.previousJob.id,
+            v.oldRunId,
+            old.job.article_key,
+            old.manifestSha256,
+            manifestKey,
+            old.manifest.filesSha256,
+            old.registrationSha256,
+            retryKey,
+            now,
+          )
+        : env.CMS_AI_DB.prepare(
+            "INSERT INTO seo_review_continuations(job_id,run_id,old_job_id,old_run_id,article_key,manifest_sha256,manifest_key,files_sha256,version,reasoning_effort,created_at) VALUES(?,?,?,?,?,?,?,?,1,'low',?)",
+          ).bind(
+            jobId,
+            v.runId,
+            old.job.id,
+            v.oldRunId,
+            old.job.article_key,
+            v.manifestSha256,
+            manifestKey,
+            old.manifest.filesSha256,
+            now,
+          ),
       ...[
         "seo_editorial_scope_contracts",
         "seo_plan_contracts",
@@ -1361,9 +1451,11 @@ async function claimReviewContinuation(
   run: Run,
   body: Record<string, unknown>,
   data: NonNullable<Awaited<ReturnType<typeof loadContinuation>>>,
+  progress: ContinuationProgress,
 ) {
+  progress("source-match");
   if (
-    body.reviewContinuation !== 1 ||
+    body.reviewContinuation !== data.continuationVersion ||
     body.editorialScope !== 2 ||
     body.generationOutput !== 2 ||
     Object.keys(body).sort().join() !==
@@ -1371,6 +1463,7 @@ async function claimReviewContinuation(
     !sameContinuationSource(body.files, data.source)
   )
     throw Error("seo_continuation_source");
+  progress("source-put");
   const source = JSON.stringify(data.source);
   if (
     !(await env.CMS_AI_IMAGES.put(baseKey(job) + "/source.json", source, {
@@ -1378,6 +1471,7 @@ async function claimReviewContinuation(
     }))
   )
     throw Error("snapshot");
+  progress("claim-state");
   const changed = await env.CMS_AI_DB.prepare(
     "UPDATE seo_editorial_jobs SET status='claiming',base_sha=? WHERE id=? AND status='inspecting' AND claim_recorded=0",
   )
@@ -1385,12 +1479,14 @@ async function claimReviewContinuation(
     .run();
   if (changed.meta.changes !== 1) throw Error("state");
   alive(run);
+  progress("coordinator");
   const claim = await env.SEO_COORDINATOR!.claim({
     runId: run.run_id,
     articleKey: job.article_key!,
     sourceSha256: job.source_sha256!,
   });
   if (claim.status !== "claimed") throw Error("seo_continuation_claim");
+  progress("claim-accepted");
   const accepted = await env.CMS_AI_DB.prepare(
     "UPDATE seo_editorial_jobs SET status='generated',claim_recorded=1 WHERE id=? AND status='claiming' AND claim_recorded=0",
   )

@@ -109,6 +109,7 @@ beforeEach(async () => {
     "0041_seo_research_focus.sql",
     "0042_seo_retrieval_fallback.sql",
     "0043_seo_review_continuation.sql",
+    "0044_seo_review_continuation_retry.sql",
   ])
     sql.exec(
       readFileSync(

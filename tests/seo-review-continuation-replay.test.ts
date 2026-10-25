@@ -1,5 +1,12 @@
-import { readFileSync, existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import {
+  readFileSync,
+  existsSync,
+  readdirSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+} from "node:fs";
+import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { SeoRunner } from "../seo-runner/index.mjs";
 import { DatabaseSync } from "node:sqlite";
@@ -32,8 +39,9 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
   async () => {
     const base = process.env.SEO_CONTINUATION_REPLAY!,
       extra = process.env.SEO_CONTINUATION_EXTRA!;
+    const zeroBase = process.env.SEO_CONTINUATION_ZERO;
     const state = JSON.parse(
-      readFileSync(join(base, "current-state.json"), "utf8"),
+      readFileSync(join(zeroBase ?? base, "current-state.json"), "utf8"),
     ).cms;
     const db = new DatabaseSync(":memory:");
     db.exec("PRAGMA foreign_keys=OFF");
@@ -74,7 +82,13 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
     const run = state.seo_editorial_runs.find(
       (r: any) => r.run_id === old.run_id,
     );
-    const now = Math.max(Date.now(), run.deadline + 1),
+    const previous = zeroBase
+      ? state.seo_review_continuations.find((c: any) => c.old_job_id === old.id)
+      : null;
+    const predecessor = previous
+      ? state.seo_editorial_runs.find((r: any) => r.run_id === previous.run_id)
+      : null;
+    const now = Math.max(Date.now(), (predecessor ?? run).deadline + 1),
       clock = vi.spyOn(Date, "now").mockReturnValue(now);
     const reads: string[] = [];
     const checks = state.seo_editorial_checks
@@ -135,6 +149,15 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
             path = existsSync(join(extra, suffix))
               ? join(extra, suffix)
               : join(base, suffix);
+          if (
+            zeroBase &&
+            previous &&
+            key.startsWith(`seo-editorial/${previous.job_id}/`)
+          )
+            path =
+              suffix === "claim-attempts.json"
+                ? process.env.SEO_CONTINUATION_ATTEMPTS
+                : join(zeroBase, suffix);
           if (key.startsWith("seo-responses/")) {
             const c = checks.find(
               (c: any) => key === `seo-responses/${c.call_id}.json`,
@@ -207,14 +230,16 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
       const newRunId = "editorial-00000000-0000-4000-8000-000000000099";
       const deadline = now + 1800000;
       const proof = await reviewContinuationProof(env, {
-        oldRunId: run.run_id,
+        oldRunId: predecessor?.run_id ?? run.run_id,
         newRunId,
         deadline,
       });
       expect(proof.status).toBe("eligible");
       expect(Object.keys(proof).length).toBe(11);
+      expect((proof as any).version).toBe(predecessor ? 2 : 1);
+      expect((proof as any).manifestSha256).toBe(data.manifestSha256);
       const start = {
-        oldRunId: run.run_id,
+        oldRunId: predecessor?.run_id ?? run.run_id,
         runId: newRunId,
         deadline,
         manifestSha256: data.manifestSha256,
@@ -279,13 +304,15 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
         );
         return r!.json() as any;
       };
-      expect((await request()).policy.reviewContinuation).toBe(1);
+      expect((await request()).policy.reviewContinuation).toBe(
+        predecessor ? 2 : 1,
+      );
       const claimed = await request("claim", {
         baseSha,
         files: wireFiles,
         editorialScope: 2,
         generationOutput: 2,
-        reviewContinuation: 1,
+        reviewContinuation: predecessor ? 2 : 1,
       });
       expect(claimed.status).toBe("claimed");
       expect(await sha256(JSON.stringify(claimed.continuation.files))).toBe(
@@ -318,7 +345,20 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
         };
       });
       env.AI = { run: ai };
-      const reviewed = await request("review", { files: data.final });
+      // Read the saved generated content through the real runner, never mutate
+      // the parent's checkout. Scratch files stay in the private fixture directory.
+      const scratch = mkdtempSync(join(extra, "review-wire-"));
+      const finalRunner = new SeoRunner({ workspace: scratch, now: () => now });
+      const wireFinal = [];
+      for (const file of data.final) {
+        mkdirSync(dirname(join(scratch, file.path)), { recursive: true });
+        writeFileSync(join(scratch, file.path), file.content, "utf8");
+        wireFinal.push(await finalRunner.read(file.path));
+      }
+      expect(await sha256(JSON.stringify(wireFinal))).toBe(
+        data.manifest.filesSha256,
+      );
+      const reviewed = await request("review", { files: wireFinal });
       expect(reviewed.status).toBe("reviewed");
       expect(ai).toHaveBeenCalledTimes(1);
       expect(

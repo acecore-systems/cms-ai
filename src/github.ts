@@ -46,6 +46,7 @@ async function createInstallationToken(
   deadline?: number,
   purpose: "dispatch" | "eligibility" | "workflow-read" = "dispatch",
   mark: (stage: string) => void = () => {},
+  retryReadToken = false,
 ) {
   mark("token_sign");
   const appJwt = await createAppJwt(env);
@@ -59,27 +60,64 @@ async function createInstallationToken(
 
   mark("token_request");
   const repositoryName = site.repository.split("/").at(-1) || "";
-  const response = await fetch(
-    `${GITHUB_API}/app/installations/${installationId}/access_tokens`,
-    {
-      body: JSON.stringify({
-        permissions:
-          purpose === "eligibility"
-            ? { contents: "read", pull_requests: "read" }
-            : { actions: purpose === "workflow-read" ? "read" : "write" },
-        repositories: [repositoryName],
-      }),
-      headers: githubHeaders(appJwt),
-      method: "POST",
-      ...(deadline === undefined
-        ? {}
-        : {
-            signal: AbortSignal.timeout(
-              Math.max(1, Math.min(30_000, deadline - Date.now())),
-            ),
-          }),
-    },
-  );
+  const requestToken = () => {
+    if (deadline !== undefined && Date.now() >= deadline)
+      throw new SeoRepositoryReadError("token_unavailable");
+    return fetch(
+      `${GITHUB_API}/app/installations/${installationId}/access_tokens`,
+      {
+        body: JSON.stringify({
+          permissions:
+            purpose === "eligibility"
+              ? { contents: "read", pull_requests: "read" }
+              : { actions: purpose === "workflow-read" ? "read" : "write" },
+          repositories: [repositoryName],
+        }),
+        headers: githubHeaders(appJwt),
+        method: "POST",
+        ...(deadline === undefined
+          ? {}
+          : {
+              signal: AbortSignal.timeout(
+                Math.max(1, Math.min(30_000, deadline - Date.now())),
+              ),
+            }),
+      },
+    );
+  };
+  const retryAllowed =
+    retryReadToken && purpose !== "dispatch" && deadline !== undefined;
+  let response: Response;
+  let retried = false;
+  try {
+    response = await requestToken();
+  } catch (error) {
+    if (!retryAllowed || Date.now() >= deadline!)
+      throw new SeoRepositoryReadError("token_unavailable");
+    retried = true;
+    mark("token_retry");
+    try {
+      response = await requestToken();
+    } catch {
+      throw new SeoRepositoryReadError("token_unavailable");
+    }
+  }
+  if (
+    retryAllowed &&
+    !retried &&
+    [500, 502, 503, 504, 520, 521, 522, 523, 524].includes(response.status) &&
+    Date.now() < deadline!
+  ) {
+    // Only an installation read-token request can repeat. Never an article GET,
+    // dispatch, publication or AI operation; authentication errors never retry.
+    await response.body?.cancel();
+    mark("token_retry");
+    try {
+      response = await requestToken();
+    } catch {
+      throw new SeoRepositoryReadError("token_unavailable");
+    }
+  }
   const body: unknown = await response.json().catch(() => null);
 
   if (
@@ -88,7 +126,7 @@ async function createInstallationToken(
     typeof body !== "object" ||
     typeof (body as { token?: unknown }).token !== "string"
   ) {
-    if (purpose === "eligibility") {
+    if (purpose !== "dispatch") {
       throw new SeoRepositoryReadError(
         response.status === 401
           ? "token_authentication"
@@ -144,6 +182,8 @@ export async function seoWorkflowCompleted(
   headSha: string,
   deadline: number,
   conclusion: "success" | "failure" = "success",
+  retryReadToken = false,
+  requiredAttempt?: 1,
 ) {
   if (
     !/^[1-9][0-9]*$/.test(runId) ||
@@ -156,6 +196,8 @@ export async function seoWorkflowCompleted(
     site,
     deadline,
     "workflow-read",
+    undefined,
+    retryReadToken,
   );
   if (Date.now() >= deadline) return false;
   const response = await fetch(
@@ -179,6 +221,7 @@ export async function seoWorkflowCompleted(
     String(body.id) === runId &&
     body.status === "completed" &&
     body.conclusion === conclusion &&
+    (requiredAttempt === undefined || body.run_attempt === requiredAttempt) &&
     body.event === "workflow_dispatch" &&
     body.path === SEO_WORKFLOW_PATH &&
     body.head_branch === site.branch &&
@@ -212,6 +255,7 @@ export function seoRepositoryReader(
   env: AppEnv,
   site: SiteConfig,
   deadline: number,
+  retryReadToken = false,
 ): typeof fetch {
   let token: Promise<string> | undefined;
   let requests = 0;
@@ -242,6 +286,7 @@ export function seoRepositoryReader(
         (value) => {
           stage = value;
         },
+        retryReadToken,
       );
       const accessToken = await token;
       stage = "repository_fetch";
@@ -460,6 +505,7 @@ export async function seoPublicationAbsent(
   site: SiteConfig,
   jobId: string,
   deadline: number,
+  retryReadToken = false,
 ) {
   if (
     !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
@@ -467,7 +513,7 @@ export async function seoPublicationAbsent(
     )
   )
     return false;
-  const reader = seoRepositoryReader(env, site, deadline);
+  const reader = seoRepositoryReader(env, site, deadline, retryReadToken);
   const branch = "codex/seo-" + jobId;
   const owner = site.repository.split("/")[0];
   for (const path of [

@@ -1,3 +1,5 @@
+import { SEO_CONTINUATION_VERIFY_MS } from "./seo-time-bounds.ts";
+import { inspectContinuationRequest } from "./seo-review-continuation-retry.ts";
 import type { AppEnv } from "./env.ts";
 import { deepseekPayload, deepseekUpperCost } from "./seo-deepseek.ts";
 import { jstMonth, newJobMonthLimit } from "./seo-budget.ts";
@@ -68,20 +70,52 @@ export function continuationInput(input: any) {
   return input as { oldRunId: string; newRunId: string; deadline: number };
 }
 export async function continuationRow(env: AppEnv, jobId: string) {
-  return env.CMS_AI_DB.prepare(
-    "SELECT * FROM seo_review_continuations WHERE job_id=?",
-  )
-    .bind(jobId)
-    .first<any>();
+  return (
+    (await env.CMS_AI_DB.prepare(
+      "SELECT * FROM seo_review_continuations WHERE job_id=?",
+    )
+      .bind(jobId)
+      .first<any>()) ??
+    env.CMS_AI_DB.prepare(
+      "SELECT * FROM seo_review_continuation_retries WHERE job_id=?",
+    )
+      .bind(jobId)
+      .first<any>()
+  );
 }
 
+export type ContinuationStage =
+  | "manifest"
+  | "old-state"
+  | "source-objects"
+  | "check-objects"
+  | "proposal-object"
+  | "research-validation"
+  | "github"
+  | "retry-manifest"
+  | "retry-state"
+  | "retry-objects"
+  | "retry-github"
+  | "manifest-match"
+  | "source-match"
+  | "source-put"
+  | "claim-state"
+  | "coordinator"
+  | "claim-accepted";
+export type ContinuationProgress = (stage: ContinuationStage) => void;
 // The old job is read-only. No new check is fabricated for inherited work.
 export async function inspectReviewContinuation(
   env: AppEnv,
   oldRunId: string,
   newDeadline: number,
   github = true,
+  progress: ContinuationProgress = () => {},
+  verificationDeadline = Math.min(
+    newDeadline,
+    Date.now() + SEO_CONTINUATION_VERIFY_MS,
+  ),
 ) {
+  progress("old-state");
   if (
     env.SEO_EDITORIAL_ENABLED !== "true" ||
     env.SEO_RESEARCH_ENABLED !== "true"
@@ -127,7 +161,10 @@ export async function inspectReviewContinuation(
       .first()
   )
     reject();
-  const objects = proofObjects(env, Math.min(newDeadline, Date.now() + 30000));
+  const objects = proofObjects(
+    env,
+    Math.min(verificationDeadline, Date.now() + 30000),
+  );
   env = {
     ...objects.env,
     CMS_AI_IMAGES: {
@@ -190,6 +227,7 @@ export async function inspectReviewContinuation(
     budgets.length !== 5
   )
     reject();
+  progress("source-objects");
   const [source, final, step, generation] = await Promise.all(
     ["source", "review-input", "step-0", "step-0-call"].map((s) =>
       read(base + s + ".json"),
@@ -222,6 +260,7 @@ export async function inspectReviewContinuation(
   const responses: Record<string, any> = {};
   const results: Record<string, any> = {};
   const ids = new Set([generation.value.callId]);
+  progress("check-objects");
   for (const c of checks) {
     if (
       c.status !== (c.phase === "review" ? "unresolved" : "complete") ||
@@ -303,6 +342,7 @@ export async function inspectReviewContinuation(
     budgets.some((b) => !ids.has(b.id))
   )
     reject();
+  progress("proposal-object");
   const proposal = await read(`seo-proposals/${generation.value.callId}.json`);
   if (
     proposal.hash !== generation.value.proposalSha256 ||
@@ -310,6 +350,7 @@ export async function inspectReviewContinuation(
     proposal.value.changes[0].path !== job.article_path
   )
     reject();
+  progress("research-validation");
   const plan = parsePlan(
     responseText(responses.plan.value).value,
     identity.source.content,
@@ -389,6 +430,7 @@ export async function inspectReviewContinuation(
       deepseekUpperCost(oldPayload)
   )
     reject();
+  progress("github");
   const site = getSiteById(job.site_id);
   if (
     !site ||
@@ -398,12 +440,20 @@ export async function inspectReviewContinuation(
         site,
         job.github_run_id,
         job.base_sha,
-        newDeadline,
+        verificationDeadline,
         "failure",
+        true,
       )) ||
-        !(await seoPublicationAbsent(env, site, job.id, newDeadline))))
+        !(await seoPublicationAbsent(
+          env,
+          site,
+          job.id,
+          verificationDeadline,
+          true,
+        ))))
   )
     reject();
+  if (Date.now() >= verificationDeadline) reject();
   // Include every immutable old row and exact R2 byte digest; no provider body in manifest.
   const manifest = {
     version: 1,
@@ -451,13 +501,25 @@ export async function continuationBudgetFits(env: AppEnv, amount: number) {
 export async function reviewContinuationProof(env: AppEnv, input: unknown) {
   try {
     const v = continuationInput(input);
-    const data = await inspectReviewContinuation(env, v.oldRunId, v.deadline);
+    const data = await inspectContinuationRequest(env, v.oldRunId, v.deadline);
     if (!(await continuationBudgetFits(env, data.reviewMicros))) reject();
     const existing = await env.CMS_AI_DB.prepare(
-      "SELECT c.*,j.status,j.claim_recorded,r.deadline,r.status AS run_status FROM seo_review_continuations c JOIN seo_editorial_jobs j ON j.id=c.job_id JOIN seo_editorial_runs r ON r.run_id=c.run_id WHERE c.old_run_id=? OR c.run_id=?",
+      data.retry
+        ? "SELECT c.run_id,c.previous_run_id AS old_run_id,c.manifest_sha256,j.status,j.claim_recorded,r.deadline,r.status AS run_status,c.job_id FROM seo_review_continuation_retries c JOIN seo_editorial_jobs j ON j.id=c.job_id JOIN seo_editorial_runs r ON r.run_id=c.run_id WHERE c.previous_run_id=? OR c.run_id=?"
+        : "SELECT c.*,j.status,j.claim_recorded,r.deadline,r.status AS run_status FROM seo_review_continuations c JOIN seo_editorial_jobs j ON j.id=c.job_id JOIN seo_editorial_runs r ON r.run_id=c.run_id WHERE c.old_run_id=? OR c.run_id=?",
     )
       .bind(v.oldRunId, v.newRunId)
       .first<any>();
+    if (
+      data.retry &&
+      !existing &&
+      (await env.CMS_AI_DB.prepare(
+        "SELECT run_id FROM seo_editorial_runs WHERE run_id=?",
+      )
+        .bind(v.newRunId)
+        .first())
+    )
+      reject();
     if (
       existing &&
       (existing.run_id !== v.newRunId ||
@@ -474,12 +536,13 @@ export async function reviewContinuationProof(env: AppEnv, input: unknown) {
           .first()))
     )
       reject();
+    if (Date.now() >= v.deadline) reject();
     return {
       status: "eligible" as const,
-      version: 1,
+      version: data.retry ? 2 : 1,
       oldRunId: v.oldRunId,
       newRunId: v.newRunId,
-      oldJobId: data.job.id,
+      oldJobId: data.retry?.previousJob.id ?? data.job.id,
       articleKey: data.job.article_key!,
       sourceSha256: data.job.source_sha256!,
       manifestSha256: data.manifestSha256,
@@ -497,9 +560,15 @@ export async function loadContinuation(
   jobId: string,
   deadline: number,
   github = false,
+  progress: ContinuationProgress = () => {},
 ) {
+  const verificationDeadline = Math.min(
+    deadline,
+    Date.now() + SEO_CONTINUATION_VERIFY_MS,
+  );
   const row = await continuationRow(env, jobId);
   if (!row) return null;
+  progress("manifest");
   if (row.manifest_key !== `seo-editorial/${jobId}/continuation-manifest.json`)
     reject();
   const saved = await env.CMS_AI_IMAGES.get(row.manifest_key);
@@ -510,11 +579,38 @@ export async function loadContinuation(
     row.old_run_id,
     deadline,
     github,
+    progress,
+    verificationDeadline,
   );
+  if (row.version === 2) {
+    progress("retry-manifest");
+    if (row.retry_key !== `seo-editorial/${jobId}/continuation-retry.json`)
+      reject();
+    const audit = await env.CMS_AI_IMAGES.get(row.retry_key);
+    if (!audit || (await sha256(await audit.text())) !== row.retry_sha256)
+      reject();
+    const verified = await inspectContinuationRequest(
+      env,
+      row.previous_run_id,
+      deadline,
+      github,
+      data,
+      verificationDeadline,
+      progress,
+    );
+    if (
+      !verified.retry ||
+      verified.registrationSha256 !== row.retry_sha256 ||
+      verified.manifestSha256 !== data.manifestSha256
+    )
+      reject();
+  }
+  progress("manifest-match");
   if (
     data.manifestSha256 !== row.manifest_sha256 ||
     data.manifest.filesSha256 !== row.files_sha256
   )
     reject();
-  return data;
+  if (Date.now() >= verificationDeadline) reject();
+  return { ...data, continuationVersion: row.version as 1 | 2 };
 }
