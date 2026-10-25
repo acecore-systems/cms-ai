@@ -76,8 +76,13 @@ export async function continuationRow(env: AppEnv, jobId: string) {
     )
       .bind(jobId)
       .first<any>()) ??
-    env.CMS_AI_DB.prepare(
+    (await env.CMS_AI_DB.prepare(
       "SELECT * FROM seo_review_continuation_retries WHERE job_id=?",
+    )
+      .bind(jobId)
+      .first<any>()) ??
+    env.CMS_AI_DB.prepare(
+      "SELECT * FROM seo_review_scope_reassessments WHERE job_id=?",
     )
       .bind(jobId)
       .first<any>()
@@ -504,14 +509,16 @@ export async function reviewContinuationProof(env: AppEnv, input: unknown) {
     const data = await inspectContinuationRequest(env, v.oldRunId, v.deadline);
     if (!(await continuationBudgetFits(env, data.reviewMicros))) reject();
     const existing = await env.CMS_AI_DB.prepare(
-      data.retry
-        ? "SELECT c.run_id,c.previous_run_id AS old_run_id,c.manifest_sha256,j.status,j.claim_recorded,r.deadline,r.status AS run_status,c.job_id FROM seo_review_continuation_retries c JOIN seo_editorial_jobs j ON j.id=c.job_id JOIN seo_editorial_runs r ON r.run_id=c.run_id WHERE c.previous_run_id=? OR c.run_id=?"
-        : "SELECT c.*,j.status,j.claim_recorded,r.deadline,r.status AS run_status FROM seo_review_continuations c JOIN seo_editorial_jobs j ON j.id=c.job_id JOIN seo_editorial_runs r ON r.run_id=c.run_id WHERE c.old_run_id=? OR c.run_id=?",
+      data.scope
+        ? "SELECT c.run_id,c.previous_run_id AS old_run_id,c.manifest_sha256,j.status,j.claim_recorded,r.deadline,r.status AS run_status,c.job_id FROM seo_review_scope_reassessments c JOIN seo_editorial_jobs j ON j.id=c.job_id JOIN seo_editorial_runs r ON r.run_id=c.run_id WHERE c.previous_run_id=? OR c.run_id=?"
+        : data.retry
+          ? "SELECT c.run_id,c.previous_run_id AS old_run_id,c.manifest_sha256,j.status,j.claim_recorded,r.deadline,r.status AS run_status,c.job_id FROM seo_review_continuation_retries c JOIN seo_editorial_jobs j ON j.id=c.job_id JOIN seo_editorial_runs r ON r.run_id=c.run_id WHERE c.previous_run_id=? OR c.run_id=?"
+          : "SELECT c.*,j.status,j.claim_recorded,r.deadline,r.status AS run_status FROM seo_review_continuations c JOIN seo_editorial_jobs j ON j.id=c.job_id JOIN seo_editorial_runs r ON r.run_id=c.run_id WHERE c.old_run_id=? OR c.run_id=?",
     )
       .bind(v.oldRunId, v.newRunId)
       .first<any>();
     if (
-      data.retry &&
+      (data.retry || data.scope) &&
       !existing &&
       (await env.CMS_AI_DB.prepare(
         "SELECT run_id FROM seo_editorial_runs WHERE run_id=?",
@@ -539,10 +546,18 @@ export async function reviewContinuationProof(env: AppEnv, input: unknown) {
     if (Date.now() >= v.deadline) reject();
     return {
       status: "eligible" as const,
-      version: data.retry ? 2 : 1,
+      version: data.scope ? 3 : data.retry ? 2 : 1,
+      ...(data.scope
+        ? {
+            fromReviewScope: 1,
+            toReviewScope: 2,
+            rejectionSha256: data.scope.rejected.rejectionSha256,
+          }
+        : {}),
       oldRunId: v.oldRunId,
       newRunId: v.newRunId,
-      oldJobId: data.retry?.previousJob.id ?? data.job.id,
+      oldJobId:
+        data.scope?.previousJob.id ?? data.retry?.previousJob.id ?? data.job.id,
       articleKey: data.job.article_key!,
       sourceSha256: data.job.source_sha256!,
       manifestSha256: data.manifestSha256,
@@ -561,11 +576,12 @@ export async function loadContinuation(
   deadline: number,
   github = false,
   progress: ContinuationProgress = () => {},
-) {
-  const verificationDeadline = Math.min(
+  verifiedRoot?: Awaited<ReturnType<typeof inspectReviewContinuation>>,
+  verificationDeadline = Math.min(
     deadline,
     Date.now() + SEO_CONTINUATION_VERIFY_MS,
-  );
+  ),
+) {
   const row = await continuationRow(env, jobId);
   if (!row) return null;
   progress("manifest");
@@ -574,14 +590,43 @@ export async function loadContinuation(
   const saved = await env.CMS_AI_IMAGES.get(row.manifest_key);
   if (!saved || (await sha256(await saved.text())) !== row.manifest_sha256)
     reject();
-  const data = await inspectReviewContinuation(
-    env,
-    row.old_run_id,
-    deadline,
-    github,
-    progress,
-    verificationDeadline,
-  );
+  const data =
+    verifiedRoot ??
+    (await inspectReviewContinuation(
+      env,
+      row.old_run_id,
+      deadline,
+      github,
+      progress,
+      verificationDeadline,
+    ));
+  if (data.job.id !== row.old_job_id || data.run.run_id !== row.old_run_id)
+    reject();
+  if (row.version === 3) {
+    const { inspectScopeReassessment } =
+      await import("./seo-review-scope-reassessment.ts");
+    if (row.retry_key !== `seo-editorial/${jobId}/continuation-scope.json`)
+      reject();
+    const savedScope = await env.CMS_AI_IMAGES.get(row.retry_key);
+    if (
+      !savedScope ||
+      (await sha256(await savedScope.text())) !== row.retry_sha256
+    )
+      reject();
+    const verified = await inspectScopeReassessment(
+      env,
+      row.previous_run_id,
+      deadline,
+      github,
+      data,
+      verificationDeadline,
+    );
+    if (
+      verified.registrationSha256 !== row.retry_sha256 ||
+      verified.scope.rejected.rejectionSha256 !== row.rejection_sha256
+    )
+      reject();
+  }
   if (row.version === 2) {
     progress("retry-manifest");
     if (row.retry_key !== `seo-editorial/${jobId}/continuation-retry.json`)
@@ -612,5 +657,5 @@ export async function loadContinuation(
   )
     reject();
   if (Date.now() >= verificationDeadline) reject();
-  return { ...data, continuationVersion: row.version as 1 | 2 };
+  return { ...data, continuationVersion: row.version as 1 | 2 | 3 };
 }

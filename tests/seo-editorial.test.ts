@@ -1,3 +1,4 @@
+import { expandSharedText } from "../src/seo-input-text.ts";
 import { SeoRunner } from "../seo-runner/index.mjs";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -110,6 +111,7 @@ beforeEach(async () => {
     "0042_seo_retrieval_fallback.sql",
     "0043_seo_review_continuation.sql",
     "0044_seo_review_continuation_retry.sql",
+    "0045_seo_review_scope.sql",
   ])
     sql.exec(
       readFileSync(
@@ -517,7 +519,13 @@ describe("SEO durable editorial boundary", () => {
                 meaningPreserved: true,
                 naturalLanguage: true,
                 referencesSupported: true,
-                issues: variant === "wiki-pass" ? [] : ["原文の条件が脱落"],
+                ...(input.reviewScope === 2 ? { baselineIssues: [] } : {}),
+                issues:
+                  variant === "wiki-pass"
+                    ? []
+                    : input.reviewScope === 2
+                      ? [scopeBlocker(input, f.path)]
+                      : ["原文の条件が脱落"],
               })),
             };
       return new Response(
@@ -909,6 +917,7 @@ describe("SEO durable editorial boundary", () => {
                 meaningPreserved: true,
                 naturalLanguage: true,
                 referencesSupported: true,
+                ...(input.reviewScope === 2 ? { baselineIssues: [] } : {}),
                 issues: [],
               })),
             };
@@ -1172,8 +1181,11 @@ describe("SEO durable editorial boundary", () => {
                   meaningPreserved: true,
                   naturalLanguage: true,
                   referencesSupported: true,
+                  ...(input.reviewScope === 2 ? { baselineIssues: [] } : {}),
                   issues: ["review-fail", "tamper-rejection"].includes(variant)
-                    ? ["Meaning not preserved"]
+                    ? input.reviewScope === 2
+                      ? [scopeBlocker(input, f.path)]
+                      : ["Meaning not preserved"]
                     : [],
                 })),
               };
@@ -3488,3 +3500,20 @@ it("historical job cannot be claimed with the Japanese-only runner contract", as
   ).toBe("unresolved");
   expect(claim).not.toHaveBeenCalled();
 });
+
+function scopeBlocker(input: any, path: string) {
+  const before = expandSharedText({
+    shared: input.shared,
+    files: input.originals,
+  }).find((f) => f.path === path)!;
+  const after = expandSharedText({
+    shared: input.shared,
+    files: input.files,
+  }).find((f) => f.path === path)!;
+  return {
+    kind: "uncertain",
+    originalQuote: before.content.slice(0, 32),
+    finalQuote: after.content.slice(0, 32),
+    explanation: "条件保持を確認できないという模擬応答",
+  };
+}

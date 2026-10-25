@@ -43,8 +43,18 @@ export async function inspectContinuationRequest(
     )
       .bind(oldRunId)
       .first()
-  )
-    reject();
+  ) {
+    const { inspectScopeReassessment } =
+      await import("./seo-review-scope-reassessment.ts");
+    return inspectScopeReassessment(
+      env,
+      oldRunId,
+      deadline,
+      github,
+      verifiedRoot,
+      verificationDeadline,
+    );
+  }
   const previous = await env.CMS_AI_DB.prepare(
     "SELECT * FROM seo_review_continuations WHERE run_id=? AND job_id=?",
   )
@@ -62,6 +72,7 @@ export async function inspectContinuationRequest(
     return {
       ...root,
       retry: null,
+      scope: null,
       registrationManifest: root.manifest,
       registrationSha256: root.manifestSha256,
     };
@@ -242,6 +253,7 @@ export async function inspectContinuationRequest(
   return {
     ...root,
     retry,
+    scope: null,
     registrationManifest,
     registrationSha256: await sha256(JSON.stringify(registrationManifest)),
   };

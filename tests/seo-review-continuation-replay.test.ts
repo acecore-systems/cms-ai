@@ -40,8 +40,12 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
     const base = process.env.SEO_CONTINUATION_REPLAY!,
       extra = process.env.SEO_CONTINUATION_EXTRA!;
     const zeroBase = process.env.SEO_CONTINUATION_ZERO;
+    const scopeBase = process.env.SEO_CONTINUATION_SCOPE;
     const state = JSON.parse(
-      readFileSync(join(zeroBase ?? base, "current-state.json"), "utf8"),
+      readFileSync(
+        join(scopeBase ?? zeroBase ?? base, "current-state.json"),
+        "utf8",
+      ),
     ).cms;
     const db = new DatabaseSync(":memory:");
     db.exec("PRAGMA foreign_keys=OFF");
@@ -85,9 +89,20 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
     const previous = zeroBase
       ? state.seo_review_continuations.find((c: any) => c.old_job_id === old.id)
       : null;
-    const predecessor = previous
-      ? state.seo_editorial_runs.find((r: any) => r.run_id === previous.run_id)
+    const scopePrevious = scopeBase
+      ? state.seo_review_continuation_retries.find(
+          (c: any) => c.old_job_id === old.id,
+        )
       : null;
+    const predecessor = scopePrevious
+      ? state.seo_editorial_runs.find(
+          (r: any) => r.run_id === scopePrevious.run_id,
+        )
+      : previous
+        ? state.seo_editorial_runs.find(
+            (r: any) => r.run_id === previous.run_id,
+          )
+        : null;
     const now = Math.max(Date.now(), (predecessor ?? run).deadline + 1),
       clock = vi.spyOn(Date, "now").mockReturnValue(now);
     const reads: string[] = [];
@@ -170,6 +185,17 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
           }
           if (key.startsWith("seo-provider-responses/"))
             path = join(base, "review-provider-response.json");
+          if (scopeBase && scopePrevious) {
+            if (key.startsWith(`seo-editorial/${scopePrevious.job_id}/`))
+              path = join(scopeBase, suffix);
+            const reviewCall = JSON.parse(
+              readFileSync(join(scopeBase, "review-call.json"), "utf8"),
+            ).callId;
+            if (key === `seo-responses/${reviewCall}.json`)
+              path = join(scopeBase, "review-response.json");
+            if (key === `seo-provider-responses/${reviewCall}.json`)
+              path = join(scopeBase, "review-provider-response.json");
+          }
           if (key.startsWith("seo-proposals/"))
             path = join(extra, "proposal.json");
           if (!path || !existsSync(path)) return null;
@@ -203,6 +229,7 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
         data.evidence,
         2,
         2,
+        scopeBase ? 2 : 1,
       );
       const payload = deepseekPayload(
         { ...reviewRequest, reasoning_effort: "low" },
@@ -229,14 +256,19 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
       ]);
       const newRunId = "editorial-00000000-0000-4000-8000-000000000099";
       const deadline = now + 1800000;
+      if (scopeBase) {
+        const { inspectScopeReassessment } =
+          await import("../src/seo-review-scope-reassessment.ts");
+        await inspectScopeReassessment(env, predecessor.run_id, deadline);
+      }
       const proof = await reviewContinuationProof(env, {
         oldRunId: predecessor?.run_id ?? run.run_id,
         newRunId,
         deadline,
       });
       expect(proof.status).toBe("eligible");
-      expect(Object.keys(proof).length).toBe(11);
-      expect((proof as any).version).toBe(predecessor ? 2 : 1);
+      expect(Object.keys(proof).length).toBe(scopeBase ? 14 : 11);
+      expect((proof as any).version).toBe(scopeBase ? 3 : predecessor ? 2 : 1);
       expect((proof as any).manifestSha256).toBe(data.manifestSha256);
       const start = {
         oldRunId: predecessor?.run_id ?? run.run_id,
@@ -305,14 +337,14 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
         return r!.json() as any;
       };
       expect((await request()).policy.reviewContinuation).toBe(
-        predecessor ? 2 : 1,
+        scopeBase ? 3 : predecessor ? 2 : 1,
       );
       const claimed = await request("claim", {
         baseSha,
         files: wireFiles,
         editorialScope: 2,
         generationOutput: 2,
-        reviewContinuation: predecessor ? 2 : 1,
+        reviewContinuation: scopeBase ? 3 : predecessor ? 2 : 1,
       });
       expect(claimed.status).toBe("claimed");
       expect(await sha256(JSON.stringify(claimed.continuation.files))).toBe(
@@ -336,6 +368,7 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
                     naturalLanguage: true,
                     referencesSupported: true,
                     issues: [],
+                    ...(scopeBase ? { baselineIssues: [] } : {}),
                   })),
                 }),
               },
