@@ -105,6 +105,7 @@ beforeEach(async () => {
     "0037_seo_october_budget_1248.sql",
     "0038_seo_japanese_editorial.sql",
     "0039_seo_october_budget_1360.sql",
+    "0040_seo_october_budget_1460.sql",
   ])
     sql.exec(
       readFileSync(
@@ -2836,7 +2837,7 @@ describe("read-only editorial report", () => {
       reason: null,
       reservedMicros: null,
       monthReservedMicros: 0,
-      monthLimitMicros: 13600000,
+      monthLimitMicros: 14600000,
       runLimitMicros: 1250000,
     });
     expect(sql.prepare("SELECT * FROM seo_editorial_runs").get()).toEqual(
@@ -2860,7 +2861,7 @@ describe("read-only editorial report", () => {
         (sum, b) => sum + Number(b.reserved_micros),
         0,
       ),
-      monthLimitMicros: 13600000,
+      monthLimitMicros: 14600000,
       runLimitMicros: 1250000,
       prUrl: null,
     });
