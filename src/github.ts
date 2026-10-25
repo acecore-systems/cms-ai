@@ -228,7 +228,7 @@ export function seoRepositoryReader(
         throw new SeoRepositoryReadError("request_bound");
       const suffix = url.slice(prefix.length);
       if (
-        !/^(?:commits\/main|git\/trees\/[a-f0-9]{40}\?recursive=1|git\/blobs\/[a-f0-9]{40}|pulls(?:\/[1-9][0-9]*(?:\/files)?)?(?:\?[^#]*)?)$/.test(
+        !/^(?:commits\/main|git\/trees\/[a-f0-9]{40}\?recursive=1|git\/blobs\/[a-f0-9]{40}|git\/matching-refs\/heads\/codex\/seo-[a-f0-9-]{36}|pulls(?:\/[1-9][0-9]*(?:\/files)?)?(?:\?[^#]*)?)$/.test(
           suffix,
         )
       )
@@ -451,4 +451,39 @@ async function readGitHubError(response: Response, parsedBody?: unknown) {
   return message
     ? ` (${response.status}: ${message})`
     : ` (${response.status})`;
+}
+
+// Reconsideration must not rely only on historical absence in a receipt.
+export async function seoPublicationAbsent(
+  env: AppEnv,
+  site: SiteConfig,
+  jobId: string,
+  deadline: number,
+) {
+  if (
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+      jobId,
+    )
+  )
+    return false;
+  const reader = seoRepositoryReader(env, site, deadline);
+  const branch = "codex/seo-" + jobId;
+  const owner = site.repository.split("/")[0];
+  for (const path of [
+    "git/matching-refs/heads/" + branch,
+    "pulls?state=all&head=" +
+      encodeURIComponent(owner + ":" + branch) +
+      "&per_page=100&page=1",
+  ]) {
+    const response = await reader(
+      `${GITHUB_API}/repos/${site.repository}/${path}`,
+      { method: "GET", redirect: "manual" },
+    );
+    if (!response.ok || response.headers.get("link")?.includes('rel="next"'))
+      return false;
+    const value = await response.json();
+    if (!Array.isArray(value) || value.length || Date.now() >= deadline)
+      return false;
+  }
+  return true;
 }
