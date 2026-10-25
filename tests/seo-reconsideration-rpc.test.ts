@@ -58,7 +58,7 @@ it("real Service Binding re-entry observes claiming before proof and returns bef
         setup(b) {
           b.onLoad({ filter: /[\\/]github\.ts$/ }, () => ({
             contents:
-              "export async function seoWorkflowCompleted(){return true} export async function seoPublicationAbsent(){return true}",
+              "export async function dispatchSeoEditorialJob(){} export async function seoWorkflowCompleted(){return true} export async function seoPublicationAbsent(){return true}",
             loader: "ts",
           }));
         },

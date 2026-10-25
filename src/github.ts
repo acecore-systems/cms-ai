@@ -143,6 +143,7 @@ export async function seoWorkflowCompleted(
   runId: string,
   headSha: string,
   deadline: number,
+  conclusion: "success" | "failure" = "success",
 ) {
   if (
     !/^[1-9][0-9]*$/.test(runId) ||
@@ -177,7 +178,7 @@ export async function seoWorkflowCompleted(
     Date.now() < deadline &&
     String(body.id) === runId &&
     body.status === "completed" &&
-    body.conclusion === "success" &&
+    body.conclusion === conclusion &&
     body.event === "workflow_dispatch" &&
     body.path === SEO_WORKFLOW_PATH &&
     body.head_branch === site.branch &&

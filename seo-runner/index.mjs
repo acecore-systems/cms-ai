@@ -457,6 +457,9 @@ export class SeoRunner {
     this.deadline = job.deadline;
     this.editorialScope = payload.policy?.editorialScope ?? 1;
     if (![1, 2].includes(this.editorialScope)) throw new Error("seo_job");
+    const continuation = payload.policy?.reviewContinuation === 1;
+    if (payload.policy?.reviewContinuation !== undefined && !continuation)
+      throw new Error("seo_job");
     this.generationOutput = payload.policy?.generationOutput ?? 1;
     if (![1, 2].includes(this.generationOutput)) throw new Error("seo_job");
     this.remaining();
@@ -502,6 +505,7 @@ export class SeoRunner {
     const claim = await this.request("claim", {
       baseSha,
       files: originals,
+      ...(continuation ? { reviewContinuation: 1 } : {}),
       ...(this.editorialScope === 2 ? { editorialScope: 2 } : {}),
       ...(this.generationOutput === 2 ? { generationOutput: 2 } : {}),
     });
@@ -515,7 +519,23 @@ export class SeoRunner {
     const protocol = payload.policy.protocolVersion || 1;
     if (![1, 2].includes(protocol)) throw new Error("seo_research");
     let research = null;
-    if (protocol === 2) {
+    if (continuation) {
+      if (
+        protocol !== 2 ||
+        claim.continuation?.version !== 1 ||
+        !Array.isArray(claim.continuation.files) ||
+        claim.continuation.files.length !== paths.length ||
+        (await this.requestHash(JSON.stringify(claim.continuation.files))) !==
+          claim.continuation.filesSha256 ||
+        claim.continuation.evidence?.sourceSha256 !==
+          (await this.requestHash(identity.source.content))
+      )
+        throw new Error("seo_claim");
+      research = claim.continuation.evidence;
+      evidenceReferences(research);
+      for (const file of claim.continuation.files)
+        await this.write(file, paths);
+    } else if (protocol === 2) {
       this.stage = "research";
       const result = await this.request("research", {});
       if (
@@ -563,7 +583,7 @@ export class SeoRunner {
       research = result.evidence;
       evidenceReferences(research);
     }
-    for (let step = 0; step < paths.length; step++) {
+    for (let step = 0; !continuation && step < paths.length; step++) {
       this.stage = "propose";
       const result = await this.request("propose", {
         step,
@@ -587,6 +607,12 @@ export class SeoRunner {
     await this.format(paths, spec);
     const finalFiles = [];
     for (const path of paths) finalFiles.push(await this.read(path));
+    if (
+      continuation &&
+      (await this.requestHash(JSON.stringify(finalFiles))) !==
+        claim.continuation.filesSha256
+    )
+      throw new Error("seo_validation_changed_source");
     this.stage = "final_assertion";
     await assertEditorialFiles(
       identity,

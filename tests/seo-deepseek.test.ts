@@ -164,52 +164,59 @@ it("uses actual allocated language count; legacy bounds stay unchanged", () => {
   expect(fallbackMaximum(nine, 2)).toBeLessThan(1250000);
 });
 
-it("uses review 24000 output including thinking and a proper Chat payload without OpenAI credentials", async () => {
-  const ai = vi.fn(async (_model, payload) => {
-    expect(payload.max_completion_tokens).toBe(24000);
-    expect(payload.input).toBeUndefined();
-    return response();
-  });
-  const batch = vi.fn(async () => [
-    { meta: { changes: 1 } },
-    { meta: { changes: 1 } },
-    { meta: { changes: 1 } },
-  ]);
-  const env = {
-    AI: { run: ai },
-    CMS_AI_DB: {
-      prepare: () => ({
-        bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }),
-      }),
-      batch,
-    },
-    CMS_AI_IMAGES: { put: async () => ({}) },
-  } as unknown as AppEnv;
-  const result = await seoTextResponse(env, {
-    jobId: "00000000-0000-4000-8000-000000000001",
-    runId: "seo-00000000-0000-4000-8000-000000000002",
-    callId: "seo-00000000-0000-4000-8000-000000000003",
-    articleKey: "wiki:test.md",
-    deadline: now + 60000,
-    phase: "review",
-    budgetVersion: 2,
-    reviewOutput: 2,
-    request: {
-      instructions: "review",
-      input: "source",
-      max_output_tokens: 24000,
-      text: {
-        format: {
-          type: "json_schema",
-          schema: request().response_format.json_schema,
+it.each([1, 2])(
+  "uses review effort contract %s and preserves a 24000 bound without OpenAI credentials",
+  async (version) => {
+    const ai = vi.fn(async (_model, payload) => {
+      expect(payload.max_completion_tokens).toBe(24000);
+      expect(payload.reasoning_effort).toBe(version === 2 ? "low" : "high");
+      expect(payload.input).toBeUndefined();
+      return response();
+    });
+    const batch = vi.fn(async () => [
+      { meta: { changes: 1 } },
+      { meta: { changes: 1 } },
+      { meta: { changes: 1 } },
+    ]);
+    const env = {
+      AI: { run: ai },
+      CMS_AI_DB: {
+        prepare: () => ({
+          bind: () => ({
+            first: async () => (version === 2 ? { version: 2 } : null),
+            run: async () => ({ meta: { changes: 1 } }),
+          }),
+        }),
+        batch,
+      },
+      CMS_AI_IMAGES: { put: async () => ({}) },
+    } as unknown as AppEnv;
+    const result = await seoTextResponse(env, {
+      jobId: "00000000-0000-4000-8000-000000000001",
+      runId: "seo-00000000-0000-4000-8000-000000000002",
+      callId: "seo-00000000-0000-4000-8000-000000000003",
+      articleKey: "wiki:test.md",
+      deadline: now + 60000,
+      phase: "review",
+      budgetVersion: 2,
+      reviewOutput: 2,
+      request: {
+        instructions: "review",
+        input: "source",
+        max_output_tokens: 24000,
+        text: {
+          format: {
+            type: "json_schema",
+            schema: request().response_format.json_schema,
+          },
         },
       },
-    },
-  });
-  expect(result.status).toBe("completed");
-  expect(ai).toHaveBeenCalledTimes(1);
-  expect(batch).toHaveBeenCalledTimes(1);
-});
+    });
+    expect(result.status).toBe("completed");
+    expect(ai).toHaveBeenCalledTimes(1);
+    expect(batch).toHaveBeenCalledTimes(1);
+  },
+);
 it("holds the October 26 slot only until its original UTC start, without increasing a monthly limit", () => {
   expect(newJobMonthLimit("2026-10", now)).toBe(13350000);
   expect(newJobMonthLimit("2026-10", Date.parse("2026-10-26T00:00:00Z"))).toBe(

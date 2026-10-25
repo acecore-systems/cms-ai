@@ -271,6 +271,68 @@ describe("SEO action runtime", () => {
     expect(body).toContain("AI校閲ゲート通過");
     expect(body).toContain("人の母語話者校閲は未実施");
   });
+  it.each(["pass", "changed-hash", "review-unknown"])(
+    "uses the existing Draft pipeline for fixed continuation files: %s",
+    async (kind) => {
+      await v2();
+      const prior = request.getMockImplementation()!;
+      const final = [];
+      for (let step = 0; step < original.length; step++) {
+        const generated = await prior("propose", {
+          step,
+          ...(step === 1
+            ? { japanese: (await runner.read(sourcePath)).content }
+            : {}),
+        });
+        const file = {
+          ...generated.file,
+          content: await format(generated.file.content, portalFormat),
+        };
+        await runner.write(
+          file,
+          original.map((f) => f.path),
+        );
+        final.push(file);
+      }
+      for (const file of original)
+        await runner.write(
+          file,
+          original.map((f) => f.path),
+        );
+      const hash = await sha256(JSON.stringify(final));
+      const evidence = (await prior("research", {})).evidence;
+      request.mockClear();
+      request.mockImplementation(async (op = "", body: any) => {
+        const result = await prior(op, body);
+        if (!op) result.policy.reviewContinuation = 1;
+        if (op === "claim") {
+          expect(body.reviewContinuation).toBe(1);
+          result.continuation = {
+            version: 1,
+            files: final,
+            filesSha256: kind === "changed-hash" ? "0".repeat(64) : hash,
+            evidence,
+          };
+        }
+        if (op === "review" && kind === "review-unknown")
+          return { status: "unresolved" };
+        return result;
+      });
+      const result = await runner.executeJob();
+      expect(result.status).toBe(kind === "pass" ? "draft_pr" : "unresolved");
+      expect(
+        request.mock.calls.some(([op]) => ["research", "propose"].includes(op)),
+      ).toBe(false);
+      expect(request.mock.calls.some(([op]) => op === "publish")).toBe(
+        kind === "pass",
+      );
+      expect(pushed).toBe(kind === "pass");
+      if (kind === "pass")
+        expect(request.mock.calls.find(([op]) => op === "publish")![1]).toEqual(
+          { filesSha256: hash },
+        );
+    },
+  );
   it("preserves the exact Learn view reference through nine-file validation, review and Draft body", async () => {
     reference =
       "https://learn.microsoft.com/en-us/minecraft/creator/documents/bedrockserver/getting-started?view=minecraft-bedrock-stable";

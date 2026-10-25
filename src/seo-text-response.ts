@@ -28,7 +28,21 @@ export async function seoTextResponse(
   const budget = new SeoBudget(env.CMS_AI_DB);
   let reserved = false;
   try {
-    const payload = deepseekPayload(args.request, true);
+    const effort =
+      args.phase === "review"
+        ? await env.CMS_AI_DB.prepare(
+            "SELECT version FROM seo_review_effort_contracts WHERE job_id=?",
+          )
+            .bind(args.jobId)
+            .first<{ version: number }>()
+        : null;
+    const payload = deepseekPayload(
+      {
+        ...args.request,
+        reasoning_effort: effort?.version === 2 ? "low" : "high",
+      },
+      true,
+    );
     assertStageInput(
       args.phase,
       payload,

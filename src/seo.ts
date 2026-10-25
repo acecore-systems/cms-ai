@@ -1,3 +1,4 @@
+import { reviewContinuationProof } from "./seo-review-continuation.ts";
 import { reconsiderationProof } from "./seo-reconsideration.ts";
 import { seoRepositoryReader } from "./github.ts";
 import { seoSite } from "./sites.ts";
@@ -8,6 +9,7 @@ import { seoConnectionContract } from "./seo-contract.ts";
 import { generateSeo, generationReadiness } from "./seo-generation.ts";
 import {
   startEditorial,
+  startReviewContinuation,
   fallbackReport,
   editorialStatus,
   editorialReport,
@@ -40,6 +42,12 @@ export class SeoGeneration extends WorkerEntrypoint<AppEnv> {
 
 // Explicit capability, separate from the read-only connection and proposal RPCs.
 export class SeoEditorial extends WorkerEntrypoint<AppEnv> {
+  async reviewContinuationProof(input: unknown) {
+    return reviewContinuationProof(this.env, input);
+  }
+  async startReviewContinuation(input: unknown) {
+    return startReviewContinuation(this.env, input);
+  }
   async reconsideration(input: unknown) {
     return reconsiderationProof(this.env, input);
   }

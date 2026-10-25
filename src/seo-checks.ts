@@ -1,3 +1,4 @@
+import { loadContinuation } from "./seo-review-continuation.ts";
 import { SEO_PLAN_OUTPUT_TOKENS } from "./seo-deepseek.ts";
 import {
   recoverSources,
@@ -804,7 +805,16 @@ export async function researchArticle(
   return context.sourceRecovery === 2 ? loadResearch(env, context) : researched;
 }
 
-export async function loadResearch(env: AppEnv, context: CheckContext) {
+export async function loadResearch(
+  env: AppEnv,
+  context: CheckContext,
+): Promise<ResearchEvidence> {
+  const inherited = await loadContinuation(
+    env,
+    context.jobId,
+    context.deadline,
+  );
+  if (inherited) return inherited.evidence;
   const row = await env.CMS_AI_DB.prepare(
     "SELECT result_sha256 FROM seo_editorial_checks WHERE job_id=? AND phase='research' AND status='complete'",
   )
