@@ -2,6 +2,8 @@
 
 AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤です。
 
+認証の境界と変更時の検証は [AGENTS.md](AGENTS.md) の方針を確認してください。
+
 ## 方針
 
 - `CMS_AI_MODEL` は `@cf/deepseek-ai/deepseek-v4.1-flash-1017` です。既存のWorkers AI binding `AI`を使い、テキストと参考画像から会話回答・編集案を生成します。障害時のモデル自動切替やJSON Schemaを外した再送はしません。
