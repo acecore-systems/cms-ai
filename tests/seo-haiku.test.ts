@@ -46,6 +46,16 @@ const result = {
 };
 afterEach(() => vi.unstubAllGlobals());
 
+it("keeps Haiku rates usable past the former expiry with bounded requests", () => {
+  const payload = haikuPayload(request);
+  const baseline = haikuUpperCost(payload, Date.parse("2026-11-04T00:00:00Z"));
+  for (const future of ["2026-11-19T00:00:00Z", "2099-01-01T00:00:00Z"])
+    expect(haikuUpperCost(payload, Date.parse(future))).toBe(baseline);
+  for (const invalid of [NaN, Infinity, -Infinity])
+    expect(() => haikuUpperCost(payload, invalid)).toThrow();
+  expect(() => haikuUpperCost({ ...payload, max_tokens: 48001 })).toThrow();
+});
+
 it("bounds the exact Haiku request at long-context rates, reserves before sending, then saves raw before validation", async () => {
   const calls: string[] = [];
   vi.stubGlobal(

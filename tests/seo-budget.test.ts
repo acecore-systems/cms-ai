@@ -252,18 +252,24 @@ describe("SEO persistent budget", () => {
       sql.prepare("SELECT COUNT(*) AS n FROM seo_budget_calls").get()?.n,
     ).toBe(1);
   });
-  it("rejects another model, nonstandard tier, oversized output and stale rates", () => {
+  it("retains request bounds with indefinite rates and rejects invalid clocks", () => {
     const request = {
       max_completion_tokens: 12_000,
       service_tier: "default",
       messages: [{ role: "user", content: "日本語" }],
     };
     expect(upperCost("gpt-6-luna", request, now)).toBeGreaterThan(32_000);
+    expect(RATE_VALID_UNTIL).toBeNull();
+    for (const future of ["2026-11-19T00:00:00Z", "2099-01-01T00:00:00Z"])
+      expect(upperCost("gpt-6-luna", request, Date.parse(future))).toBe(
+        upperCost("gpt-6-luna", request, now),
+      );
     for (const [model, payload, time] of [
       ["other", request, now],
       ["gpt-6-luna", { ...request, service_tier: "priority" }, now],
       ["gpt-6-luna", { ...request, max_completion_tokens: 12001 }, now],
-      ["gpt-6-luna", request, RATE_VALID_UNTIL],
+      ["gpt-6-luna", request, NaN],
+      ["gpt-6-luna", request, Infinity],
     ] as const)
       expect(() => upperCost(model, payload, time)).toThrow();
   });

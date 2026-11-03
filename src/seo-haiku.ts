@@ -1,6 +1,5 @@
 import { anthropicPayload, anthropicText, HAIKU_MODEL } from "./anthropic.ts";
 import { assertStrictSchema } from "./seo-deepseek.ts";
-import { RATE_VALID_UNTIL } from "./seo-budget.ts";
 
 export function haikuSchema(
   request: Record<string, unknown>,
@@ -54,7 +53,7 @@ export function haikuUpperCost(
   const bytes = new TextEncoder().encode(JSON.stringify(payload)).length;
   if (
     now < Date.parse("2026-11-03T00:00:00Z") ||
-    now >= RATE_VALID_UNTIL ||
+    !Number.isFinite(now) ||
     payload.model !== HAIKU_MODEL ||
     typeof payload.system !== "string" ||
     !Array.isArray(messages) ||

@@ -22,7 +22,7 @@ import {
   type CheckContext,
 } from "../src/seo-checks.ts";
 import { responseRequest, responsesUpperCost } from "../src/seo-responses.ts";
-import { SeoBudget, RATE_VALID_UNTIL, upperCost } from "../src/seo-budget.ts";
+import { SeoBudget, upperCost } from "../src/seo-budget.ts";
 import { referenceUrl } from "../src/seo-evidence.ts";
 import { acceptEditorialChange, sourceIdentity } from "../src/seo-content.ts";
 import { sha256 } from "../src/seo-hash.ts";
@@ -590,12 +590,17 @@ describe("SEO fresh search evidence and retained budget", () => {
         .reserved_micros,
     ).toBeGreaterThan(6000);
   });
-  it("detects tampered R2 evidence and stale rates", async () => {
+  it("detects tampered evidence and retains request bounds without rate expiry", async () => {
     await research();
     objects.set("seo-editorial/job/research.json", "{}");
     await expect(loadResearch(env, context)).rejects.toThrow();
     const request = responseRequest("instructions", {}, {}, true);
-    expect(() => responsesUpperCost(request, RATE_VALID_UNTIL)).toThrow();
+    for (const future of ["2026-11-19T00:00:00Z", "2099-01-01T00:00:00Z"])
+      expect(responsesUpperCost(request, Date.parse(future))).toBe(
+        responsesUpperCost(request, now),
+      );
+    expect(() => responsesUpperCost(request, NaN)).toThrow();
+    expect(() => responsesUpperCost(request, Infinity)).toThrow();
     expect(() =>
       responsesUpperCost({ ...request, max_tool_calls: 4 }, now),
     ).toThrow();
