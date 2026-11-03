@@ -92,7 +92,7 @@ runnerの失敗結果は`{status:"unresolved",diagnostic:{stage,code}}`をAction
 
 全モデル呼び出しは既存`generateSeo`と`SeoBudget`を使い、同一予算run ID・canonical article path・親の絶対deadlineを共有する。初回API呼び出しから30分に設定し直さない。1回1 USD、JST暦月7 USD、1記事、候補3件の範囲を超えない。全9言語が予算へ収まることは保証せず、上限到達時は部分翻訳PRを作らない。
 
-失敗・不明APIの予約は保持する。モデルfallback、生成/翻訳の自動再送、期限延長はない。現在の保守的単価の有効期限は`seo-budget.ts`の`RATE_VALID_UNTIL`（2026-11-19 UTC）で、期限後は再確認まで生成を止める。
+失敗・不明APIの予約は保持する。モデルfallback、生成/翻訳の自動再送、期限延長はない。2026-11-04の利用者承認により料金設定は無期限（`RATE_VALID_UNTIL: null`）とし、日付による自動停止は行わない。単価はコードで管理する見積値であり、プロバイダーの将来の価格を保証しない。料金変更時は見積単価を更新する。実行・月額の予約上限は維持する。
 
 `0005_seo_editorial.sql`が外部run・内部予算ID・候補順・job・GitHub run・claim・段階・callback結果をD1へ保存する。source snapshotと段階別受入結果は既存の非公開R2に保存し、public read endpointを設けない。期限到達はstatus照会でも永続`unresolved`へ移し、中央記事lockの保持を依頼する。unknownを理由にrun・予約・branchを削除しない。
 

@@ -2,7 +2,7 @@ import { SEO_HOSTED_RESPONSE_MS } from "./seo-time-bounds.ts";
 import { seoHaikuTextResponse } from "./seo-haiku-response.ts";
 import { assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
-import { SeoBudget, sha256, RATE_VALID_UNTIL } from "./seo-budget.ts";
+import { SeoBudget, sha256 } from "./seo-budget.ts";
 
 export const RESEARCH_TOOLS = 3;
 // Official 2026-10-20: web-search context <=128k; max_tool_calls bounds all
@@ -25,7 +25,7 @@ export function responsesUpperCost(
   if (![1, 2].includes(recovery)) throw new Error("seo_research_bound");
   if (
     now < Date.parse("2026-10-20T00:00:00Z") ||
-    now >= RATE_VALID_UNTIL ||
+    !Number.isFinite(now) ||
     request.model !== "gpt-6-luna" ||
     request.service_tier !== "default" ||
     request.store !== false ||

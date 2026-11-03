@@ -15,7 +15,9 @@ export function monthBudgetMicros(monthJst: string): number {
 }
 // Conservative rates above standard long-context rates verified 2026-10-19.
 // Text only; no cache writes, tools, images, priority tier or model fallback.
-export const RATE_VALID_UNTIL = Date.parse("2026-11-19T00:00:00Z");
+// Owner-approved indefinite rate configuration. null is JSON-safe and means no expiry.
+// Rates remain versioned estimates; per-run/month reservations still apply.
+export const RATE_VALID_UNTIL = null;
 export function upperCost(
   model: string,
   request: Record<string, unknown>,
@@ -23,7 +25,7 @@ export function upperCost(
 ) {
   if (
     model !== "gpt-6-luna" ||
-    now >= RATE_VALID_UNTIL ||
+    !Number.isFinite(now) ||
     now < Date.parse("2026-10-19T00:00:00Z")
   )
     throw new Error("seo_rate_review_required");
