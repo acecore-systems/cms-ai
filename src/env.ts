@@ -19,6 +19,7 @@ export type SeoCoordinatorBinding = {
 };
 export type AppEnv = Omit<Cloudflare.Env, "SEO_COORDINATOR"> &
   Record<SecretName, string> & {
+    ANTHROPIC_API_KEY?: string;
     OPENAI_API_KEY_STORE?: { get(): Promise<string> };
     SEO_RESEARCH_ENABLED?: string;
     SEO_RESEARCH_CANARY_RUN_ID?: string;

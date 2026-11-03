@@ -6,10 +6,10 @@ AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤で�
 
 ## 方針
 
-- `CMS_AI_MODEL` は `@cf/deepseek-ai/deepseek-v4.1-flash-1017` です。既存のWorkers AI binding `AI`を使い、テキストと参考画像から会話回答・編集案を生成します。障害時のモデル自動切替やJSON Schemaを外した再送はしません。
-- Chat Completionsの終了理由が`length`・`content_filter`等の未完了状態なら、有効なJSONが含まれていても変更案を受理しません。応答検証の失敗は`cms_ai_response_rejected`イベントへモデル・用途・固定値のphase/reasonだけを記録し、会話・ソース・画像・応答本文・推論過程を記録しません。
-- 推論深度はメッセージごとに`low`、`medium`、`high`、`max`から選べます。DeepSeekでは`medium`を`high`へ対応させます。その他は同名の深度を渡します（[Cloudflare公式仕様](https://developers.cloudflare.com/workers-ai/models/deepseek-v4.1-flash-1017/)）。
-- SEO生成・調査・校閲は別設定`SEO_AI_MODEL=gpt-6-luna`を使い、既存のOpenAI API直結とSecrets Store binding `OPENAI_API_KEY_STORE`を維持します。
+- `CMS_AI_MODEL` は `claude-haiku-5-5` です。Anthropic Messages APIでテキストと参考画像から会話回答・編集案を生成します。`ANTHROPIC_API_KEY` Worker secretが必要です。モデル自動切替やschemaを外した再送はしません。
+- 拒否・出力上限・不正形式は変更案として受理しません。応答検証の失敗には固定値の診断だけを使い、会話・ソース・画像・応答本文・推論過程をログに記録しません。
+- 推論深度はメッセージごとに`low`、`medium`、`high`、`max`から選べ、同名のAnthropic effortを使います（[公式仕様](https://platform.claude.com/docs/en/models/haiku-5-5/overview)）。
+- 新規SEO jobの文章判断・生成・校閲もHaiku、調査・検索は既存Luna hosted searchを使います。保存済みv2のDeepSeek呼出しは送信前に停止し、証跡・予約は変更しません。詳細と移行順は[移行記録](docs/seo-haiku-migration.md)を参照してください。
 - 質問、相談、修正依頼は同じ会話で扱い、対象URLの入力は求めません。
 - 会話にPNG・JPEG・WebPを1回4枚、各2MiBまで添付・貼り付けできます。画像のみの送信も可能です。画像生成は行いません。
 - 添付は非公開R2へ保存し、Access・サイト権限・会話所有者の検証後にだけ配信します。GitHub Actionsや公開リポジトリへ画像データを渡しません。

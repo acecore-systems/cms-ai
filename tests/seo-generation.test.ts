@@ -1,3 +1,4 @@
+import { haikuPayload } from "../src/seo-haiku.ts";
 import { deepseekPayload, SEO_DEEPSEEK } from "../src/seo-deepseek.ts";
 import { SITES } from "../src/sites.ts";
 import { STAGE_INPUT_BYTES } from "../src/seo-stage-budget.ts";
@@ -208,14 +209,14 @@ it.each(["exact", "one-byte-over", "legacy"])(
 );
 
 it.each(["valid", "missing-usage", "late", "budget"])(
-  "DeepSeek generation uses the real payload and preserves reservations: %s",
+  "Haiku v3 generation reserves the exact payload and preserves evidence: %s",
   async (kind) => {
-    const now = Date.parse("2026-10-23T00:00:00Z");
+    const now = Date.parse("2026-11-03T01:00:00Z");
     vi.spyOn(Date, "now").mockReturnValue(now);
     const path = "src/content/blog/example.md",
       files = [{ path, content: "original" }],
       instruction = "参考資料に基づき改訂案を作成";
-    const expected = deepseekPayload(
+    const expected = haikuPayload(
       buildSeoGenerationRequest(
         SITES.find((s) => s.id === "homepage-hatt")!,
         path,
@@ -224,34 +225,42 @@ it.each(["valid", "missing-usage", "late", "budget"])(
         files,
       ),
     );
-    const entries: any[] = [];
-    const stored: string[] = [];
-    const states: any[] = [];
+    const entries: any[] = [],
+      stored: string[] = [],
+      states: any[] = [];
     const result = {
       changes: [{ path, content: "revised", reason: "copy" }],
       summary: "proposal",
       clarification: "",
     };
-    const ai = vi.fn(async (_m, payload) => {
+    const fetcher = vi.fn(async (_url, options) => {
       expect(entries.length).toBe(3);
-      expect(payload).toEqual(expected);
+      expect(JSON.parse(options.body)).toEqual(expected);
       if (kind === "late") vi.mocked(Date.now).mockReturnValue(now + 60001);
-      return {
-        model: SEO_DEEPSEEK,
-        choices: [
-          {
-            finish_reason: "stop",
-            message: { role: "assistant", content: JSON.stringify(result) },
-          },
-        ],
-        ...(kind === "missing-usage"
-          ? {}
-          : { usage: { prompt_tokens: 100, completion_tokens: 100 } }),
-      };
+      return new Response(
+        JSON.stringify({
+          type: "message",
+          role: "assistant",
+          model: "claude-haiku-5-5",
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: JSON.stringify(result) }],
+          ...(kind === "missing-usage"
+            ? {}
+            : {
+                usage: {
+                  input_tokens: 100,
+                  output_tokens: 100,
+                  cache_read_input_tokens: 0,
+                  cache_creation_input_tokens: 0,
+                },
+              }),
+        }),
+      );
     });
+    vi.stubGlobal("fetch", fetcher);
     const env = {
       SEO_GENERATION_ENABLED: "true",
-      AI: { run: ai },
+      ANTHROPIC_API_KEY: "fixture",
       CMS_AI_DB: {
         prepare: (query: string) => ({
           bind: (...args: any[]) => ({
@@ -291,7 +300,7 @@ it.each(["valid", "missing-usage", "late", "budget"])(
         researchBudget: true,
         generationInputCap: Buffer.byteLength(JSON.stringify(expected)),
       },
-      { jobId: "00000000-0000-4000-8000-000000000003", version: 2 },
+      { jobId: "00000000-0000-4000-8000-000000000003", version: 3 },
     );
     expect(response.status).toBe(
       kind === "valid"
@@ -300,7 +309,7 @@ it.each(["valid", "missing-usage", "late", "budget"])(
           ? "stopped"
           : "unresolved",
     );
-    expect(ai).toHaveBeenCalledTimes(kind === "budget" ? 0 : 1);
+    expect(fetcher).toHaveBeenCalledTimes(kind === "budget" ? 0 : 1);
     if (kind !== "budget") {
       expect(stored[0]).toContain("seo-provider-responses/");
       expect(states.at(-1)[0]).toBe(

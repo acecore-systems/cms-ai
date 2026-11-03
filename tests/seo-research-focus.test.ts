@@ -112,6 +112,7 @@ CREATE TABLE seo_source_recovery_contracts(job_id,version);
 CREATE TABLE seo_all_checks(job_id,phase,call_id,input_sha256,status,result_sha256);
 CREATE TABLE seo_budget_calls(id,run_id,status,request_sha256);
 CREATE TABLE seo_model_calls(call_id,job_id,phase,request_sha256,budget_run_id);`);
+  db.exec("CREATE TABLE seo_haiku_model_calls(call_id,job_id,phase,request_sha256,budget_run_id)");
   const insert = db.prepare(
     "INSERT INTO seo_editorial_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
   );

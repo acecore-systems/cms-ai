@@ -1,3 +1,4 @@
+import { haikuPayload } from "../src/seo-haiku.ts";
 import { expandSharedText } from "../src/seo-input-text.ts";
 import { SeoRunner } from "../seo-runner/index.mjs";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
@@ -112,6 +113,7 @@ beforeEach(async () => {
     "0043_seo_review_continuation.sql",
     "0044_seo_review_continuation_retry.sql",
     "0045_seo_review_scope.sql",
+    "0046_seo_haiku_models.sql",
   ])
     sql.exec(
       readFileSync(
@@ -242,9 +244,9 @@ beforeEach(async () => {
         /変更は次の許可pathだけ: (\[[^\n]*\])/.exec(job.instruction)![1],
       )[0];
       await beforeRequest(
-        deepseekProfile ? SEO_DEEPSEEK : "gpt-6-luna",
+        deepseekProfile ? "claude-haiku-5-5" : "gpt-6-luna",
         deepseekProfile
-          ? deepseekPayload({
+          ? haikuPayload({
               ...buildTextInferencePayload(_site, job, context),
               ...(seoProvider?.maxCompletionTokens
                 ? { max_completion_tokens: seoProvider.maxCompletionTokens }
@@ -403,7 +405,6 @@ describe("SEO durable editorial boundary", () => {
 
   it.each([
     "valid",
-    "deepseek-wiki-pass",
     "ja-valid",
     "ja-pass",
     "ja-lost-callback",
@@ -417,6 +418,7 @@ describe("SEO durable editorial boundary", () => {
     "ja-receipt-store-failure",
     "ja-late",
     "wiki-pass",
+    "haiku-wiki-pass",
     "wiki-valid",
     "wiki-lost-callback",
     "wiki-missing-manifest",
@@ -440,12 +442,13 @@ describe("SEO durable editorial boundary", () => {
       files = files.slice(0, 1);
     }
     if (japaneseOnly && variant === "pass") variant = "wiki-pass";
-    const deepseek = variant === "deepseek-wiki-pass";
+    const deepseek = variant === "haiku-wiki-pass";
     if (deepseek) {
       variant = "wiki-pass";
       deepseekProfile = true;
-      env.SEO_AI_MODEL = SEO_DEEPSEEK;
-      now = Date.parse("2026-10-23T00:00:00Z");
+      env.SEO_AI_MODEL = "claude-haiku-5-5";
+      env.ANTHROPIC_API_KEY = "fixture";
+      now = Date.parse("2026-11-03T01:00:00Z");
       clock.mockReturnValue(now);
     }
     const wiki = !japaneseOnly && variant.startsWith("wiki-");
@@ -479,7 +482,10 @@ describe("SEO durable editorial boundary", () => {
     });
     const fetchMock = vi.fn(async (_url, options) => {
       const payload = JSON.parse(options.body);
-      const input = JSON.parse(payload.input);
+      const anthropic = payload.model === "claude-haiku-5-5";
+      const input = JSON.parse(
+        anthropic ? payload.messages[0].content : payload.input,
+      );
       if (payload.tools)
         expect(payload.tools[0].search_context_size).toBe(
           input.discovery ? "high" : "low",
@@ -528,6 +534,23 @@ describe("SEO durable editorial boundary", () => {
                       : ["原文の条件が脱落"],
               })),
             };
+      if (anthropic)
+        return new Response(
+          JSON.stringify({
+            type: "message",
+            role: "assistant",
+            id: "msg_fixture",
+            model: "claude-haiku-5-5",
+            stop_reason: "end_turn",
+            usage: {
+              input_tokens: 1000,
+              output_tokens: 200,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+            },
+            content: [{ type: "text", text: JSON.stringify(value) }],
+          }),
+        );
       return new Response(
         JSON.stringify({
           id: "resp_fixture",
@@ -617,29 +640,6 @@ describe("SEO durable editorial boundary", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
-    if (deepseek)
-      env.AI = {
-        run: vi.fn(async (_model: string, payload: any) => {
-          const r = await fetchMock("mock-only", {
-            body: JSON.stringify({ input: payload.messages[1].content }),
-          });
-          const result: any = await r.json();
-          return {
-            model: SEO_DEEPSEEK,
-            choices: [
-              {
-                finish_reason: "stop",
-                message: {
-                  role: "assistant",
-                  content: result.output.find((x: any) => x.type === "message")
-                    .content[0].text,
-                },
-              },
-            ],
-            usage: { prompt_tokens: 100, completion_tokens: 100 },
-          };
-        }),
-      } as unknown as Ai;
     const rejectReview = vi.fn(async () => ({ status: "recorded" }));
     (env.SEO_COORDINATOR as any).rejectReview = rejectReview;
     if (variant === "lost-callback")
@@ -707,14 +707,15 @@ describe("SEO durable editorial boundary", () => {
         objects.get("seo-editorial/" + jobId + "/eligibility-preflight.json")!,
       );
       if (deepseek) {
-        expect(env.AI.run).toHaveBeenCalledTimes(2);
         const modelCalls = sql
-          .prepare("SELECT phase,model FROM seo_model_calls ORDER BY phase")
+          .prepare(
+            "SELECT phase,model FROM seo_haiku_model_calls ORDER BY phase",
+          )
           .all();
         expect(modelCalls).toHaveLength(5);
         expect(
           modelCalls
-            .filter((c) => c.model === SEO_DEEPSEEK)
+            .filter((c) => c.model === "claude-haiku-5-5")
             .map((c) => c.phase),
         ).toEqual(["generation", "plan", "review"]);
         expect(
@@ -3206,100 +3207,73 @@ describe("fallback coordinator protocol 1", () => {
   );
 });
 
-describe("new DeepSeek job profile", () => {
-  const model = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+describe("new Haiku job profile", () => {
   beforeEach(() => {
     deepseekProfile = true;
-    env.SEO_AI_MODEL = SEO_DEEPSEEK;
-    now = Date.parse("2026-10-23T00:00:00Z");
+    japaneseOnly = true;
+    files = files.slice(0, 1);
+    env.SEO_AI_MODEL = "claude-haiku-5-5";
+    env.ANTHROPIC_API_KEY = "fixture";
+    now = Date.parse("2026-11-03T01:00:00Z");
     clock.mockReturnValue(now);
     env.SEO_RESEARCH_ENABLED = "true";
   });
-  it("pins model before dispatch, reserves exact Chat payload, keeps raw evidence and rejects plan without retry", async () => {
+  it("pins v3 before dispatch and saves one budgeted plan response", async () => {
     const raw = {
-      id: "cf-test",
-      model,
-      choices: [
+      id: "msg-test",
+      type: "message",
+      role: "assistant",
+      model: "claude-haiku-5-5",
+      stop_reason: "end_turn",
+      content: [
         {
-          finish_reason: "stop",
-          message: {
-            role: "assistant",
-            content: JSON.stringify({
-              verdict: "insufficient",
-              claimId: "",
-              targetQuote: "",
-              conditions: [],
-              anchors: [],
-              queries: [],
-            }),
-          },
+          type: "text",
+          text: JSON.stringify({
+            verdict: "insufficient",
+            claimId: "",
+            targetQuote: "",
+            conditions: [],
+            anchors: [],
+            queries: [],
+          }),
         },
       ],
-      usage: { prompt_tokens: 100, completion_tokens: 100 },
+      usage: {
+        input_tokens: 100,
+        output_tokens: 100,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
     };
-    const ai = vi.fn(async (_model: string, payload: any) => {
-      expect(_model).toBe(model);
-      expect(payload.store).toBe(false);
-      expect(payload.reasoning_effort).toBe("high");
-      expect(payload.messages[0].content).toContain('verdict="ready"');
-      expect(payload.input).toBeUndefined();
+    const fetcher = vi.fn(async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      expect(payload.model).toBe("claude-haiku-5-5");
+      expect(payload.output_config.effort).toBe("high");
       expect(
         sql.prepare("SELECT status FROM seo_budget_calls").get()!.status,
       ).toBe("reserved");
       expect(
-        sql.prepare("SELECT model FROM seo_model_calls").get()!.model,
-      ).toBe(model);
-      return raw;
+        sql.prepare("SELECT model FROM seo_haiku_model_calls").get()!.model,
+      ).toBe(payload.model);
+      return new Response(JSON.stringify(raw));
     });
-    env.AI = { run: ai } as unknown as Ai;
+    vi.stubGlobal("fetch", fetcher);
     const jobId = await claimed();
     const pin = sql
-      .prepare("SELECT * FROM seo_job_models WHERE job_id=?")
+      .prepare("SELECT * FROM seo_haiku_job_models WHERE job_id=?")
       .get(jobId)!;
-    expect(pin.text_model).toBe(model);
-    expect(
-      sql
-        .prepare(
-          "SELECT version FROM seo_research_focus_contracts WHERE job_id=?",
-        )
-        .get(jobId)!.version,
-    ).toBe(2);
-    expect(
-      sql
-        .prepare("SELECT version FROM seo_plan_contracts WHERE job_id=?")
-        .get(jobId)!.version,
-    ).toBe(2);
+    expect(pin.version).toBe(3);
+    expect(pin.text_model).toBe("claude-haiku-5-5");
     const preflight = JSON.parse(
       objects.get("seo-editorial/" + jobId + "/eligibility-preflight.json")!,
     );
-    expect(
-      sql
-        .prepare(
-          "SELECT version FROM seo_retrieval_fallback_contracts WHERE job_id=?",
-        )
-        .get(jobId)!.version,
-    ).toBe(2);
-    expect(preflight.planInstructions).toBe(2);
+    expect(preflight.modelVersion).toBe(3);
     const offer = await request(jobId, "research", {});
     expect(offer.status).toBe("research_insufficient");
-    (env.SEO_COORDINATOR as any).rejectResearch = async () => ({
-      status: "recorded",
-    });
-    expect(
-      (
-        await request(jobId, "research-reject", {
-          baseSha,
-          offerSha256: offer.offerSha256,
-          refs: [],
-          pullRequests: [],
-        })
-      ).status,
-    ).toBe("research_rejected");
-    expect(ai).toHaveBeenCalledTimes(1);
-    const call = sql.prepare("SELECT * FROM seo_model_calls").get()!;
-    expect(call.phase).toBe("plan");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const call = sql.prepare("SELECT * FROM seo_haiku_model_calls").get()!;
     expect(call.request_sha256).toBe(
-      await sha256(JSON.stringify(ai.mock.calls[0][1])),
+      await sha256(fetcher.mock.calls[0][1].body),
     );
     expect(
       objects.get("seo-provider-responses/" + call.call_id + ".json"),
@@ -3307,29 +3281,47 @@ describe("new DeepSeek job profile", () => {
     expect(
       JSON.parse(objects.get("seo-responses/" + call.call_id + ".json")!)
         .provider,
-    ).toBe("workers-ai");
+    ).toBe("anthropic");
     for (const query of [
-      "DELETE FROM seo_job_models",
-      "UPDATE seo_job_models SET version=1",
-      "DELETE FROM seo_model_calls",
+      "DELETE FROM seo_haiku_job_models",
+      "UPDATE seo_haiku_job_models SET version=3",
+      "DELETE FROM seo_haiku_model_calls",
       "UPDATE seo_budget_calls SET reserved_micros=1",
     ])
       expect(() => sql.exec(query)).toThrow();
-    expect((await editorialStatus(env, { runId })).status).toBe(
-      "research_rejected",
-    );
-    expect(ai).toHaveBeenCalledTimes(1);
   });
-  it("cannot retrofit the new model onto an existing legacy job", async () => {
+  it("cannot retrofit v3 onto an existing legacy job", async () => {
     deepseekProfile = false;
     env.SEO_AI_MODEL = "gpt-6-luna";
     const jobId = await claimed();
     expect(() =>
       sql
-        .prepare("INSERT INTO seo_job_models VALUES(?,2,?,'gpt-6-luna')")
-        .run(jobId, model),
-    ).toThrow("seo_model_new_only");
+        .prepare(
+          "INSERT INTO seo_haiku_job_models VALUES(?,3,'claude-haiku-5-5','gpt-6-luna')",
+        )
+        .run(jobId),
+    ).toThrow("seo_haiku_new_only");
   });
+});
+
+it("stops a nine-language v3 job before a model call when its maximum exceeds the unchanged cap", async () => {
+  deepseekProfile = true;
+  env.SEO_AI_MODEL = "claude-haiku-5-5";
+  env.ANTHROPIC_API_KEY = "fixture";
+  env.SEO_RESEARCH_ENABLED = "true";
+  now = Date.parse("2026-11-03T01:00:00Z");
+  clock.mockReturnValue(now);
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const jobId = await inspecting();
+  expect(
+    (await request(jobId, "claim", { baseSha, files, generationOutput: 2 }))
+      .status,
+  ).toBe("unresolved");
+  expect(sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n).toBe(
+    0,
+  );
+  expect(fetcher).not.toHaveBeenCalled();
 });
 
 it("commits new claiming state before coordinator re-enters the CMS proof, then records claim without a model call", async () => {
@@ -3434,7 +3426,9 @@ it("commits new claiming state before coordinator re-enters the CMS proof, then 
 
 it("rejects an old runner before any AI for the new generation contract", async () => {
   deepseekProfile = true;
-  env.SEO_AI_MODEL = SEO_DEEPSEEK;
+  env.SEO_AI_MODEL = "claude-haiku-5-5";
+  now = Date.parse("2026-11-03T01:00:00Z");
+  clock.mockReturnValue(now);
   env.SEO_RESEARCH_ENABLED = "true";
   const id = await inspecting();
   expect((await request(id, "claim", { baseSha, files })).status).toBe(

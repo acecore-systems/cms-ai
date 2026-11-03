@@ -10,6 +10,7 @@ export async function assertPlanOutputPreflight(
   jobId: string,
   budgetRunId: string,
   payload: Record<string, unknown>,
+  modelVersion: 2 | 3 = 2,
 ) {
   const job = await env.CMS_AI_DB.prepare(
     "SELECT j.input_allocation_sha256,COALESCE(g.version,1) AS generation_output FROM seo_editorial_jobs j JOIN seo_editorial_runs r ON r.run_id=j.run_id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id WHERE j.id=? AND r.budget_run_id=?",
@@ -22,7 +23,9 @@ export async function assertPlanOutputPreflight(
   if (
     !job ||
     !saved ||
-    payload.max_completion_tokens !== SEO_PLAN_OUTPUT_TOKENS
+    (modelVersion === 3
+      ? payload.max_tokens
+      : payload.max_completion_tokens) !== SEO_PLAN_OUTPUT_TOKENS
   )
     throw Error("seo_plan_preflight_mismatch");
   const raw = await saved.text();
@@ -31,11 +34,11 @@ export async function assertPlanOutputPreflight(
   const preflight = JSON.parse(raw);
   const maximum = fallbackMaximum(
     preflight.generationAllocation,
-    2,
+    modelVersion,
     job.generation_output,
   );
   if (
-    preflight.modelVersion !== 2 ||
+    preflight.modelVersion !== modelVersion ||
     preflight.modelMaximumMicros !== maximum ||
     preflight.planBytes !==
       new TextEncoder().encode(JSON.stringify(payload)).length ||

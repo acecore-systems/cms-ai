@@ -10,17 +10,17 @@ import { seoSite } from "../src/sites.ts";
 import { sha256 } from "../src/seo-hash.ts";
 import { stageBudget } from "../src/seo-stage-budget.ts";
 import { buildPlanRequest } from "../src/seo-checks.ts";
-import { deepseekPayload } from "../src/seo-deepseek.ts";
+import { haikuPayload } from "../src/seo-haiku.ts";
 import { externalScope } from "../src/seo-external-sources.ts";
 
-it("current eligibility measures the exact new-job DeepSeek plan envelope", () => {
+it("current eligibility measures the exact new-job Haiku plan envelope", () => {
   const options = currentInputPreflightOptions("acecore-systems");
   const source = {
     path: "src/content/insights/example.md",
     content:
       "---\ntitle: Example\n---\nExampleEngine のローダーがファイルを再帰検出します。",
   };
-  expect(options.model_version).toBe(2);
+  expect(options.model_version).toBe(3);
   const request = buildPlanRequest(
     source.content,
     2,
@@ -28,10 +28,10 @@ it("current eligibility measures the exact new-job DeepSeek plan envelope", () =
     externalScope(options.site_id, source),
     2,
     2,
-    2,
+    3,
   );
-  const payload = deepseekPayload(request, true);
-  expect(payload.max_completion_tokens).toBe(24000);
+  const payload = haikuPayload(request, true);
+  expect(payload.max_tokens).toBe(24000);
   expect(planInputBytes(source, options)).toBe(
     Buffer.byteLength(JSON.stringify(payload)),
   );
