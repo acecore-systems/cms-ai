@@ -1,9 +1,11 @@
 import { SEO_LONG_TEXT_MS } from "./seo-time-bounds.ts";
+import { HAIKU_MODEL, runAnthropic, callAnthropic } from "./anthropic.ts";
 import {
-  deepseekPayload,
-  deepseekUpperCost,
-  validateDeepseekResponse,
-} from "./seo-deepseek.ts";
+  haikuPayload,
+  haikuSchema,
+  haikuUpperCost,
+  validateHaikuResponse,
+} from "./seo-haiku.ts";
 import type { AppEnv } from "./env.ts";
 import { providerFailure } from "./provider-failure.ts";
 import { imageContent, type MessageContent } from "./images.ts";
@@ -91,7 +93,7 @@ export async function runInference(
   if (seoProvider && purpose !== "seo") throw Error("seo_model_not_allowed");
   if (seoProvider?.maxCompletionTokens !== undefined) {
     if (
-      seoProvider.model !== DEEPSEEK_MODEL ||
+      ![DEEPSEEK_MODEL, HAIKU_MODEL].includes(seoProvider.model) ||
       seoProvider.maxCompletionTokens !== 48000
     )
       throw Error("seo_model_not_allowed");
@@ -113,12 +115,17 @@ export async function runInference(
       request,
       beforeRequest,
       requestDeadline,
-      purpose === "seo" && seoProvider?.model === DEEPSEEK_MODEL,
+      purpose === "seo" && !!seoProvider,
       seoProvider?.onResponse,
     );
   } catch (error) {
     if (error instanceof HttpError) throw error;
-    if (model === "gpt-6-luna" || model === DEEPSEEK_MODEL || beforeRequest) {
+    if (
+      model === "gpt-6-luna" ||
+      model === DEEPSEEK_MODEL ||
+      model === HAIKU_MODEL ||
+      beforeRequest
+    ) {
       throw new HttpError(
         502,
         "AIの応答を取得できませんでした。時間をおいて再試行してください。",
@@ -603,7 +610,11 @@ function getModel(env: AppEnv, purpose: "cms" | "seo") {
     (purpose === "seo" ? env.SEO_AI_MODEL : env.CMS_AI_MODEL) || "",
   ).trim();
   const model = configured;
-  if (model !== "gpt-6-luna" && !isWorkersAiTextModel(model)) {
+  if (
+    model !== "gpt-6-luna" &&
+    model !== HAIKU_MODEL &&
+    !isWorkersAiTextModel(model)
+  ) {
     throw new HttpError(503, "AIモデルの設定が無効です。");
   }
   return model;
@@ -642,70 +653,52 @@ export async function runTextModel(
     request: Record<string, unknown>,
   ) => Promise<void>,
   requestDeadline?: number,
-  seoDeepseek = false,
+  seoPinned = false,
   onResponse?: (raw: unknown) => Promise<void>,
 ): Promise<unknown> {
-  if (isWorkersAiTextModel(model)) {
-    if (beforeRequest) {
+  if (model === HAIKU_MODEL) {
+    if (seoPinned) {
       if (
-        !seoDeepseek ||
-        model !== DEEPSEEK_MODEL ||
+        !beforeRequest ||
         !Number.isSafeInteger(requestDeadline) ||
         Date.now() >= requestDeadline!
       )
         throw Error("seo_model_not_allowed");
-      const input = deepseekPayload(request);
-      deepseekUpperCost(input);
-      await beforeRequest(model, input);
-      if (Date.now() >= requestDeadline!) throw Error("seo_deadline");
-      const raw = await (
-        env.AI.run as (
-          model: string,
-          input: unknown,
-          options: unknown,
-        ) => Promise<unknown>
-      )(model, input, {
-        signal: AbortSignal.timeout(
-          Math.max(
-            1,
-            Math.min(
-              // High-reasoning plan/review (24k) needs the same bounded wait as
-              // generation. The token reservation and root deadline stay fixed.
-              input.max_completion_tokens === 48000 ||
-                input.max_completion_tokens === 24000
-                ? SEO_LONG_TEXT_MS
-                : 120000,
-              requestDeadline! - Date.now(),
-            ),
-          ),
-        ),
-      });
-      if (onResponse) await onResponse(raw);
-      return validateDeepseekResponse(raw, input, requestDeadline!);
+      const schema = haikuSchema(request),
+        payload = haikuPayload(request);
+      haikuUpperCost(payload);
+      const raw = await callAnthropic(
+        env,
+        payload,
+        requestDeadline,
+        () => beforeRequest(model, payload),
+        onResponse,
+        SEO_LONG_TEXT_MS,
+      );
+      const content = validateHaikuResponse(
+        raw,
+        payload,
+        schema,
+        requestDeadline!,
+      );
+      return {
+        choices: [
+          { finish_reason: "stop", message: { role: "assistant", content } },
+        ],
+      };
     }
-    if (seoDeepseek) throw Error("seo_budget_required");
-    // DeepSeek uses the Chat Completions schema envelope, unlike legacy
-    // Workers AI models. Keep the CMS's existing effort choices compatible.
-    const { model: _model, ...chatRequest } = openAiPayload(
-      model,
-      request,
-      false,
-    );
-    const input =
-      model === DEEPSEEK_MODEL
-        ? {
-            ...chatRequest,
-            reasoning_effort:
-              request.reasoning_effort === "medium"
-                ? "high"
-                : request.reasoning_effort,
-          }
-        : request;
+    if (beforeRequest) throw Error("seo_model_not_allowed");
+    return runAnthropic(env, request, requestDeadline);
+  }
+  if (isWorkersAiTextModel(model)) {
+    if (model === DEEPSEEK_MODEL) throw Error("seo_deepseek_retired");
+    if (beforeRequest || seoPinned) throw Error("seo_model_not_allowed");
     return (env.AI.run as (model: string, input: unknown) => Promise<unknown>)(
       model,
-      input,
+      request,
     );
   }
+
   let apiKey: string;
   try {
     apiKey = (await env.OPENAI_API_KEY_STORE?.get())?.trim() || "";

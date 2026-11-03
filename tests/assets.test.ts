@@ -53,12 +53,8 @@ describe("shared client and runner assets", () => {
       new URL("../wrangler.jsonc", import.meta.url),
       "utf8",
     );
-    expect(config).toMatch(
-      /"CMS_AI_MODEL":\s*"@cf\/deepseek-ai\/deepseek-v4\.1-flash-1017"/,
-    );
-    expect(config).toContain(
-      '"SEO_AI_MODEL": "@cf/deepseek-ai/deepseek-v4.1-flash-1017"',
-    );
+    expect(config).toMatch(/"CMS_AI_MODEL":\s*"claude-haiku-5-5"/);
+    expect(config).toContain('"SEO_AI_MODEL": "claude-haiku-5-5"');
     expect(config).toMatch(/CMS_AI_IMAGES/);
     expect(config).toMatch(/CMS_AI_AUTOMERGE_ENABLED.*false/);
   });

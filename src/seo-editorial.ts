@@ -15,6 +15,7 @@ import {
   loadContinuation,
 } from "./seo-review-continuation.ts";
 import { SEO_DEEPSEEK } from "./seo-deepseek.ts";
+import { HAIKU_MODEL } from "./anthropic.ts";
 import {
   parseTrial,
   trialStatements,
@@ -88,7 +89,7 @@ type Run = {
 type EditorialJob = {
   editorial_scope: 1 | 2;
   source_recovery: 1 | 2;
-  model_version: 1 | 2;
+  model_version: 1 | 2 | 3;
   generation_output: 1 | 2;
   plan_instructions: 1 | 2;
   research_focus: 1 | 2;
@@ -140,7 +141,7 @@ export const runRow = (env: AppEnv, runId: string) =>
     .first<Run>();
 export const jobRow = (env: AppEnv, jobId: string) =>
   env.CMS_AI_DB.prepare(
-    "SELECT j.*,COALESCE(e.version,1) AS editorial_scope,COALESCE(m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(g.version,1) AS generation_output,COALESCE(s.version,1) AS source_recovery,COALESCE(f.version,1) AS research_focus,COALESCE(rf.version,1) AS retrieval_fallback FROM seo_editorial_jobs j LEFT JOIN seo_editorial_scope_contracts e ON e.job_id=j.id LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id LEFT JOIN seo_retrieval_fallback_contracts rf ON rf.job_id=j.id WHERE j.id=?",
+    "SELECT j.*,COALESCE(e.version,1) AS editorial_scope,COALESCE(h.version,m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(g.version,1) AS generation_output,COALESCE(s.version,1) AS source_recovery,COALESCE(f.version,1) AS research_focus,COALESCE(rf.version,1) AS retrieval_fallback FROM seo_editorial_jobs j LEFT JOIN seo_editorial_scope_contracts e ON e.job_id=j.id LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_haiku_job_models h ON h.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id LEFT JOIN seo_retrieval_fallback_contracts rf ON rf.job_id=j.id WHERE j.id=?",
   )
     .bind(jobId)
     .first<EditorialJob>();
@@ -386,6 +387,8 @@ async function advance(env: AppEnv, runId: string) {
       run = (await runRow(env, runId))!;
       continue;
     }
+    if (String(env.SEO_AI_MODEL) === SEO_DEEPSEEK)
+      throw Error("seo_deepseek_retired");
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
@@ -413,11 +416,11 @@ async function advance(env: AppEnv, runId: string) {
             ).bind(jobId, runId, run.candidate_index),
           ]
         : []),
-      ...(env.SEO_AI_MODEL === SEO_DEEPSEEK
+      ...(env.SEO_AI_MODEL === HAIKU_MODEL
         ? [
             env.CMS_AI_DB.prepare(
-              "INSERT INTO seo_job_models(job_id,version,text_model,search_model) SELECT ?,2,?,'gpt-6-luna' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
-            ).bind(jobId, SEO_DEEPSEEK, runId, run.candidate_index),
+              "INSERT INTO seo_haiku_job_models(job_id,version,text_model,search_model) SELECT ?,3,?,'gpt-6-luna' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+            ).bind(jobId, HAIKU_MODEL, runId, run.candidate_index),
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_generation_contracts(job_id,version,max_completion_tokens,reasoning_effort) SELECT ?,2,48000,'high' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
             ).bind(jobId, runId, run.candidate_index),
@@ -1102,8 +1105,13 @@ async function claimJob(
       job.generation_output,
     );
     const modelMaximum =
-      job.model_version === 2 && generationAllocation
-        ? fallbackMaximum(generationAllocation, 2, job.generation_output)
+      (job.model_version === 2 || job.model_version === 3) &&
+      generationAllocation
+        ? fallbackMaximum(
+            generationAllocation,
+            job.model_version,
+            job.generation_output,
+          )
         : undefined;
     const reasons = [
       ...(fallback && !fallback.fits ? ["shared_budget_insufficient"] : []),
@@ -1120,7 +1128,7 @@ async function claimJob(
             job.research_recovery,
             job.review_output,
           ).maximum) >
-        (job.model_version === 2
+        (job.model_version === 2 || job.model_version === 3
           ? newJobMonthLimit(monthJst)
           : monthBudgetMicros(monthJst))
         ? ["monthly_budget_insufficient"]
@@ -1130,7 +1138,7 @@ async function claimJob(
     const preflightRaw = JSON.stringify({
       version: 1,
       ...(modelMaximum
-        ? { modelVersion: 2, modelMaximumMicros: modelMaximum }
+        ? { modelVersion: job.model_version, modelMaximumMicros: modelMaximum }
         : {}),
       ...(fallback
         ? {
@@ -1745,8 +1753,12 @@ async function propose(
       ...(generationInputCap !== undefined ? { generationInputCap } : {}),
       instruction: transport.instruction,
     },
-    job.model_version === 2
-      ? { jobId: job.id, version: 2, generationVersion: job.generation_output }
+    job.model_version === 2 || job.model_version === 3
+      ? {
+          jobId: job.id,
+          version: job.model_version,
+          generationVersion: job.generation_output,
+        }
       : undefined,
   );
   alive(run);

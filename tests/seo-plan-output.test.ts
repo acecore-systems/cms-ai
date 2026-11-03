@@ -146,35 +146,15 @@ it.each(["old", "fallback", "bytes", "hash", "missing"])(
     expect(f.put).not.toHaveBeenCalled();
   },
 );
-it.each([6000, 24000])(
-  "stores length/empty raw at %i tokens, leaves reservation unresolved and never retries",
-  async (tokens) => {
-    vi.spyOn(Date, "now").mockReturnValue(now);
-    const timeout = vi.spyOn(AbortSignal, "timeout"),
-      f = await fixture();
-    f.response.usage.completion_tokens = tokens;
-    await expect(seoTextResponse(f.env, f.args)).rejects.toThrow(
-      "seo_research_call",
-    );
-    expect(f.ai).toHaveBeenCalledTimes(1);
-    expect(f.batch).toHaveBeenCalledTimes(1);
-    expect(f.ai.mock.calls[0][1]).toEqual(f.payload);
-    expect(deepseekUpperCost(f.payload)).toBeGreaterThan(24000 * 1.2);
-    expect(timeout).toHaveBeenLastCalledWith(480000);
-    expect(f.put).toHaveBeenCalledTimes(1);
-    expect(f.put.mock.calls[0][0]).toContain("seo-provider-responses/");
-    expect(f.finish).toHaveBeenCalledTimes(1);
-  },
-);
-it("clips the 24k wait to the original deadline", async () => {
+it("retired v2 plan stops before a reservation or provider call", async () => {
   vi.spyOn(Date, "now").mockReturnValue(now);
-  const timeout = vi.spyOn(AbortSignal, "timeout"),
-    f = await fixture();
-  await expect(
-    seoTextResponse(f.env, { ...f.args, deadline: now + 20000 }),
-  ).rejects.toThrow();
-  expect(timeout).toHaveBeenLastCalledWith(20000);
-  expect(f.ai).toHaveBeenCalledTimes(1);
+  const f = await fixture();
+  await expect(seoTextResponse(f.env, f.args)).rejects.toThrow(
+    "seo_research_call",
+  );
+  expect(f.ai).not.toHaveBeenCalled();
+  expect(f.batch).not.toHaveBeenCalled();
+  expect(f.put).not.toHaveBeenCalled();
 });
 
 it("loads the generation contract from real D1 schema, preserves rows and rejects stale estimates", async () => {

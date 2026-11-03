@@ -1,5 +1,5 @@
 import { SEO_HOSTED_RESPONSE_MS } from "./seo-time-bounds.ts";
-import { seoTextResponse } from "./seo-text-response.ts";
+import { seoHaikuTextResponse } from "./seo-haiku-response.ts";
 import { assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
 import { SeoBudget, sha256, RATE_VALID_UNTIL } from "./seo-budget.ts";
@@ -82,7 +82,7 @@ export async function seoResponse(
   args: {
     runId: string;
     jobId?: string;
-    modelVersion?: 1 | 2;
+    modelVersion?: 1 | 2 | 3;
     budgetVersion?: number;
     recovery?: number;
     reviewOutput?: number;
@@ -96,11 +96,12 @@ export async function seoResponse(
   if (String(env.SEO_GENERATION_ENABLED) !== "true")
     throw new Error("seo_research_disabled");
   if (
-    args.modelVersion === 2 &&
+    (args.modelVersion === 2 || args.modelVersion === 3) &&
     (args.phase === "plan" || args.phase === "review")
   ) {
     if (!args.jobId) throw Error("seo_model_missing");
-    return seoTextResponse(env, {
+    if (args.modelVersion === 2) throw Error("seo_deepseek_retired");
+    return seoHaikuTextResponse(env, {
       ...args,
       jobId: args.jobId,
       phase: args.phase,
@@ -137,11 +138,12 @@ export async function seoResponse(
       Date.now(),
       args.deadline,
       args.budgetVersion,
-      args.modelVersion === 2
+      args.modelVersion === 2 || args.modelVersion === 3
         ? {
             jobId: args.jobId!,
             phase: args.phase ?? "research",
             model: "gpt-6-luna",
+            modelVersion: args.modelVersion,
           }
         : undefined,
     );

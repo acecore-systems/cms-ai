@@ -55,7 +55,12 @@ export class SeoBudget {
     now = Date.now(),
     deadline = now + 30 * 60_000,
     version = 1,
-    modelAudit?: { jobId: string; phase: string; model: string },
+    modelAudit?: {
+      jobId: string;
+      phase: string;
+      model: string;
+      modelVersion?: 2 | 3;
+    },
   ) {
     const runLimit = stageBudget(version).runMicros;
     if (
@@ -81,7 +86,7 @@ export class SeoBudget {
         ? [
             this.db
               .prepare(
-                "INSERT INTO seo_model_calls(call_id,job_id,phase,model,request_sha256,budget_run_id) VALUES(?,?,?,?,?,?)",
+                `INSERT INTO ${modelAudit.modelVersion === 3 ? "seo_haiku_model_calls" : "seo_model_calls"}(call_id,job_id,phase,model,request_sha256,budget_run_id) VALUES(?,?,?,?,?,?)`,
               )
               .bind(
                 callId,
