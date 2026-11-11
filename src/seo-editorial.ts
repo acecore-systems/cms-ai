@@ -90,7 +90,7 @@ type Run = {
 type EditorialJob = {
   editorial_scope: 1 | 2;
   source_recovery: 1 | 2;
-  model_version: 1 | 2 | 3 | 4;
+  model_version: 1 | 2 | 3 | 4 | 5;
   generation_output: 1 | 2;
   plan_instructions: 1 | 2;
   research_focus: 1 | 2;
@@ -142,7 +142,7 @@ export const runRow = (env: AppEnv, runId: string) =>
     .first<Run>();
 export const jobRow = (env: AppEnv, jobId: string) =>
   env.CMS_AI_DB.prepare(
-    "SELECT j.*,COALESCE(e.version,1) AS editorial_scope,COALESCE(mu.version,h.version,m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(mg.version,g.version,1) AS generation_output,COALESCE(s.version,1) AS source_recovery,COALESCE(f.version,1) AS research_focus,COALESCE(rf.version,1) AS retrieval_fallback FROM seo_editorial_jobs j LEFT JOIN seo_editorial_scope_contracts e ON e.job_id=j.id LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_haiku_job_models h ON h.job_id=j.id LEFT JOIN seo_muse_job_models mu ON mu.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_muse_generation_contracts mg ON mg.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id LEFT JOIN seo_retrieval_fallback_contracts rf ON rf.job_id=j.id WHERE j.id=?",
+    "SELECT j.*,COALESCE(e.version,1) AS editorial_scope,COALESCE(v5.version,mu.version,h.version,m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(vg.version,mg.version,g.version,1) AS generation_output,COALESCE(s.version,1) AS source_recovery,COALESCE(f.version,1) AS research_focus,COALESCE(rf.version,1) AS retrieval_fallback FROM seo_editorial_jobs j LEFT JOIN seo_editorial_scope_contracts e ON e.job_id=j.id LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_haiku_job_models h ON h.job_id=j.id LEFT JOIN seo_muse_job_models mu ON mu.job_id=j.id LEFT JOIN seo_v5_job_models v5 ON v5.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_muse_generation_contracts mg ON mg.job_id=j.id LEFT JOIN seo_v5_generation_contracts vg ON vg.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id LEFT JOIN seo_retrieval_fallback_contracts rf ON rf.job_id=j.id WHERE j.id=?",
   )
     .bind(jobId)
     .first<EditorialJob>();
@@ -403,6 +403,13 @@ async function advance(env: AppEnv, runId: string) {
     }
     if (String(env.SEO_AI_MODEL) === SEO_DEEPSEEK)
       throw Error("seo_deepseek_retired");
+    if (
+      String(env.SEO_AI_MODEL) === MUSE_MODEL &&
+      !["parallel-free", "luna-legacy"].includes(
+        String(env.SEO_SEARCH_PROVIDER),
+      )
+    )
+      throw Error("seo_search_provider_invalid");
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
@@ -430,7 +437,19 @@ async function advance(env: AppEnv, runId: string) {
             ).bind(jobId, runId, run.candidate_index),
           ]
         : []),
-      ...(String(env.SEO_AI_MODEL) === MUSE_MODEL
+      ...(String(env.SEO_AI_MODEL) === MUSE_MODEL &&
+      env.SEO_SEARCH_PROVIDER === "parallel-free"
+        ? [
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_v5_job_models(job_id,version,text_model,search_model) SELECT ?,5,?,'parallel-free' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+            ).bind(jobId, MUSE_MODEL, runId, run.candidate_index),
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_v5_generation_contracts(job_id,version,max_completion_tokens,reasoning_effort) SELECT ?,2,48000,'medium' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+            ).bind(jobId, runId, run.candidate_index),
+          ]
+        : []),
+      ...(String(env.SEO_AI_MODEL) === MUSE_MODEL &&
+      env.SEO_SEARCH_PROVIDER === "luna-legacy"
         ? [
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_muse_job_models(job_id,version,text_model,search_model) SELECT ?,4,?,'gpt-6-luna' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
@@ -1128,7 +1147,8 @@ async function claimJob(
     const modelMaximum =
       (job.model_version === 2 ||
         job.model_version === 3 ||
-        job.model_version === 4) &&
+        job.model_version === 4 ||
+        job.model_version === 5) &&
       generationAllocation
         ? fallbackMaximum(
             generationAllocation,
@@ -1153,7 +1173,8 @@ async function claimJob(
           ).maximum) >
         (job.model_version === 2 ||
         job.model_version === 3 ||
-        job.model_version === 4
+        job.model_version === 4 ||
+        job.model_version === 5
           ? newJobMonthLimit(monthJst)
           : monthBudgetMicros(monthJst))
         ? ["monthly_budget_insufficient"]
@@ -1789,7 +1810,8 @@ async function propose(
     },
     job.model_version === 2 ||
       job.model_version === 3 ||
-      job.model_version === 4
+      job.model_version === 4 ||
+      job.model_version === 5
       ? {
           jobId: job.id,
           version: job.model_version,

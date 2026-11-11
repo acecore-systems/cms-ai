@@ -59,10 +59,16 @@ export class SeoEditorial extends WorkerEntrypoint<AppEnv> {
       throw new Error("seo_haiku_retired");
     if (String(this.env.SEO_AI_MODEL) !== "muse-ember-1.0")
       throw new Error("seo_model_not_allowed");
+    if (
+      !["parallel-free", "luna-legacy"].includes(
+        String(this.env.SEO_SEARCH_PROVIDER),
+      )
+    )
+      throw new Error("seo_model_not_allowed");
     return editorialEligibility(
       input,
       seoRepositoryReader(this.env, spec.site, v.deadline!),
-      4,
+      this.env.SEO_SEARCH_PROVIDER === "parallel-free" ? 5 : 4,
     );
   }
   async fetch() {

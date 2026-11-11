@@ -1,4 +1,5 @@
 import { musePayload } from "../src/seo-muse.ts";
+import { verifyParallelResearch } from "../src/seo-parallel-flow.ts";
 import { expandSharedText } from "../src/seo-input-text.ts";
 import { SeoRunner } from "../seo-runner/index.mjs";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
@@ -17,6 +18,9 @@ import {
   editorialStatus,
   editorialReport,
   handleSeoRunnerRequest,
+  jobRow,
+  runRow,
+  checkContext,
 } from "../src/seo-editorial.ts";
 import { buildEditorialInstruction } from "../src/seo-editorial-instruction.ts";
 import { sha256 } from "../src/seo-hash.ts";
@@ -115,6 +119,7 @@ beforeEach(async () => {
     "0045_seo_review_scope.sql",
     "0046_seo_haiku_models.sql",
     "0047_seo_muse_models.sql",
+    "0048_seo_parallel_models.sql",
   ])
     sql.exec(
       readFileSync(
@@ -145,6 +150,7 @@ beforeEach(async () => {
     SEO_GENERATION_ENABLED: "true",
     CMS_AI_MODEL: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
     SEO_AI_MODEL: "gpt-6-luna",
+    SEO_SEARCH_PROVIDER: "luna-legacy",
     CMS_AI_DB: {
       prepare,
       batch: async (statements: { query: string; args: unknown[] }[]) => {
@@ -186,11 +192,14 @@ beforeEach(async () => {
     CMS_AI_IMAGES: {
       put: async (
         key: string,
-        value: string,
+        value: string | Uint8Array,
         options?: { onlyIf?: unknown },
       ) => {
         if (options?.onlyIf && objects.has(key)) return null;
-        objects.set(key, value);
+        objects.set(
+          key,
+          typeof value === "string" ? value : new TextDecoder().decode(value),
+        );
         return {};
       },
       get: async (key: string) =>
@@ -198,6 +207,8 @@ beforeEach(async () => {
           ? {
               json: async () => JSON.parse(objects.get(key)!),
               text: async () => objects.get(key)!,
+              arrayBuffer: async () =>
+                new TextEncoder().encode(objects.get(key)!).buffer,
             }
           : null,
     },
@@ -422,6 +433,7 @@ describe("SEO durable editorial boundary", () => {
     "ja-late",
     "wiki-pass",
     "muse-wiki-pass",
+    "parallel-wiki-pass",
     "wiki-valid",
     "wiki-lost-callback",
     "wiki-missing-manifest",
@@ -445,11 +457,13 @@ describe("SEO durable editorial boundary", () => {
       files = files.slice(0, 1);
     }
     if (japaneseOnly && variant === "pass") variant = "wiki-pass";
-    const muse = variant === "muse-wiki-pass";
+    const parallel = variant === "parallel-wiki-pass";
+    const muse = variant === "muse-wiki-pass" || parallel;
     if (muse) {
       variant = "wiki-pass";
       deepseekProfile = true;
       env.SEO_AI_MODEL = "muse-ember-1.0";
+      if (parallel) env.SEO_SEARCH_PROVIDER = "parallel-free";
       env.META_API_KEY_STORE = { get: async () => "fixture" };
       now = Date.parse("2026-11-03T01:00:00Z");
       clock.mockReturnValue(now);
@@ -476,7 +490,9 @@ describe("SEO durable editorial boundary", () => {
         workflowSha: baseSha,
       };
     }
-    const reference = "https://docs.example.org/new-guide";
+    const reference = parallel
+      ? "https://geysermc.org/wiki/geyser/"
+      : "https://docs.example.org/new-guide";
     const infer = mocks.infer.getMockImplementation()!;
     mocks.infer.mockImplementation(async (...args) => {
       const result = await infer(...args);
@@ -484,6 +500,47 @@ describe("SEO durable editorial boundary", () => {
       return result;
     });
     const fetchMock = vi.fn(async (_url, options) => {
+      if (parallel && _url === "https://search.parallel.ai/mcp") {
+        const request = JSON.parse(options.body);
+        if (request.method === "initialize")
+          return new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+            {
+              headers: {
+                "content-type": "application/json",
+                "mcp-session-id": "test-session",
+              },
+            },
+          );
+        if (request.method === "notifications/initialized")
+          return new Response(null, { status: 202 });
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            result: {
+              structuredContent: {
+                search_id: "search_fixture",
+                session_id: request.params.arguments.session_id,
+                warnings: null,
+                results: [
+                  {
+                    url: reference,
+                    title: "Guide",
+                    excerpts: ["Original article guide"],
+                  },
+                ],
+              },
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      if (parallel && _url === reference)
+        return new Response(
+          "<html><main><p>Primary source supporting the original article statement.</p></main></html>",
+          { headers: { "content-type": "text/html" } },
+        );
       const payload = JSON.parse(options.body);
       const meta = payload.model === "muse-ember-1.0";
       const input = JSON.parse(
@@ -494,49 +551,69 @@ describe("SEO durable editorial boundary", () => {
           input.discovery ? "high" : "low",
         );
       const research = !!payload.tools;
-      const value = input.claims
-        ? {
-            verdict: "ready",
-            claimId: input.claims[0].id,
-            targetQuote: input.claims[0].contextParts.find(
-              (p: any) => p.selectable,
-            ).quote,
-            conditions: [
-              input.claims[0].contextParts.find((p: any) => p.selectable).quote,
-            ],
-            anchors: ["Original"],
-            queries: ["Original article guide"],
-          }
-        : research
+      const value =
+        parallel && input.candidates
           ? {
-              verdict: "verified",
-              sources: [
-                {
-                  url: reference,
-                  title: "Guide",
-                  claimId: "claim-1",
-                  excerpt:
-                    "Primary source supporting the original article statement.",
-                  assessment: "supports",
-                },
-              ],
+              verdict: "selected",
+              selectedUrl: reference,
+              reason: "Official documentation",
             }
-          : {
-              verdict: variant === "wiki-pass" ? "pass" : "fail",
-              files: input.files.map((f: any) => ({
-                path: f.path,
-                meaningPreserved: true,
-                naturalLanguage: true,
-                referencesSupported: true,
-                ...(input.reviewScope === 2 ? { baselineIssues: [] } : {}),
-                issues:
-                  variant === "wiki-pass"
-                    ? []
-                    : input.reviewScope === 2
-                      ? [scopeBlocker(input, f.path)]
-                      : ["原文の条件が脱落"],
-              })),
-            };
+          : parallel && input.text
+            ? {
+                verdict: "verified",
+                assessment: "supports",
+                claimId: input.plan.claimId,
+                url: reference,
+                title: "Guide",
+                excerpt:
+                  "Primary source supporting the original article statement.",
+              }
+            : input.claims
+              ? {
+                  verdict: "ready",
+                  claimId: input.claims[0].id,
+                  targetQuote: input.claims[0].contextParts.find(
+                    (p: any) => p.selectable,
+                  ).quote,
+                  conditions: [
+                    input.claims[0].contextParts.find((p: any) => p.selectable)
+                      .quote,
+                  ],
+                  anchors: ["Original"],
+                  queries: ["Original article guide"],
+                }
+              : research
+                ? {
+                    verdict: "verified",
+                    sources: [
+                      {
+                        url: reference,
+                        title: "Guide",
+                        claimId: "claim-1",
+                        excerpt:
+                          "Primary source supporting the original article statement.",
+                        assessment: "supports",
+                      },
+                    ],
+                  }
+                : {
+                    verdict: variant === "wiki-pass" ? "pass" : "fail",
+                    files: input.files.map((f: any) => ({
+                      path: f.path,
+                      meaningPreserved: true,
+                      naturalLanguage: true,
+                      referencesSupported: true,
+                      ...(input.reviewScope === 2
+                        ? { baselineIssues: [] }
+                        : {}),
+                      issues:
+                        variant === "wiki-pass"
+                          ? []
+                          : input.reviewScope === 2
+                            ? [scopeBlocker(input, f.path)]
+                            : ["原文の条件が脱落"],
+                    })),
+                  };
       if (meta)
         return new Response(
           JSON.stringify({
@@ -666,14 +743,37 @@ describe("SEO durable editorial boundary", () => {
         ).status,
       ).toBe("claimed");
     } else jobId = await claimed();
+    const researchResult = await request(jobId, "research", {});
     expect(
-      (await request(jobId, "research", {})).status,
+      researchResult.status,
       JSON.stringify(
         [...objects.entries()].filter(
           ([k]) => k.includes(jobId) && k.includes("failure"),
         ),
       ),
     ).toBe("researched");
+    if (parallel) {
+      const job = (await jobRow(env, jobId))!;
+      const run = (await runRow(env, job.run_id))!;
+      const context = checkContext(job, run);
+      const proofKeys = [
+        "parallel-request.json",
+        "parallel-search.json",
+        "parallel-body.bin",
+        "parallel-proof.json",
+      ].map((name) => `seo-editorial/${jobId}/${name}`);
+      for (const proofKey of proofKeys) {
+        const saved = objects.get(proofKey)!;
+        objects.set(proofKey, saved + "tamper");
+        await expect(
+          verifyParallelResearch(env, context, researchResult.evidence),
+        ).rejects.toThrow();
+        objects.set(proofKey, saved);
+      }
+      await expect(
+        verifyParallelResearch(env, context, researchResult.evidence),
+      ).resolves.toBeUndefined();
+    }
     const finalFiles = [];
     let japanese = "";
     for (let step = 0; step < files.length; step++) {
@@ -699,7 +799,7 @@ describe("SEO durable editorial boundary", () => {
       const reviewed = await request(jobId, "review", { files: finalFiles });
       expect(reviewed.status).toBe("reviewed");
       expect(mocks.infer).toHaveBeenCalledTimes(1);
-      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock).toHaveBeenCalledTimes(parallel ? 8 : 4);
       expect(
         sql.prepare("SELECT count(*) n FROM seo_budget_calls").get()!.n,
       ).toBe(5);
@@ -709,7 +809,7 @@ describe("SEO durable editorial boundary", () => {
       if (muse) {
         const modelCalls = sql
           .prepare(
-            "SELECT phase,model FROM seo_muse_model_calls ORDER BY phase",
+            `SELECT phase,model FROM ${parallel ? "seo_v5_model_calls" : "seo_muse_model_calls"} ORDER BY phase`,
           )
           .all();
         expect(modelCalls).toHaveLength(5);
@@ -717,12 +817,16 @@ describe("SEO durable editorial boundary", () => {
           modelCalls
             .filter((c) => c.model === "muse-ember-1.0")
             .map((c) => c.phase),
-        ).toEqual(["generation", "plan", "review"]);
+        ).toEqual(
+          parallel
+            ? ["discovery", "generation", "plan", "research", "review"]
+            : ["generation", "plan", "review"],
+        );
         expect(
           modelCalls
             .filter((c) => c.model === "gpt-6-luna")
             .map((c) => c.phase),
-        ).toEqual(["discovery", "research"]);
+        ).toEqual(parallel ? [] : ["discovery", "research"]);
       }
       expect(preflight.allocationVersion).toBe(2);
       expect(preflight.generationAllocation).toHaveLength(1);

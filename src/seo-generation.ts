@@ -36,7 +36,7 @@ export async function generateSeo(
   input: unknown,
   modelProfile?: {
     jobId: string;
-    version: 2 | 3 | 4;
+    version: 2 | 3 | 4 | 5;
     generationVersion?: 1 | 2;
   },
 ) {
@@ -45,6 +45,11 @@ export async function generateSeo(
     return { status: "retired" as const, reason: "seo_haiku_retired" as const };
   if (String(env.SEO_GENERATION_ENABLED) !== "true")
     return { status: "disabled" as const };
+  if (
+    env.SEO_SEARCH_PROVIDER === "parallel-free" &&
+    modelProfile?.version !== 5
+  )
+    return { status: "failed" as const, error: "seo_legacy_model_retired" };
   let reserved = false;
   let stage = "validation";
   let callId = "";
@@ -158,7 +163,7 @@ export async function generateSeo(
           callId,
           site.id + ":" + articlePath,
           await sha256(JSON.stringify(request)),
-          modelVersion === 4
+          modelVersion === 4 || modelVersion === 5
             ? museUpperCost(request)
             : modelProfile
               ? deepseekUpperCost(request)
@@ -170,7 +175,10 @@ export async function generateSeo(
             ? {
                 jobId: modelProfile.jobId,
                 phase: "generation",
-                model: modelVersion === 4 ? MUSE_MODEL : SEO_DEEPSEEK,
+                model:
+                  modelVersion === 4 || modelVersion === 5
+                    ? MUSE_MODEL
+                    : SEO_DEEPSEEK,
                 modelVersion: modelVersion!,
               }
             : undefined,
@@ -182,7 +190,10 @@ export async function generateSeo(
       "seo",
       modelProfile
         ? {
-            model: modelVersion === 4 ? MUSE_MODEL : SEO_DEEPSEEK,
+            model:
+              modelVersion === 4 || modelVersion === 5
+                ? MUSE_MODEL
+                : SEO_DEEPSEEK,
             ...(modelProfile.generationVersion === 2
               ? { maxCompletionTokens: 48000 as const }
               : {}),

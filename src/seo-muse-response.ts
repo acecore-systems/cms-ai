@@ -20,7 +20,8 @@ export async function seoMuseTextResponse(
     articleKey: string;
     deadline: number;
     request: Record<string, unknown>;
-    phase: "plan" | "review";
+    phase: "plan" | "review" | "discovery" | "research";
+    modelVersion?: 4 | 5;
     budgetVersion?: number;
     recovery?: number;
     reviewOutput?: number;
@@ -33,14 +34,20 @@ export async function seoMuseTextResponse(
     const schema = textSchema(request, true),
       payload = musePayload(request, true);
     assertStageInput(
-      args.phase,
+      args.phase === "discovery" ? "research" : args.phase,
       payload,
       args.budgetVersion,
       args.recovery,
       args.reviewOutput,
     );
     if (args.phase === "plan")
-      await assertPlanOutputPreflight(env, args.jobId, args.runId, payload, 4);
+      await assertPlanOutputPreflight(
+        env,
+        args.jobId,
+        args.runId,
+        payload,
+        args.modelVersion ?? 4,
+      );
     const amount = museUpperCost(payload);
     const raw = await callMeta(
       env,
@@ -60,7 +67,7 @@ export async function seoMuseTextResponse(
             jobId: args.jobId,
             phase: args.phase,
             model: MUSE_MODEL,
-            modelVersion: 4,
+            modelVersion: args.modelVersion ?? 4,
           },
         );
         reserved = true;

@@ -83,7 +83,7 @@ export async function seoResponse(
   args: {
     runId: string;
     jobId?: string;
-    modelVersion?: 1 | 2 | 3 | 4;
+    modelVersion?: 1 | 2 | 3 | 4 | 5;
     budgetVersion?: number;
     recovery?: number;
     reviewOutput?: number;
@@ -97,18 +97,31 @@ export async function seoResponse(
   rejectRetiredSeoModel(args.modelVersion);
   if (String(env.SEO_GENERATION_ENABLED) !== "true")
     throw new Error("seo_research_disabled");
+  // Old pinned jobs remain readable, but must not resume paid model calls
+  // after the v5 cutover. Explicit rollback can restore the old runtime flag.
+  if (env.SEO_SEARCH_PROVIDER === "parallel-free" && args.modelVersion !== 5)
+    throw new Error("seo_legacy_model_retired");
+  if (
+    args.modelVersion === 5 &&
+    args.phase !== "plan" &&
+    args.phase !== "review"
+  )
+    throw new Error("seo_model_not_allowed");
   if (
     (args.modelVersion === 2 ||
       args.modelVersion === 3 ||
-      args.modelVersion === 4) &&
+      args.modelVersion === 4 ||
+      args.modelVersion === 5) &&
     (args.phase === "plan" || args.phase === "review")
   ) {
     if (!args.jobId) throw Error("seo_model_missing");
     if (args.modelVersion === 2) throw Error("seo_deepseek_retired");
+    if (args.modelVersion === 3) throw Error("seo_haiku_retired");
     return seoMuseTextResponse(env, {
       ...args,
       jobId: args.jobId,
       phase: args.phase,
+      modelVersion: args.modelVersion as 4 | 5,
     });
   }
   const budget = new SeoBudget(env.CMS_AI_DB);
