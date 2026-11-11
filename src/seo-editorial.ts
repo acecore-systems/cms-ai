@@ -16,7 +16,7 @@ import {
   loadContinuation,
 } from "./seo-review-continuation.ts";
 import { SEO_DEEPSEEK } from "./seo-deepseek.ts";
-import { HAIKU_MODEL } from "./anthropic.ts";
+import { RETIRED_HAIKU_MODEL } from "./seo-model-retirement.ts";
 import {
   parseTrial,
   trialStatements,
@@ -319,6 +319,14 @@ export async function startEditorial(
       }
       if (existing.input_sha256 !== inputHash)
         return { status: "unresolved" as const };
+      if (
+        existing.job_id &&
+        (await jobRow(env, existing.job_id))?.model_version === 3
+      )
+        return {
+          status: "retired" as const,
+          reason: "seo_haiku_retired" as const,
+        };
       return {
         status:
           existing.status === "unresolved"
@@ -327,6 +335,11 @@ export async function startEditorial(
         ...(existing.job_id ? { jobId: existing.job_id } : {}),
       };
     }
+    if (String(env.SEO_AI_MODEL) === RETIRED_HAIKU_MODEL)
+      return {
+        status: "retired" as const,
+        reason: "seo_haiku_retired" as const,
+      };
     const now = Date.now();
     if (deadline <= now || deadline > now + 30 * 60_000)
       return { status: "stopped" as const };
@@ -443,16 +456,6 @@ async function advance(env: AppEnv, runId: string) {
             ).bind(jobId, MUSE_MODEL, runId, run.candidate_index),
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_muse_generation_contracts(job_id,version,max_completion_tokens,reasoning_effort) SELECT ?,2,48000,'medium' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
-            ).bind(jobId, runId, run.candidate_index),
-          ]
-        : []),
-      ...(String(env.SEO_AI_MODEL) === HAIKU_MODEL
-        ? [
-            env.CMS_AI_DB.prepare(
-              "INSERT INTO seo_haiku_job_models(job_id,version,text_model,search_model) SELECT ?,3,?,'gpt-6-luna' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
-            ).bind(jobId, HAIKU_MODEL, runId, run.candidate_index),
-            env.CMS_AI_DB.prepare(
-              "INSERT INTO seo_generation_contracts(job_id,version,max_completion_tokens,reasoning_effort) SELECT ?,2,48000,'high' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
             ).bind(jobId, runId, run.candidate_index),
           ]
         : []),
@@ -660,7 +663,9 @@ export async function editorialStatus(env: AppEnv, input: unknown) {
   try {
     let run = await runRow(env, (input as { runId: string }).runId);
     if (!run) return { status: "unresolved" as const };
-    if (run.status === "pending" && Date.now() >= run.deadline) {
+    const retiredJob =
+      run.job_id && (await jobRow(env, run.job_id))?.model_version === 3;
+    if (!retiredJob && run.status === "pending" && Date.now() >= run.deadline) {
       if (run.job_id) await markUnresolved(env, run.job_id);
       else
         await env.CMS_AI_DB.prepare(
@@ -672,6 +677,7 @@ export async function editorialStatus(env: AppEnv, input: unknown) {
     }
     if (
       run.job_id &&
+      !retiredJob &&
       !(await notify(env, run, (await jobRow(env, run.job_id))!))
     )
       return {
@@ -719,6 +725,8 @@ async function authorizedJob(
   const run = await runRow(env, job.run_id);
   if (!run || run.job_id !== job.id)
     throw new HttpError(409, "SEOジョブは終了しています。");
+  if (bind && job.status === "queued" && job.model_version === 3)
+    throw new HttpError(409, "seo_haiku_retired");
   if (bind && job.status === "queued") {
     await env.CMS_AI_DB.prepare(
       "UPDATE seo_editorial_jobs SET github_run_id=?,status='inspecting' WHERE id=? AND status='queued' AND github_run_id IS NULL",
@@ -749,6 +757,8 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
     match[1],
     operation === "read",
   );
+  if (job.model_version === 3 && operation !== "read")
+    return json({ status: "retired", reason: "seo_haiku_retired" }, 409);
   if (operation === "unresolved") {
     await markUnresolved(env, job.id);
     return json({ status: "unresolved" });
@@ -1356,6 +1366,15 @@ export async function startReviewContinuation(env: AppEnv, input: unknown) {
       deadline: v.deadline,
     });
     if (!enabled(env)) throw Error("disabled");
+    const priorRun = await runRow(env, v.oldRunId);
+    if (
+      priorRun?.job_id &&
+      (await jobRow(env, priorRun.job_id))?.model_version === 3
+    )
+      return {
+        status: "retired" as const,
+        reason: "seo_haiku_retired" as const,
+      };
     const old = await inspectContinuationRequest(env, v.oldRunId, v.deadline);
     if (!(await continuationBudgetFits(env, old.reviewMicros)))
       throw Error("budget");

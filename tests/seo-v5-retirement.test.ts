@@ -23,15 +23,18 @@ it("blocks paid legacy calls before credentials or provider access on v5 cutover
           deadline: Date.now() + 10000,
           request: {},
         }),
-      ).rejects.toThrow("seo_legacy_model_retired");
+      ).rejects.toThrow(
+        version === 3 ? "seo_haiku_retired" : "seo_legacy_model_retired",
+      );
       const profile =
         version && version >= 2
           ? { jobId: "job", version: version as 2 | 3 | 4 }
           : undefined;
-      expect(await generateSeo(env, {}, profile)).toMatchObject({
-        status: "failed",
-        error: "seo_legacy_model_retired",
-      });
+      expect(await generateSeo(env, {}, profile)).toMatchObject(
+        version === 3
+          ? { status: "retired", reason: "seo_haiku_retired" }
+          : { status: "failed", error: "seo_legacy_model_retired" },
+      );
     }
     expect(get).not.toHaveBeenCalled();
     expect(fetcher).not.toHaveBeenCalled();

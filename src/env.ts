@@ -22,7 +22,6 @@ export type AppEnv = Omit<
   "SEO_COORDINATOR" | "SEO_SEARCH_PROVIDER"
 > &
   Record<SecretName, string> & {
-    ANTHROPIC_API_KEY?: string;
     OPENAI_API_KEY_STORE?: { get(): Promise<string> };
     META_API_KEY_STORE?: { get(): Promise<string> };
     SEO_SEARCH_PROVIDER?: string;
