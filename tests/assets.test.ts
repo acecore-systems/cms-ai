@@ -48,14 +48,14 @@ describe("shared client and runner assets", () => {
     expect(workflow).toMatch(/timeout-minutes: 45/);
   });
 
-  it("Worker設定はCMSのMuseとSEOのHaikuを分離しautomergeをfalseに固定する", async () => {
+  it("Worker設定はCMSとSEOのMuseおよびautomerge無効を固定する", async () => {
     const config = await readFile(
       new URL("../wrangler.jsonc", import.meta.url),
       "utf8",
     );
     expect(config).toMatch(/"CMS_AI_MODEL":\s*"muse-ember-1.0"/);
     expect(config).toContain('"secret_name": "acecore-cms-meta-api-key"');
-    expect(config).toContain('"SEO_AI_MODEL": "claude-haiku-5-5"');
+    expect(config).toContain('"SEO_AI_MODEL": "muse-ember-1.0"');
     expect(config).toMatch(/CMS_AI_IMAGES/);
     expect(config).toMatch(/CMS_AI_AUTOMERGE_ENABLED.*false/);
   });

@@ -29,10 +29,11 @@ const validPath = (s: unknown): s is string =>
 export async function editorialEligibility(
   input: unknown,
   fetcher: typeof fetch,
+  modelVersion: 3 | 4 = 3,
 ) {
   let stage = "input";
   try {
-    return await inspectEligibility(input, fetcher, (value) => {
+    return await inspectEligibility(input, fetcher, modelVersion, (value) => {
       stage = value;
     });
   } catch (error) {
@@ -50,6 +51,7 @@ export async function editorialEligibility(
 async function inspectEligibility(
   input: unknown,
   fetcher: typeof fetch,
+  modelVersion: 3 | 4,
   mark: (stage: string) => void,
 ) {
   const v = input as { site: string; urls: string[]; deadline: number };
@@ -383,7 +385,7 @@ async function inspectEligibility(
       });
       continue;
     }
-    const options = currentInputPreflightOptions(spec.site.id);
+    const options = currentInputPreflightOptions(spec.site.id, modelVersion);
     // A known plan overflow alone proves ineligibility. Do not spend bounded
     // repository reads on guidance that cannot change this result.
     if (

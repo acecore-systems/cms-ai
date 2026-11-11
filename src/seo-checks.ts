@@ -72,7 +72,7 @@ import {
 export type CheckContext = {
   editorialScope?: 1 | 2;
   sourceRecovery?: 1 | 2;
-  modelVersion?: 1 | 2 | 3;
+  modelVersion?: 1 | 2 | 3 | 4;
   planInstructions?: 1 | 2;
   researchFocus?: 1 | 2;
   retrievalFallback?: 1 | 2;
@@ -483,8 +483,8 @@ export function buildPlanRequest(
       task: "検索可能な原文claimを1つ選んでreadyの計画を作る。通常候補は事実文、tableContext付きは表の行をexact指定する。裏付け判定と資料取得は後続段階。",
     });
   }
-  if (![1, 2, 3].includes(modelVersion)) throw Error("seo_model_missing");
-  if (modelVersion === 2 || modelVersion === 3)
+  if (![1, 2, 3, 4].includes(modelVersion)) throw Error("seo_model_missing");
+  if (modelVersion === 2 || modelVersion === 3 || modelVersion === 4)
     request.max_output_tokens = SEO_PLAN_OUTPUT_TOKENS;
   return request;
 }

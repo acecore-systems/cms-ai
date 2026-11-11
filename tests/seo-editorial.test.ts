@@ -1,3 +1,4 @@
+import { musePayload } from "../src/seo-muse.ts";
 import { haikuPayload } from "../src/seo-haiku.ts";
 import { expandSharedText } from "../src/seo-input-text.ts";
 import { SeoRunner } from "../seo-runner/index.mjs";
@@ -114,6 +115,7 @@ beforeEach(async () => {
     "0044_seo_review_continuation_retry.sql",
     "0045_seo_review_scope.sql",
     "0046_seo_haiku_models.sql",
+    "0047_seo_muse_models.sql",
   ])
     sql.exec(
       readFileSync(
@@ -244,19 +246,30 @@ beforeEach(async () => {
         /変更は次の許可pathだけ: (\[[^\n]*\])/.exec(job.instruction)![1],
       )[0];
       await beforeRequest(
-        deepseekProfile ? "claude-haiku-5-5" : "gpt-6-luna",
-        deepseekProfile
-          ? haikuPayload({
+        seoProvider?.model === "muse-ember-1.0"
+          ? "muse-ember-1.0"
+          : deepseekProfile
+            ? "claude-haiku-5-5"
+            : "gpt-6-luna",
+        seoProvider?.model === "muse-ember-1.0"
+          ? musePayload({
               ...buildTextInferencePayload(_site, job, context),
               ...(seoProvider?.maxCompletionTokens
                 ? { max_completion_tokens: seoProvider.maxCompletionTokens }
                 : {}),
             })
-          : {
-              max_completion_tokens: 12000,
-              service_tier: "default",
-              messages: [{ role: "user", content: "bounded" }],
-            },
+          : deepseekProfile
+            ? haikuPayload({
+                ...buildTextInferencePayload(_site, job, context),
+                ...(seoProvider?.maxCompletionTokens
+                  ? { max_completion_tokens: seoProvider.maxCompletionTokens }
+                  : {}),
+              })
+            : {
+                max_completion_tokens: 12000,
+                service_tier: "default",
+                messages: [{ role: "user", content: "bounded" }],
+              },
       );
       return {
         changes: [
@@ -419,6 +432,7 @@ describe("SEO durable editorial boundary", () => {
     "ja-late",
     "wiki-pass",
     "haiku-wiki-pass",
+    "muse-wiki-pass",
     "wiki-valid",
     "wiki-lost-callback",
     "wiki-missing-manifest",
@@ -442,11 +456,13 @@ describe("SEO durable editorial boundary", () => {
       files = files.slice(0, 1);
     }
     if (japaneseOnly && variant === "pass") variant = "wiki-pass";
+    const muse = variant === "muse-wiki-pass";
     const deepseek = variant === "haiku-wiki-pass";
-    if (deepseek) {
+    if (deepseek || muse) {
       variant = "wiki-pass";
       deepseekProfile = true;
-      env.SEO_AI_MODEL = "claude-haiku-5-5";
+      env.SEO_AI_MODEL = muse ? "muse-ember-1.0" : "claude-haiku-5-5";
+      env.META_API_KEY_STORE = { get: async () => "fixture" };
       env.ANTHROPIC_API_KEY = "fixture";
       now = Date.parse("2026-11-03T01:00:00Z");
       clock.mockReturnValue(now);
@@ -483,8 +499,13 @@ describe("SEO durable editorial boundary", () => {
     const fetchMock = vi.fn(async (_url, options) => {
       const payload = JSON.parse(options.body);
       const anthropic = payload.model === "claude-haiku-5-5";
+      const meta = payload.model === "muse-ember-1.0";
       const input = JSON.parse(
-        anthropic ? payload.messages[0].content : payload.input,
+        anthropic
+          ? payload.messages[0].content
+          : meta
+            ? payload.messages[1].content
+            : payload.input,
       );
       if (payload.tools)
         expect(payload.tools[0].search_context_size).toBe(
@@ -534,6 +555,20 @@ describe("SEO durable editorial boundary", () => {
                       : ["原文の条件が脱落"],
               })),
             };
+      if (meta)
+        return new Response(
+          JSON.stringify({
+            id: "chatcmpl-fixture",
+            model: "muse-ember-1.0",
+            usage: { prompt_tokens: 1000, completion_tokens: 200 },
+            choices: [
+              {
+                finish_reason: "stop",
+                message: { content: JSON.stringify(value) },
+              },
+            ],
+          }),
+        );
       if (anthropic)
         return new Response(
           JSON.stringify({
@@ -706,16 +741,18 @@ describe("SEO durable editorial boundary", () => {
       const preflight = JSON.parse(
         objects.get("seo-editorial/" + jobId + "/eligibility-preflight.json")!,
       );
-      if (deepseek) {
+      if (deepseek || muse) {
         const modelCalls = sql
           .prepare(
-            "SELECT phase,model FROM seo_haiku_model_calls ORDER BY phase",
+            `SELECT phase,model FROM ${muse ? "seo_muse_model_calls" : "seo_haiku_model_calls"} ORDER BY phase`,
           )
           .all();
         expect(modelCalls).toHaveLength(5);
         expect(
           modelCalls
-            .filter((c) => c.model === "claude-haiku-5-5")
+            .filter(
+              (c) => c.model === (muse ? "muse-ember-1.0" : "claude-haiku-5-5"),
+            )
             .map((c) => c.phase),
         ).toEqual(["generation", "plan", "review"]);
         expect(
@@ -3217,6 +3254,73 @@ describe("new Haiku job profile", () => {
     now = Date.parse("2026-11-03T01:00:00Z");
     clock.mockReturnValue(now);
     env.SEO_RESEARCH_ENABLED = "true";
+  });
+  it("pins v4 and reserves the Muse plan before sending", async () => {
+    env.SEO_AI_MODEL = "muse-ember-1.0";
+    env.META_API_KEY_STORE = { get: async () => "fixture" };
+    const raw = {
+      id: "chatcmpl-fixture",
+      model: "muse-ember-1.0",
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            content: JSON.stringify({
+              verdict: "insufficient",
+              claimId: "",
+              targetQuote: "",
+              conditions: [],
+              anchors: [],
+              queries: [],
+            }),
+          },
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 100 },
+    };
+    const fetcher = vi.fn(async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      expect(payload.model).toBe("muse-ember-1.0");
+      expect(payload.reasoning_effort).toBe("medium");
+      expect(
+        sql.prepare("SELECT status FROM seo_budget_calls").get()!.status,
+      ).toBe("reserved");
+      expect(
+        sql.prepare("SELECT model FROM seo_muse_model_calls").get()!.model,
+      ).toBe(payload.model);
+      return new Response(JSON.stringify(raw));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const jobId = await claimed();
+    expect(
+      sql
+        .prepare("SELECT version FROM seo_muse_job_models WHERE job_id=?")
+        .get(jobId)!.version,
+    ).toBe(4);
+    expect(
+      sql
+        .prepare(
+          "SELECT reasoning_effort FROM seo_muse_generation_contracts WHERE job_id=?",
+        )
+        .get(jobId)!.reasoning_effort,
+    ).toBe("medium");
+    expect(
+      JSON.parse(
+        objects.get("seo-editorial/" + jobId + "/eligibility-preflight.json")!,
+      ).modelVersion,
+    ).toBe(4);
+    expect((await request(jobId, "research", {})).status).toBe(
+      "research_insufficient",
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const call = sql.prepare("SELECT * FROM seo_muse_model_calls").get()!;
+    expect(call.request_sha256).toBe(
+      await sha256(fetcher.mock.calls[0][1].body),
+    );
+    expect(
+      JSON.parse(objects.get("seo-responses/" + call.call_id + ".json")!)
+        .provider,
+    ).toBe("meta");
   });
   it("pins v3 before dispatch and saves one budgeted plan response", async () => {
     const raw = {

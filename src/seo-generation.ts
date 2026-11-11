@@ -1,3 +1,5 @@
+import { MUSE_MODEL } from "./meta.ts";
+import { museUpperCost } from "./seo-muse.ts";
 import { SEO_DEEPSEEK, deepseekUpperCost } from "./seo-deepseek.ts";
 import { HAIKU_MODEL } from "./anthropic.ts";
 import { haikuUpperCost } from "./seo-haiku.ts";
@@ -34,7 +36,11 @@ export function generationReadiness(env: AppEnv) {
 export async function generateSeo(
   env: AppEnv,
   input: unknown,
-  modelProfile?: { jobId: string; version: 2 | 3; generationVersion?: 1 | 2 },
+  modelProfile?: {
+    jobId: string;
+    version: 2 | 3 | 4;
+    generationVersion?: 1 | 2;
+  },
 ) {
   if (String(env.SEO_GENERATION_ENABLED) !== "true")
     return { status: "disabled" as const };
@@ -151,11 +157,13 @@ export async function generateSeo(
           callId,
           site.id + ":" + articlePath,
           await sha256(JSON.stringify(request)),
-          modelProfile?.version === 3
-            ? haikuUpperCost(request)
-            : modelProfile
-              ? deepseekUpperCost(request)
-              : upperCost(model, request),
+          modelProfile?.version === 4
+            ? museUpperCost(request)
+            : modelProfile?.version === 3
+              ? haikuUpperCost(request)
+              : modelProfile
+                ? deepseekUpperCost(request)
+                : upperCost(model, request),
           Date.now(),
           deadline as number | undefined,
           version,
@@ -163,7 +171,12 @@ export async function generateSeo(
             ? {
                 jobId: modelProfile.jobId,
                 phase: "generation",
-                model: modelProfile.version === 3 ? HAIKU_MODEL : SEO_DEEPSEEK,
+                model:
+                  modelProfile.version === 4
+                    ? MUSE_MODEL
+                    : modelProfile.version === 3
+                      ? HAIKU_MODEL
+                      : SEO_DEEPSEEK,
                 modelVersion: modelProfile.version,
               }
             : undefined,
@@ -175,7 +188,12 @@ export async function generateSeo(
       "seo",
       modelProfile
         ? {
-            model: modelProfile.version === 3 ? HAIKU_MODEL : SEO_DEEPSEEK,
+            model:
+              modelProfile.version === 4
+                ? MUSE_MODEL
+                : modelProfile.version === 3
+                  ? HAIKU_MODEL
+                  : SEO_DEEPSEEK,
             ...(modelProfile.generationVersion === 2
               ? { maxCompletionTokens: 48000 as const }
               : {}),

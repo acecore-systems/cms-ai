@@ -10,10 +10,10 @@ export async function assertPlanOutputPreflight(
   jobId: string,
   budgetRunId: string,
   payload: Record<string, unknown>,
-  modelVersion: 2 | 3 = 2,
+  modelVersion: 2 | 3 | 4 = 2,
 ) {
   const job = await env.CMS_AI_DB.prepare(
-    "SELECT j.input_allocation_sha256,COALESCE(g.version,1) AS generation_output FROM seo_editorial_jobs j JOIN seo_editorial_runs r ON r.run_id=j.run_id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id WHERE j.id=? AND r.budget_run_id=?",
+    "SELECT j.input_allocation_sha256,COALESCE(mg.version,g.version,1) AS generation_output FROM seo_editorial_jobs j JOIN seo_editorial_runs r ON r.run_id=j.run_id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_muse_generation_contracts mg ON mg.job_id=j.id WHERE j.id=? AND r.budget_run_id=?",
   )
     .bind(jobId, budgetRunId)
     .first<{ input_allocation_sha256: string; generation_output: number }>();
@@ -23,7 +23,7 @@ export async function assertPlanOutputPreflight(
   if (
     !job ||
     !saved ||
-    (modelVersion === 3
+    (modelVersion === 3 || modelVersion === 4
       ? payload.max_tokens
       : payload.max_completion_tokens) !== SEO_PLAN_OUTPUT_TOKENS
   )

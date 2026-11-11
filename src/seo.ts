@@ -58,6 +58,7 @@ export class SeoEditorial extends WorkerEntrypoint<AppEnv> {
     return editorialEligibility(
       input,
       seoRepositoryReader(this.env, spec.site, v.deadline!),
+      String(this.env.SEO_AI_MODEL) === "muse-ember-1.0" ? 4 : 3,
     );
   }
   async fetch() {

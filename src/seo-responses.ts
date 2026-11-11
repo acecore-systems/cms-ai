@@ -1,4 +1,5 @@
 import { SEO_HOSTED_RESPONSE_MS } from "./seo-time-bounds.ts";
+import { seoMuseTextResponse } from "./seo-muse-response.ts";
 import { seoHaikuTextResponse } from "./seo-haiku-response.ts";
 import { assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
@@ -82,7 +83,7 @@ export async function seoResponse(
   args: {
     runId: string;
     jobId?: string;
-    modelVersion?: 1 | 2 | 3;
+    modelVersion?: 1 | 2 | 3 | 4;
     budgetVersion?: number;
     recovery?: number;
     reviewOutput?: number;
@@ -96,12 +97,16 @@ export async function seoResponse(
   if (String(env.SEO_GENERATION_ENABLED) !== "true")
     throw new Error("seo_research_disabled");
   if (
-    (args.modelVersion === 2 || args.modelVersion === 3) &&
+    (args.modelVersion === 2 ||
+      args.modelVersion === 3 ||
+      args.modelVersion === 4) &&
     (args.phase === "plan" || args.phase === "review")
   ) {
     if (!args.jobId) throw Error("seo_model_missing");
     if (args.modelVersion === 2) throw Error("seo_deepseek_retired");
-    return seoHaikuTextResponse(env, {
+    return (
+      args.modelVersion === 4 ? seoMuseTextResponse : seoHaikuTextResponse
+    )(env, {
       ...args,
       jobId: args.jobId,
       phase: args.phase,
@@ -138,7 +143,9 @@ export async function seoResponse(
       Date.now(),
       args.deadline,
       args.budgetVersion,
-      args.modelVersion === 2 || args.modelVersion === 3
+      args.modelVersion === 2 ||
+        args.modelVersion === 3 ||
+        args.modelVersion === 4
         ? {
             jobId: args.jobId!,
             phase: args.phase ?? "research",
