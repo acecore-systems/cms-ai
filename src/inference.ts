@@ -1,5 +1,6 @@
 import { SEO_LONG_TEXT_MS } from "./seo-time-bounds.ts";
 import { HAIKU_MODEL, runAnthropic, callAnthropic } from "./anthropic.ts";
+import { MUSE_MODEL, runMeta } from "./meta.ts";
 import {
   haikuPayload,
   haikuSchema,
@@ -124,6 +125,7 @@ export async function runInference(
       model === "gpt-6-luna" ||
       model === DEEPSEEK_MODEL ||
       model === HAIKU_MODEL ||
+      model === MUSE_MODEL ||
       beforeRequest
     ) {
       throw new HttpError(
@@ -613,6 +615,7 @@ function getModel(env: AppEnv, purpose: "cms" | "seo") {
   if (
     model !== "gpt-6-luna" &&
     model !== HAIKU_MODEL &&
+    model !== MUSE_MODEL &&
     !isWorkersAiTextModel(model)
   ) {
     throw new HttpError(503, "AIモデルの設定が無効です。");
@@ -656,6 +659,10 @@ export async function runTextModel(
   seoPinned = false,
   onResponse?: (raw: unknown) => Promise<void>,
 ): Promise<unknown> {
+  if (model === MUSE_MODEL) {
+    if (beforeRequest || seoPinned) throw Error("seo_model_not_allowed");
+    return runMeta(env, request, requestDeadline);
+  }
   if (model === HAIKU_MODEL) {
     if (seoPinned) {
       if (
