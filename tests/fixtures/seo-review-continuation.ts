@@ -19,7 +19,7 @@ export async function continuationFixture(now: number) {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys=OFF");
   for (const file of readdirSync(new URL("../../migrations/", import.meta.url))
-    .filter((n) => n.endsWith(".sql") && n >= "0004")
+    .filter((n) => n.endsWith(".sql") && n.includes("_seo_") && n >= "0004")
     .sort())
     db.exec(
       readFileSync(

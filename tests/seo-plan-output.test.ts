@@ -169,7 +169,7 @@ it("loads the generation contract from real D1 schema, preserves rows and reject
   try {
     const db = await mf.getD1Database("DB");
     for (const name of readdirSync(new URL("../migrations/", import.meta.url))
-      .filter((n) => n.endsWith(".sql") && n >= "0004")
+      .filter((n) => n.endsWith(".sql") && n.includes("_seo_") && n >= "0004")
       .sort())
       await db.exec(
         readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8")
