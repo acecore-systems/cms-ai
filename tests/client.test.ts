@@ -79,6 +79,26 @@ it("相談専用の初期値と明示した最大値を送信する", async () =
   }
 });
 
+it("6段階を順序どおり選べる", async () => {
+  const ui = await setup();
+  try {
+    const effort = ui.form.elements.namedItem(
+      "reasoningEffort",
+    ) as HTMLSelectElement;
+    expect(Array.from(effort.options, (option) => option.value)).toEqual([
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(effort.value).toBe("medium");
+  } finally {
+    ui.window.close();
+  }
+});
+
 describe("image composer", () => {
   it("添付のプレビュー・削除・新規会話でobject URLを解放する", async () => {
     const ui = await setup();

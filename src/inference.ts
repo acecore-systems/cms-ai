@@ -108,6 +108,15 @@ export async function runInference(
     purpose === "seo"
       ? (seoProvider?.model ?? "gpt-6-luna")
       : getModel(env, purpose);
+  if (
+    purpose === "cms" &&
+    model !== MUSE_MODEL &&
+    ["minimal", "xhigh"].includes(job.reasoningEffort)
+  )
+    throw new HttpError(
+      503,
+      "現在のAIモデルはこの考える深さに対応していません。",
+    );
   if (model === "gpt-6-luna" && !env.OPENAI_API_KEY_STORE) {
     throw new HttpError(503, "OpenAI APIの設定がありません。");
   }
@@ -617,11 +626,7 @@ function getModel(env: AppEnv, purpose: "cms" | "seo") {
     (purpose === "seo" ? env.SEO_AI_MODEL : env.CMS_AI_MODEL) || "",
   ).trim();
   const model = configured;
-  if (
-    model !== "gpt-6-luna" &&
-    model !== MUSE_MODEL &&
-    !isWorkersAiTextModel(model)
-  ) {
+  if (model !== MUSE_MODEL && !isWorkersAiTextModel(model)) {
     throw new HttpError(503, "AIモデルの設定が無効です。");
   }
   return model;

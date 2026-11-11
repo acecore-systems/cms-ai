@@ -70,7 +70,7 @@ it("uses the fixed endpoint and refuses unexpected models or truncation", async 
   await expect(runMeta(env, request)).rejects.toThrow("meta_response_invalid");
 });
 
-it.each(["low", "medium", "high", "max"])(
+it.each(["minimal", "low", "medium", "high", "xhigh", "max"])(
   "sends selected effort %s",
   (effort) => {
     expect(

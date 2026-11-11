@@ -35,6 +35,7 @@ type JobRow = {
   instruction: string;
   pr_url: string | null;
   reasoning_effort: string;
+  muse_reasoning_effort: string | null;
   requested_by: string;
   requested_role: string;
   site_id: string;
@@ -48,7 +49,7 @@ const JOB_COLUMNS = [
   "id, site_id, conversation_id, turn_number, requested_by, requested_role,",
   "instruction, reasoning_effort, status, branch_name, assistant_message,",
   "summary, clarification, pr_url, changed_paths_json, error_message,",
-  "created_at, updated_at, attachments_json",
+  "created_at, updated_at, attachments_json, muse_reasoning_effort",
 ].join(" ");
 
 export async function getMembership(
@@ -246,8 +247,8 @@ export async function createJob(
         "INSERT INTO cms_ai_jobs",
         "(id, site_id, conversation_id, turn_number, requested_by, requested_role,",
         "instruction, reasoning_effort, status, branch_name, changed_paths_json,",
-        "pr_url, created_at, updated_at, attachments_json)",
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "pr_url, created_at, updated_at, attachments_json, muse_reasoning_effort)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       ].join(" "),
     )
       .bind(
@@ -258,7 +259,11 @@ export async function createJob(
         input.requestedBy,
         input.requestedRole,
         input.instruction,
-        input.reasoningEffort,
+        input.reasoningEffort === "minimal"
+          ? "low"
+          : input.reasoningEffort === "xhigh"
+            ? "high"
+            : input.reasoningEffort,
         "queued",
         branchName,
         "[]",
@@ -266,6 +271,9 @@ export async function createJob(
         now,
         now,
         JSON.stringify(input.attachments || []),
+        input.reasoningEffort === "minimal" || input.reasoningEffort === "xhigh"
+          ? input.reasoningEffort
+          : null,
       )
       .run();
   } catch (error) {
@@ -470,9 +478,9 @@ function parseJob(row: JobRow): Job {
     instruction: row.instruction,
     prUrl: normalizeGitHubUrl(row.pr_url),
     reasoningEffort: REASONING_EFFORTS.includes(
-      row.reasoning_effort as ReasoningEffort,
+      (row.muse_reasoning_effort ?? row.reasoning_effort) as ReasoningEffort,
     )
-      ? (row.reasoning_effort as ReasoningEffort)
+      ? ((row.muse_reasoning_effort ?? row.reasoning_effort) as ReasoningEffort)
       : "medium",
     requestedBy: row.requested_by,
     requestedRole: ROLES.includes(row.requested_role as Role)

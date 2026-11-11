@@ -54,7 +54,7 @@ it("registers v3 atomically without rewriting v2 and enforces immutable audit", 
   const db = new DatabaseSync(":memory:");
   try {
     for (const name of readdirSync(new URL("../migrations/", import.meta.url))
-      .filter((n) => n.endsWith(".sql") && n >= "0004")
+      .filter((n) => n.endsWith(".sql") && n.includes("_seo_") && n >= "0004")
       .sort())
       db.exec(
         readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8"),
@@ -87,7 +87,7 @@ it("migration keeps existing v2 rows unchanged and forbids backfilling v3 onto t
   const db = new DatabaseSync(":memory:");
   try {
     const migrations = readdirSync(new URL("../migrations/", import.meta.url))
-      .filter((n) => n.endsWith(".sql") && n >= "0004")
+      .filter((n) => n.endsWith(".sql") && n.includes("_seo_") && n >= "0004")
       .sort();
     for (const name of migrations.filter((n) => n < "0046"))
       db.exec(
@@ -136,7 +136,7 @@ it("workerd D1 atomically registers v3 and requires its matching audit for reser
   try {
     const db = await mf.getD1Database("DB");
     for (const name of readdirSync(new URL("../migrations/", import.meta.url))
-      .filter((n) => n.endsWith(".sql") && n >= "0004")
+      .filter((n) => n.endsWith(".sql") && n.includes("_seo_") && n >= "0004")
       .sort())
       await db.exec(
         readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8")

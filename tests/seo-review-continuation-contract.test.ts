@@ -5,7 +5,7 @@ import { continuationInput } from "../src/seo-review-continuation.ts";
 
 const migrations = () =>
   readdirSync(new URL("../migrations/", import.meta.url))
-    .filter((n) => n.endsWith(".sql") && n >= "0004")
+    .filter((n) => n.endsWith(".sql") && n.includes("_seo_") && n >= "0004")
     .sort();
 const sql = (name: string) =>
   readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8");
