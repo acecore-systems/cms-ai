@@ -1,3 +1,4 @@
+import type { SeoMuseEffort } from "./seo-muse-effort.ts";
 import { SEO_LONG_TEXT_MS } from "./seo-time-bounds.ts";
 import { RETIRED_HAIKU_MODEL } from "./seo-model-retirement.ts";
 import { textSchema } from "./seo-text-schema.ts";
@@ -73,6 +74,7 @@ export async function runInference(
   seoProvider?: {
     model: string;
     maxCompletionTokens?: 48000;
+    reasoningEffort?: SeoMuseEffort;
     onResponse?: (raw: unknown) => Promise<void>;
   },
 ): Promise<InferenceResult> {
@@ -120,6 +122,7 @@ export async function runInference(
       requestDeadline,
       purpose === "seo" && !!seoProvider,
       seoProvider?.onResponse,
+      seoProvider?.reasoningEffort,
     );
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -659,6 +662,7 @@ export async function runTextModel(
   requestDeadline?: number,
   seoPinned = false,
   onResponse?: (raw: unknown) => Promise<void>,
+  seoEffort?: SeoMuseEffort,
 ): Promise<unknown> {
   if (model === MUSE_MODEL) {
     if (seoPinned) {
@@ -669,7 +673,7 @@ export async function runTextModel(
       )
         throw Error("seo_model_not_allowed");
       const schema = textSchema(request),
-        payload = musePayload(request);
+        payload = musePayload(request, false, seoEffort);
       museUpperCost(payload);
       const raw = await callMeta(
         env,

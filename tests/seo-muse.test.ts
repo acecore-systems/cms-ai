@@ -3,7 +3,8 @@ import type { AppEnv } from "../src/env.ts";
 import { MUSE_MODEL } from "../src/meta.ts";
 import { runTextModel } from "../src/inference.ts";
 import { museCostBound, musePayload, museUpperCost } from "../src/seo-muse.ts";
-import { SeoBudget } from "../src/seo-budget.ts";
+import { seoMuseEffort } from "../src/seo-muse-effort.ts";
+import { SeoBudget, sha256 } from "../src/seo-budget.ts";
 import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 
@@ -224,7 +225,135 @@ it("workerd D1 atomically registers v4 and requires its matching audit for reser
         .bind(call)
         .first())!.reserved_micros,
     ).toBe(1000);
+    // The new contract and model are committed atomically with their job in D1.
+    const run2 = "seo-00000000-0000-4000-8000-000000000003";
+    const call2 = "seo-00000000-0000-4000-8000-000000000004";
+    await db
+      .prepare(
+        "INSERT INTO seo_editorial_runs(run_id,budget_run_id,input_sha256,deadline,candidates_json,created_at) VALUES('root2',?,'hash',?,'[]',?)",
+      )
+      .bind(run2, now + 60000, now)
+      .run();
+    await expect(
+      db.batch([
+        db.prepare(
+          "INSERT INTO seo_v5_job_models VALUES('orphan5',5,'muse-ember-1.0','parallel-free')",
+        ),
+        db.prepare(
+          "INSERT INTO seo_v5_effort_contracts VALUES('orphan5',1,2,48000,'max')",
+        ),
+      ]),
+    ).rejects.toThrow();
+    expect(
+      await db
+        .prepare(
+          "SELECT job_id FROM seo_v5_effort_contracts WHERE job_id='orphan5'",
+        )
+        .first(),
+    ).toBeNull();
+    await db.batch([
+      db.prepare(
+        "INSERT INTO seo_v5_job_models VALUES('new5',5,'muse-ember-1.0','parallel-free')",
+      ),
+      db.prepare(
+        "INSERT INTO seo_v5_effort_contracts VALUES('new5',1,2,48000,'max')",
+      ),
+      db
+        .prepare(
+          "INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index,call_id) VALUES('new5','root2','wiki',0,?)",
+        )
+        .bind(call2),
+    ]);
+    const payload = musePayload(
+      { ...request, max_completion_tokens: 48000 },
+      false,
+      "max",
+    );
+    const hash = await sha256(JSON.stringify(payload));
+    const audit = {
+      jobId: "new5",
+      phase: "generation" as const,
+      model: MUSE_MODEL,
+      modelVersion: 5 as const,
+    };
+    await expect(
+      budget.reserve(
+        run2,
+        call2,
+        "wiki:test",
+        hash,
+        1250001,
+        now,
+        now + 60000,
+        2,
+        audit,
+      ),
+    ).rejects.toThrow();
+    await budget.reserve(
+      run2,
+      call2,
+      "wiki:test",
+      hash,
+      museUpperCost(payload),
+      now,
+      now + 60000,
+      2,
+      audit,
+    );
+    expect(
+      await db
+        .prepare(
+          "SELECT m.request_sha256,b.request_sha256 AS charged,b.reserved_micros FROM seo_v5_model_calls m JOIN seo_budget_calls b ON b.id=m.call_id WHERE m.call_id=?",
+        )
+        .bind(call2)
+        .first(),
+    ).toMatchObject({
+      request_sha256: hash,
+      charged: hash,
+      reserved_micros: museUpperCost(payload),
+    });
+    await expect(
+      db
+        .prepare(
+          "UPDATE seo_v5_effort_contracts SET version=1 WHERE job_id='new5'",
+        )
+        .run(),
+    ).rejects.toThrow();
   } finally {
     await mf.dispose();
+  }
+});
+
+it("pins legacy medium and bounds each new stage including reasoning tokens", () => {
+  const phases = [
+    "discovery",
+    "research",
+    "plan",
+    "generation",
+    "review",
+  ] as const;
+  expect(phases.map((phase) => seoMuseEffort(0, phase))).toEqual([
+    "medium",
+    "medium",
+    "medium",
+    "medium",
+    "medium",
+  ]);
+  expect(phases.map((phase) => seoMuseEffort(1, phase))).toEqual([
+    "low",
+    "medium",
+    "medium",
+    "max",
+    "max",
+  ]);
+  for (const phase of phases) {
+    const payload = musePayload(request, false, seoMuseEffort(1, phase));
+    expect(payload.reasoning_effort).toBe(seoMuseEffort(1, phase));
+    expect(museUpperCost(payload)).toBe(
+      museCostBound(
+        new TextEncoder().encode(JSON.stringify(payload)).length,
+        12000,
+      ),
+    );
   }
 });

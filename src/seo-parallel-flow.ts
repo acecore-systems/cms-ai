@@ -19,6 +19,7 @@ import { sha256 } from "./seo-hash.ts";
 import { responseRequest, responseText } from "./seo-responses.ts";
 import { seoMuseTextResponse } from "./seo-muse-response.ts";
 import { musePayload } from "./seo-muse.ts";
+import { loadSeoMuseEffort } from "./seo-muse-effort.ts";
 
 type Check = (
   phase: "discovery" | "research",
@@ -480,7 +481,17 @@ export async function verifyParallelResearch(
             proof.suppliedText,
           );
     const expectedHash = await sha256(
-      JSON.stringify(musePayload(expectedRequest, true)),
+      JSON.stringify(
+        musePayload(
+          expectedRequest,
+          true,
+          await loadSeoMuseEffort(
+            env,
+            context.jobId,
+            phase as "discovery" | "research",
+          ),
+        ),
+      ),
     );
     if (
       !audit ||

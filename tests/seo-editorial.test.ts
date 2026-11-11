@@ -120,6 +120,7 @@ beforeEach(async () => {
     "0046_seo_haiku_models.sql",
     "0047_seo_muse_models.sql",
     "0048_seo_parallel_models.sql",
+    "0049_seo_muse_effort.sql",
   ])
     sql.exec(
       readFileSync(
@@ -260,12 +261,16 @@ beforeEach(async () => {
           ? "muse-ember-1.0"
           : "gpt-6-luna",
         seoProvider?.model === "muse-ember-1.0"
-          ? musePayload({
-              ...buildTextInferencePayload(_site, job, context),
-              ...(seoProvider?.maxCompletionTokens
-                ? { max_completion_tokens: seoProvider.maxCompletionTokens }
-                : {}),
-            })
+          ? musePayload(
+              {
+                ...buildTextInferencePayload(_site, job, context),
+                ...(seoProvider?.maxCompletionTokens
+                  ? { max_completion_tokens: seoProvider.maxCompletionTokens }
+                  : {}),
+              },
+              false,
+              seoProvider?.reasoningEffort,
+            )
           : {
               max_completion_tokens: 12000,
               service_tier: "default",
@@ -546,6 +551,15 @@ describe("SEO durable editorial boundary", () => {
       const input = JSON.parse(
         meta ? payload.messages[1].content : payload.input,
       );
+      if (parallel && meta) {
+        expect(payload.reasoning_effort).toBe(
+          input.candidates
+            ? "low"
+            : input.text || input.claims
+              ? "medium"
+              : "max",
+        );
+      }
       if (payload.tools)
         expect(payload.tools[0].search_context_size).toBe(
           input.discovery ? "high" : "low",
@@ -754,6 +768,7 @@ describe("SEO durable editorial boundary", () => {
     ).toBe("researched");
     if (parallel) {
       const job = (await jobRow(env, jobId))!;
+      expect(job.effort_policy).toBe(1);
       const run = (await runRow(env, job.run_id))!;
       const context = checkContext(job, run);
       const proofKeys = [
@@ -781,6 +796,8 @@ describe("SEO durable editorial boundary", () => {
         step,
         ...(step === 1 ? { japanese } : {}),
       });
+      if (parallel)
+        expect(mocks.infer.mock.calls.at(-1)?.[9]?.reasoningEffort).toBe("max");
       expect(
         result.status,
         "step=" +

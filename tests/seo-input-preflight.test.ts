@@ -40,6 +40,47 @@ it("current eligibility measures the exact new-job Muse plan envelope", () => {
   );
 });
 
+it("preflights new v5 using the exact stage effort envelope", async () => {
+  const spec = seoSite("systems")!;
+  const content =
+    '---\ntitle: Test\ndate: "2026-10-01"\n---\nExternal product supports complete configuration settings.';
+  const files = [
+    { path: "src/content/insights/example.md", content },
+    ...spec.locales.map((locale) => ({
+      path: `src/content/insights/${locale}/example.md`,
+      content: content + locale,
+    })),
+    ...spec.guidance.map((path) => ({ path, content: "Original guide." })),
+  ];
+  const article = sourceIdentity(
+    "systems",
+    "https://systems.acecore.net/insights/example/",
+    files,
+  )!;
+  const options = {
+    ...currentInputPreflightOptions(spec.site.id, 5),
+    editorial_scope: 1 as const,
+  };
+  const hash = await sha256(content);
+  const current = inputPreflight(
+    spec.site,
+    article,
+    files,
+    hash,
+    "reason",
+    options,
+  );
+  const legacy = inputPreflight(spec.site, article, files, hash, "reason", {
+    ...options,
+    effort_policy: 0,
+  });
+  expect(current.planBytes).toBe(legacy.planBytes);
+  expect(current.reviewBytes).toBe(legacy.reviewBytes - 3);
+  expect(current.generationInputs.map((x) => x.bytes)).toEqual(
+    legacy.generationInputs.map((x) => x.bytes - 3),
+  );
+});
+
 it.each([1, 2, 3, 4, 5, 6, 7, 8, 9])(
   "uses the full %i-language proportional pool and retains every source",
   async (count) => {

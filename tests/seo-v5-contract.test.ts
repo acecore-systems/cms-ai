@@ -66,3 +66,57 @@ it("adds v5 contracts without rewriting old schemas or rows and requires matchin
     db.close();
   }
 });
+
+it("adds immutable stage effort only to new v5 jobs and preserves legacy medium", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    for (const name of readdirSync(new URL("../migrations/", import.meta.url))
+      .filter((n) => n.endsWith(".sql") && n >= "0004" && n < "0049")
+      .sort())
+      db.exec(
+        readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8"),
+      );
+    db.exec(
+      "INSERT INTO seo_editorial_runs(run_id,budget_run_id,input_sha256,deadline,candidates_json,created_at) VALUES('old','old-budget','hash',99,'[]',1),('new','new-budget','hash',99,'[]',1)",
+    );
+    db.exec(
+      "BEGIN; INSERT INTO seo_v5_job_models VALUES('old-job',5,'muse-ember-1.0','parallel-free'); INSERT INTO seo_v5_generation_contracts VALUES('old-job',2,48000,'medium'); INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index) VALUES('old-job','old','wiki',0); COMMIT",
+    );
+    const old = db.prepare("SELECT * FROM seo_v5_generation_contracts").all();
+    db.exec(
+      readFileSync(
+        new URL("../migrations/0049_seo_muse_effort.sql", import.meta.url),
+        "utf8",
+      ),
+    );
+    expect(
+      db.prepare("SELECT * FROM seo_v5_generation_contracts").all(),
+    ).toEqual(old);
+    expect(() =>
+      db.exec(
+        "INSERT INTO seo_v5_effort_contracts VALUES('old-job',1,2,48000,'max')",
+      ),
+    ).toThrow();
+    db.exec(
+      "BEGIN; INSERT INTO seo_v5_job_models VALUES('new-job',5,'muse-ember-1.0','parallel-free'); INSERT INTO seo_v5_effort_contracts VALUES('new-job',1,2,48000,'max'); INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index) VALUES('new-job','new','wiki',0); COMMIT",
+    );
+    for (const query of [
+      "UPDATE seo_v5_effort_contracts SET version=1",
+      "DELETE FROM seo_v5_effort_contracts",
+      "INSERT OR REPLACE INTO seo_v5_effort_contracts VALUES('new-job',1,2,48000,'max')",
+      "INSERT INTO seo_v5_generation_contracts VALUES('new-job',2,48000,'medium')",
+      "UPDATE seo_editorial_jobs SET run_id='old' WHERE id='new-job'",
+      "DELETE FROM seo_editorial_jobs WHERE id='new-job'",
+    ])
+      expect(() => db.exec(query)).toThrow();
+    expect(
+      db
+        .prepare(
+          "SELECT generation_effort,max_completion_tokens FROM seo_v5_effort_contracts WHERE job_id='new-job'",
+        )
+        .get(),
+    ).toEqual({ generation_effort: "max", max_completion_tokens: 48000 });
+  } finally {
+    db.close();
+  }
+});

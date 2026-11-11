@@ -1,3 +1,4 @@
+import { loadSeoMuseEffort } from "./seo-muse-effort.ts";
 import { MUSE_MODEL } from "./meta.ts";
 import { museUpperCost } from "./seo-muse.ts";
 import { SEO_DEEPSEEK, deepseekUpperCost } from "./seo-deepseek.ts";
@@ -194,6 +195,15 @@ export async function generateSeo(
               modelVersion === 4 || modelVersion === 5
                 ? MUSE_MODEL
                 : SEO_DEEPSEEK,
+            ...(modelVersion === 5
+              ? {
+                  reasoningEffort: await loadSeoMuseEffort(
+                    env,
+                    modelProfile.jobId,
+                    "generation",
+                  ),
+                }
+              : {}),
             ...(modelProfile.generationVersion === 2
               ? { maxCompletionTokens: 48000 as const }
               : {}),

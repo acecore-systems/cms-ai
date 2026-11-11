@@ -1,3 +1,4 @@
+import { seoMuseEffort, type SeoMusePhase } from "./seo-muse-effort.ts";
 import { musePayload } from "./seo-muse.ts";
 import { deepseekPayload } from "./seo-deepseek.ts";
 import { rejectRetiredSeoModel } from "./seo-model-retirement.ts";
@@ -15,6 +16,7 @@ export type InputPreflightOptions = {
   editorial_scope?: 1 | 2;
   model_version?: 1 | 2 | 3 | 4 | 5;
   generation_output?: 1 | 2;
+  effort_policy?: 0 | 1;
   plan_instructions?: 1 | 2;
   site_id: string;
   research_recovery: 1 | 2;
@@ -39,6 +41,7 @@ export function currentInputPreflightOptions(
     site_id: siteId,
     editorial_scope: 2,
     model_version: modelVersion,
+    effort_policy: modelVersion === 5 ? 1 : 0,
     plan_instructions: 2,
     generation_output: 2,
     research_recovery: 2,
@@ -69,13 +72,14 @@ export function inputPreflight(
     ...article.translations.map((t) => t.path),
   ];
   const baseline = paths.map((path) => files.find((f) => f.path === path)!);
-  const bytes = (request: unknown) =>
+  const bytes = (request: unknown, phase: SeoMusePhase) =>
     new TextEncoder().encode(
       JSON.stringify(
         options.model_version === 4 || options.model_version === 5
           ? musePayload(
               request as Record<string, unknown>,
               "input" in (request as object),
+              seoMuseEffort(options.effort_policy ?? 0, phase),
             )
           : options.model_version === 2
             ? deepseekPayload(
@@ -103,6 +107,7 @@ export function inputPreflight(
       options.editorial_scope,
       options.review_scope,
     ),
+    "review",
   );
   // Unknown future research/JA growth cannot be forecast. This placeholder is
   // explicitly unacquired and only rejects already oversized known inputs.
@@ -159,7 +164,11 @@ export function inputPreflight(
         ? options.generation_output
         : 1,
     );
-    return { path, locale: locale || "ja", bytes: bytes(request) };
+    return {
+      path,
+      locale: locale || "ja",
+      bytes: bytes(request, "generation"),
+    };
   });
   return {
     baseline,
