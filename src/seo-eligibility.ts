@@ -29,7 +29,7 @@ const validPath = (s: unknown): s is string =>
 export async function editorialEligibility(
   input: unknown,
   fetcher: typeof fetch,
-  modelVersion: 3 | 4 = 3,
+  modelVersion: 3 | 4 | 5 = 3,
 ) {
   let stage = "input";
   try {
@@ -51,7 +51,7 @@ export async function editorialEligibility(
 async function inspectEligibility(
   input: unknown,
   fetcher: typeof fetch,
-  modelVersion: 3 | 4,
+  modelVersion: 3 | 4 | 5,
   mark: (stage: string) => void,
 ) {
   const v = input as { site: string; urls: string[]; deadline: number };

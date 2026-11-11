@@ -84,7 +84,8 @@ export function fallbackMaximum(
     (generationOutput === 2 &&
       modelVersion !== 2 &&
       modelVersion !== 3 &&
-      modelVersion !== 4)
+      modelVersion !== 4 &&
+      modelVersion !== 5)
   )
     throw Error("seo_generation_contract");
   assertGenerationAllocation(allocation, 2, 2);
@@ -93,9 +94,14 @@ export function fallbackMaximum(
     stageBudget(2).pool +
     allocation.reduce((n, a) => n + a.maxBytes, 0) -
     (9 - allocation.length) * (8192 + 12000 * 2);
-  if (modelVersion === 2 || modelVersion === 3 || modelVersion === 4) {
+  if (
+    modelVersion === 2 ||
+    modelVersion === 3 ||
+    modelVersion === 4 ||
+    modelVersion === 5
+  ) {
     const cost = (input: number, output: number) =>
-      modelVersion === 4
+      modelVersion === 4 || modelVersion === 5
         ? museCostBound(input, output)
         : modelVersion === 3
           ? haikuCostBound(input, output)

@@ -17,11 +17,15 @@ export type SeoCoordinatorBinding = {
     prUrl?: string;
   }): Promise<{ status: "recorded" | "denied" }>;
 };
-export type AppEnv = Omit<Cloudflare.Env, "SEO_COORDINATOR"> &
+export type AppEnv = Omit<
+  Cloudflare.Env,
+  "SEO_COORDINATOR" | "SEO_SEARCH_PROVIDER"
+> &
   Record<SecretName, string> & {
     ANTHROPIC_API_KEY?: string;
     OPENAI_API_KEY_STORE?: { get(): Promise<string> };
     META_API_KEY_STORE?: { get(): Promise<string> };
+    SEO_SEARCH_PROVIDER?: string;
     SEO_RESEARCH_ENABLED?: string;
     SEO_RESEARCH_CANARY_RUN_ID?: string;
     SEO_COORDINATOR?: SeoCoordinatorBinding;

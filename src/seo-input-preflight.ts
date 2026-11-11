@@ -13,7 +13,7 @@ import { allocateGenerationInputs, stageBudget } from "./seo-stage-budget.ts";
 
 export type InputPreflightOptions = {
   editorial_scope?: 1 | 2;
-  model_version?: 1 | 2 | 3 | 4;
+  model_version?: 1 | 2 | 3 | 4 | 5;
   generation_output?: 1 | 2;
   plan_instructions?: 1 | 2;
   site_id: string;
@@ -33,7 +33,7 @@ export type InputPreflightOptions = {
 // Current new-job contracts. No provider calls, storage writes or budget reservations.
 export function currentInputPreflightOptions(
   siteId: string,
-  modelVersion: 3 | 4 = 3,
+  modelVersion: 3 | 4 | 5 = 3,
 ): InputPreflightOptions {
   return {
     site_id: siteId,
@@ -71,7 +71,7 @@ export function inputPreflight(
   const bytes = (request: unknown) =>
     new TextEncoder().encode(
       JSON.stringify(
-        options.model_version === 4
+        options.model_version === 4 || options.model_version === 5
           ? musePayload(
               request as Record<string, unknown>,
               "input" in (request as object),
@@ -158,7 +158,8 @@ export function inputPreflight(
         : transport.files,
       options.model_version === 2 ||
         options.model_version === 3 ||
-        options.model_version === 4
+        options.model_version === 4 ||
+        options.model_version === 5
         ? options.generation_output
         : 1,
     );
@@ -222,7 +223,7 @@ export function planInputBytes(
 ) {
   return new TextEncoder().encode(
     JSON.stringify(
-      (options.model_version === 4
+      (options.model_version === 4 || options.model_version === 5
         ? (r: Record<string, unknown>) => musePayload(r, true)
         : options.model_version === 3
           ? (r: Record<string, unknown>) => haikuPayload(r, true)
