@@ -85,6 +85,11 @@ it("preserves v3 rows and enforces separate immutable v4 model and medium genera
       "BEGIN; INSERT INTO seo_haiku_job_models VALUES('old-job',3,'claude-haiku-5-5','gpt-6-luna'); INSERT INTO seo_generation_contracts VALUES('old-job',2,48000,'high'); INSERT INTO seo_editorial_jobs(id,run_id,site_id,candidate_index) VALUES('old-job','old','wiki',0); COMMIT",
     );
     const before = db.prepare("SELECT * FROM seo_haiku_job_models").all();
+    const oldTrigger = db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE name='seo_generation_model_required'",
+      )
+      .get();
     db.exec(
       readFileSync(
         new URL("../migrations/0047_seo_muse_models.sql", import.meta.url),
@@ -94,6 +99,13 @@ it("preserves v3 rows and enforces separate immutable v4 model and medium genera
     expect(db.prepare("SELECT * FROM seo_haiku_job_models").all()).toEqual(
       before,
     );
+    expect(
+      db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE name='seo_generation_model_required'",
+        )
+        .get(),
+    ).toEqual(oldTrigger);
     expect(() =>
       db.exec(
         "INSERT INTO seo_muse_job_models VALUES('old-job',4,'muse-ember-1.0','gpt-6-luna')",

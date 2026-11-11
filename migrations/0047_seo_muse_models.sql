@@ -50,14 +50,6 @@ WHEN EXISTS(SELECT 1 FROM seo_editorial_runs r JOIN seo_editorial_jobs j ON j.ru
  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM seo_muse_model_calls c WHERE c.call_id=NEW.id AND c.budget_run_id=NEW.run_id AND c.request_sha256=NEW.request_sha256)
  THEN RAISE(ABORT,'seo_muse_audit_required') END;
 END;
-DROP TRIGGER seo_generation_model_required;
-CREATE TRIGGER seo_generation_model_required BEFORE INSERT ON seo_editorial_jobs
-WHEN EXISTS(SELECT 1 FROM seo_generation_contracts WHERE job_id=NEW.id)
- AND NOT EXISTS(SELECT 1 FROM seo_job_models WHERE job_id=NEW.id AND version=2)
- AND NOT EXISTS(SELECT 1 FROM seo_haiku_job_models WHERE job_id=NEW.id AND version=3)
-
-BEGIN SELECT RAISE(ABORT,'seo_generation_model_required'); END;
-
 CREATE TRIGGER seo_haiku_no_muse BEFORE INSERT ON seo_haiku_job_models WHEN EXISTS(SELECT 1 FROM seo_muse_job_models WHERE job_id=NEW.job_id) BEGIN SELECT RAISE(ABORT,'seo_model_conflict'); END;
 
 -- New jobs only: legacy jobs permanently retain the 12,000-token generation request.
