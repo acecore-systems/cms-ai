@@ -36,7 +36,6 @@
     '    <p class="cms-ai-form__hint" id="cms-ai-image-hint">PNG・JPEG・WebP、4枚まで／各2MB。画像の貼り付けもできます。添付は公開されません。</p>',
     '    <div class="cms-ai-form__actions"><label>考える深さ<select name="reasoningEffort" required><option value="medium" selected>標準</option></select></label><button class="cms-ai-form__submit" type="submit">送信</button></div>',
     '    <p class="cms-ai-capability"></p>',
-    '    <p class="cms-ai-form__hint">高いほど丁寧に考えますが、完了時間と利用量が増える場合があります。</p>',
     '    <p class="cms-ai-form__status" role="status"></p>',
     "  </form>",
     "</div>",
