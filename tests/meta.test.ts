@@ -29,7 +29,7 @@ it("pins the Meta model, effort, image, and strict schema", () => {
   expect(metaPayload(request)).toEqual({
     model: MUSE_MODEL,
     messages: request.messages,
-    max_completion_tokens: 12000,
+    max_tokens: 12000,
     reasoning_effort: "medium",
     store: false,
     response_format: {

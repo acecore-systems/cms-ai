@@ -16,7 +16,7 @@ export function metaPayload(request: Record<string, unknown>) {
   return {
     model: MUSE_MODEL,
     messages: request.messages,
-    max_completion_tokens: request.max_completion_tokens,
+    max_tokens: request.max_completion_tokens,
     reasoning_effort: "medium",
     store: false,
     response_format: {
