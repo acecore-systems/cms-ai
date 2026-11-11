@@ -1,3 +1,4 @@
+import { museCostBound } from "./seo-muse.ts";
 import { SEO_PLAN_OUTPUT_TOKENS } from "./seo-deepseek.ts";
 import { haikuCostBound } from "./seo-haiku.ts";
 import type { AppEnv } from "./env.ts";
@@ -80,7 +81,10 @@ export function fallbackMaximum(
 ) {
   if (
     ![1, 2].includes(generationOutput) ||
-    (generationOutput === 2 && modelVersion !== 2 && modelVersion !== 3)
+    (generationOutput === 2 &&
+      modelVersion !== 2 &&
+      modelVersion !== 3 &&
+      modelVersion !== 4)
   )
     throw Error("seo_generation_contract");
   assertGenerationAllocation(allocation, 2, 2);
@@ -89,11 +93,13 @@ export function fallbackMaximum(
     stageBudget(2).pool +
     allocation.reduce((n, a) => n + a.maxBytes, 0) -
     (9 - allocation.length) * (8192 + 12000 * 2);
-  if (modelVersion === 2 || modelVersion === 3) {
+  if (modelVersion === 2 || modelVersion === 3 || modelVersion === 4) {
     const cost = (input: number, output: number) =>
-      modelVersion === 3
-        ? haikuCostBound(input, output)
-        : Math.ceil(((input + 8192) * 3 + output * 12) / 10);
+      modelVersion === 4
+        ? museCostBound(input, output)
+        : modelVersion === 3
+          ? haikuCostBound(input, output)
+          : Math.ceil(((input + 8192) * 3 + output * 12) / 10);
     // Hosted search caps unchanged; replace only the three text stages.
     maximum =
       maximum -

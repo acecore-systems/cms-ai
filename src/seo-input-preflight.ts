@@ -1,3 +1,4 @@
+import { musePayload } from "./seo-muse.ts";
 import { deepseekPayload } from "./seo-deepseek.ts";
 import { haikuPayload } from "./seo-haiku.ts";
 import { validateSourceFiles } from "./inference.ts";
@@ -12,7 +13,7 @@ import { allocateGenerationInputs, stageBudget } from "./seo-stage-budget.ts";
 
 export type InputPreflightOptions = {
   editorial_scope?: 1 | 2;
-  model_version?: 1 | 2 | 3;
+  model_version?: 1 | 2 | 3 | 4;
   generation_output?: 1 | 2;
   plan_instructions?: 1 | 2;
   site_id: string;
@@ -32,11 +33,12 @@ export type InputPreflightOptions = {
 // Current new-job contracts. No provider calls, storage writes or budget reservations.
 export function currentInputPreflightOptions(
   siteId: string,
+  modelVersion: 3 | 4 = 3,
 ): InputPreflightOptions {
   return {
     site_id: siteId,
     editorial_scope: 2,
-    model_version: 3,
+    model_version: modelVersion,
     plan_instructions: 2,
     generation_output: 2,
     research_recovery: 2,
@@ -69,17 +71,22 @@ export function inputPreflight(
   const bytes = (request: unknown) =>
     new TextEncoder().encode(
       JSON.stringify(
-        options.model_version === 3
-          ? haikuPayload(
+        options.model_version === 4
+          ? musePayload(
               request as Record<string, unknown>,
               "input" in (request as object),
             )
-          : options.model_version === 2
-            ? deepseekPayload(
+          : options.model_version === 3
+            ? haikuPayload(
                 request as Record<string, unknown>,
                 "input" in (request as object),
               )
-            : request,
+            : options.model_version === 2
+              ? deepseekPayload(
+                  request as Record<string, unknown>,
+                  "input" in (request as object),
+                )
+              : request,
       ),
     ).length;
   const planBytes = planInputBytes(article.source, options);
@@ -149,7 +156,9 @@ export function inputPreflight(
       options.code_preservation === 2 || options.metadata_preservation === 2
         ? validateSourceFiles(site, transport.files)
         : transport.files,
-      options.model_version === 2 || options.model_version === 3
+      options.model_version === 2 ||
+        options.model_version === 3 ||
+        options.model_version === 4
         ? options.generation_output
         : 1,
     );
@@ -213,11 +222,13 @@ export function planInputBytes(
 ) {
   return new TextEncoder().encode(
     JSON.stringify(
-      (options.model_version === 3
-        ? (r: Record<string, unknown>) => haikuPayload(r, true)
-        : options.model_version === 2
-          ? (r: Record<string, unknown>) => deepseekPayload(r, true)
-          : (r: Record<string, unknown>) => r)(
+      (options.model_version === 4
+        ? (r: Record<string, unknown>) => musePayload(r, true)
+        : options.model_version === 3
+          ? (r: Record<string, unknown>) => haikuPayload(r, true)
+          : options.model_version === 2
+            ? (r: Record<string, unknown>) => deepseekPayload(r, true)
+            : (r: Record<string, unknown>) => r)(
         buildPlanRequest(
           source.content,
           2,

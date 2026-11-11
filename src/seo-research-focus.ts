@@ -69,14 +69,14 @@ export async function verifyResearchReconsideration(
   // Every job/model/charge row must belong to the same three completed calls.
   const checks = (
     await env.CMS_AI_DB.prepare(
-      "SELECT c.phase,c.call_id,b.status,m.request_sha256,b.request_sha256 AS charged_hash,m.budget_run_id FROM seo_all_checks c LEFT JOIN seo_budget_calls b ON b.id=c.call_id LEFT JOIN (SELECT call_id,job_id,phase,request_sha256,budget_run_id FROM seo_model_calls UNION ALL SELECT call_id,job_id,phase,request_sha256,budget_run_id FROM seo_haiku_model_calls) m ON m.call_id=c.call_id AND m.job_id=c.job_id AND m.phase=c.phase WHERE c.job_id=?",
+      "SELECT c.phase,c.call_id,b.status,m.request_sha256,b.request_sha256 AS charged_hash,m.budget_run_id FROM seo_all_checks c LEFT JOIN seo_budget_calls b ON b.id=c.call_id LEFT JOIN (SELECT call_id,job_id,phase,request_sha256,budget_run_id FROM seo_model_calls UNION ALL SELECT call_id,job_id,phase,request_sha256,budget_run_id FROM seo_haiku_model_calls UNION ALL SELECT call_id,job_id,phase,request_sha256,budget_run_id FROM seo_muse_model_calls) m ON m.call_id=c.call_id AND m.job_id=c.job_id AND m.phase=c.phase WHERE c.job_id=?",
     )
       .bind(row.id)
       .all<any>()
   ).results;
   const models = (
     await env.CMS_AI_DB.prepare(
-      "SELECT call_id FROM (SELECT job_id,call_id FROM seo_model_calls UNION ALL SELECT job_id,call_id FROM seo_haiku_model_calls) WHERE job_id=?",
+      "SELECT call_id FROM (SELECT job_id,call_id FROM seo_model_calls UNION ALL SELECT job_id,call_id FROM seo_haiku_model_calls UNION ALL SELECT job_id,call_id FROM seo_muse_model_calls) WHERE job_id=?",
     )
       .bind(row.id)
       .all<any>()
