@@ -27,7 +27,8 @@ afterEach(() => vi.unstubAllGlobals());
 
 it("reserves long-context rates and records the response before validating it", async () => {
   const calls: string[] = [];
-  const payload = musePayload(request);
+  const payload = musePayload({ ...request, reasoning_effort: "max" });
+  expect(payload.reasoning_effort).toBe("medium");
   expect(museUpperCost(payload)).toBe(
     museCostBound(
       new TextEncoder().encode(JSON.stringify(payload)).length,

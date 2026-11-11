@@ -169,10 +169,7 @@ async function createMessageJob(
       attachments: input.images.map((image) => image.attachment),
       conversationId,
       instruction: input.instruction,
-      reasoningEffort:
-        env.CMS_AI_MODEL === "muse-ember-1.0"
-          ? "medium"
-          : input.reasoningEffort,
+      reasoningEffort: input.reasoningEffort,
       requestedBy: identity.email,
       requestedRole: identity.membership.role,
       siteId: identity.site.id,

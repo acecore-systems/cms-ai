@@ -17,10 +17,12 @@ export function musePayload(
             { role: "user", content: request.input },
           ],
           max_completion_tokens: request.max_output_tokens,
+          reasoning_effort: "medium",
           response_format: { type: "json_schema", json_schema: schema },
         }
       : {
           ...request,
+          reasoning_effort: "medium",
           response_format: { type: "json_schema", json_schema: schema },
         },
   );
