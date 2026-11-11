@@ -1,3 +1,4 @@
+import { loadSeoMuseEffort } from "./seo-muse-effort.ts";
 import type { AppEnv } from "./env.ts";
 import { callMeta, MUSE_MODEL } from "./meta.ts";
 import {
@@ -32,7 +33,11 @@ export async function seoMuseTextResponse(
   try {
     const request = args.request;
     const schema = textSchema(request, true),
-      payload = musePayload(request, true);
+      payload = musePayload(
+        request,
+        true,
+        await loadSeoMuseEffort(env, args.jobId, args.phase),
+      );
     assertStageInput(
       args.phase === "discovery" ? "research" : args.phase,
       payload,

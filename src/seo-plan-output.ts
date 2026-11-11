@@ -13,7 +13,7 @@ export async function assertPlanOutputPreflight(
   modelVersion: 2 | 3 | 4 | 5 = 2,
 ) {
   const job = await env.CMS_AI_DB.prepare(
-    "SELECT j.input_allocation_sha256,COALESCE(vg.version,mg.version,g.version,1) AS generation_output FROM seo_editorial_jobs j JOIN seo_editorial_runs r ON r.run_id=j.run_id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_muse_generation_contracts mg ON mg.job_id=j.id LEFT JOIN seo_v5_generation_contracts vg ON vg.job_id=j.id WHERE j.id=? AND r.budget_run_id=?",
+    "SELECT j.input_allocation_sha256,COALESCE(ve.generation_version,vg.version,mg.version,g.version,1) AS generation_output FROM seo_editorial_jobs j JOIN seo_editorial_runs r ON r.run_id=j.run_id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_muse_generation_contracts mg ON mg.job_id=j.id LEFT JOIN seo_v5_generation_contracts vg ON vg.job_id=j.id LEFT JOIN seo_v5_effort_contracts ve ON ve.job_id=j.id WHERE j.id=? AND r.budget_run_id=?",
   )
     .bind(jobId, budgetRunId)
     .first<{ input_allocation_sha256: string; generation_output: number }>();
