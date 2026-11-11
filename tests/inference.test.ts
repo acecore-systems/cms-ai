@@ -12,44 +12,20 @@ import { getSiteById } from "../src/sites.ts";
 const site = getSiteById("homepage-hatt")!;
 const workersModel = "@cf/example/chat-model";
 
-it("Haiku response goes through the existing path authorization", async () => {
-  const fetcher = vi.fn().mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        type: "message",
-        role: "assistant",
-        model: "claude-haiku-5-5",
-        stop_reason: "end_turn",
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              summary: "変更",
-              clarification: "",
-              changes: [
-                { path: "package.json", content: "unsafe", reason: "変更" },
-              ],
-            }),
-          },
-        ],
-      }),
-    ),
-  );
+it("refuses the retired Haiku CMS configuration before any provider call", async () => {
+  const fetcher = vi.fn();
   vi.stubGlobal("fetch", fetcher);
   try {
     await expect(
       runInference(
-        {
-          CMS_AI_MODEL: "claude-haiku-5-5",
-          ANTHROPIC_API_KEY: "fixture",
-        } as unknown as AppEnv,
+        { CMS_AI_MODEL: "claude-haiku-5-5" } as unknown as AppEnv,
         site,
         job(),
         [{ content: "<main/>", path: "src/pages/index.astro" }],
         [],
       ),
-    ).rejects.toThrow(/許可された/);
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    ).rejects.toThrow();
+    expect(fetcher).not.toHaveBeenCalled();
   } finally {
     vi.unstubAllGlobals();
   }

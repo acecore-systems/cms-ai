@@ -1,14 +1,14 @@
 import { metaPayload, MUSE_MODEL } from "./meta.ts";
 import { assertStrictSchema } from "./seo-deepseek.ts";
-import { haikuSchema } from "./seo-haiku.ts";
+import { textSchema } from "./seo-text-schema.ts";
 
 // SEO is text-only, and its exact outbound envelope is also used for preflight
-// and reservation. The existing Haiku adapter remains available for v3 jobs.
+// and reservation.
 export function musePayload(
   request: Record<string, unknown>,
   responses = false,
 ) {
-  const schema = haikuSchema(request, responses);
+  const schema = textSchema(request, responses);
   return metaPayload(
     responses
       ? {

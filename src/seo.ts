@@ -55,10 +55,14 @@ export class SeoEditorial extends WorkerEntrypoint<AppEnv> {
     const v = input as { site?: string; deadline?: number };
     const spec = v && typeof v.site === "string" ? seoSite(v.site) : null;
     if (!spec) throw new Error("seo_eligibility_unknown");
+    if (String(this.env.SEO_AI_MODEL) === "claude-haiku-5-5")
+      throw new Error("seo_haiku_retired");
+    if (String(this.env.SEO_AI_MODEL) !== "muse-ember-1.0")
+      throw new Error("seo_model_not_allowed");
     return editorialEligibility(
       input,
       seoRepositoryReader(this.env, spec.site, v.deadline!),
-      String(this.env.SEO_AI_MODEL) === "muse-ember-1.0" ? 4 : 3,
+      4,
     );
   }
   async fetch() {

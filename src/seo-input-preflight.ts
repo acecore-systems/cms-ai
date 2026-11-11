@@ -1,6 +1,6 @@
 import { musePayload } from "./seo-muse.ts";
 import { deepseekPayload } from "./seo-deepseek.ts";
-import { haikuPayload } from "./seo-haiku.ts";
+import { rejectRetiredSeoModel } from "./seo-model-retirement.ts";
 import { validateSourceFiles } from "./inference.ts";
 import { prepareEditorialTransport } from "./seo-metadata-preservation.ts";
 import type { SiteConfig } from "./sites.ts";
@@ -33,7 +33,7 @@ export type InputPreflightOptions = {
 // Current new-job contracts. No provider calls, storage writes or budget reservations.
 export function currentInputPreflightOptions(
   siteId: string,
-  modelVersion: 3 | 4 = 3,
+  modelVersion: 3 | 4 = 4,
 ): InputPreflightOptions {
   return {
     site_id: siteId,
@@ -63,6 +63,7 @@ export function inputPreflight(
   reason: string,
   options: InputPreflightOptions,
 ) {
+  rejectRetiredSeoModel(options.model_version);
   const paths = [
     article.source.path,
     ...article.translations.map((t) => t.path),
@@ -76,17 +77,12 @@ export function inputPreflight(
               request as Record<string, unknown>,
               "input" in (request as object),
             )
-          : options.model_version === 3
-            ? haikuPayload(
+          : options.model_version === 2
+            ? deepseekPayload(
                 request as Record<string, unknown>,
                 "input" in (request as object),
               )
-            : options.model_version === 2
-              ? deepseekPayload(
-                  request as Record<string, unknown>,
-                  "input" in (request as object),
-                )
-              : request,
+            : request,
       ),
     ).length;
   const planBytes = planInputBytes(article.source, options);
@@ -220,15 +216,14 @@ export function planInputBytes(
   source: EditorialFile,
   options: InputPreflightOptions,
 ) {
+  rejectRetiredSeoModel(options.model_version);
   return new TextEncoder().encode(
     JSON.stringify(
       (options.model_version === 4
         ? (r: Record<string, unknown>) => musePayload(r, true)
-        : options.model_version === 3
-          ? (r: Record<string, unknown>) => haikuPayload(r, true)
-          : options.model_version === 2
-            ? (r: Record<string, unknown>) => deepseekPayload(r, true)
-            : (r: Record<string, unknown>) => r)(
+        : options.model_version === 2
+          ? (r: Record<string, unknown>) => deepseekPayload(r, true)
+          : (r: Record<string, unknown>) => r)(
         buildPlanRequest(
           source.content,
           2,

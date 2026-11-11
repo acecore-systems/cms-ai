@@ -1,17 +1,12 @@
 import { SEO_LONG_TEXT_MS } from "./seo-time-bounds.ts";
-import { HAIKU_MODEL, runAnthropic, callAnthropic } from "./anthropic.ts";
+import { RETIRED_HAIKU_MODEL } from "./seo-model-retirement.ts";
+import { textSchema } from "./seo-text-schema.ts";
 import { MUSE_MODEL, runMeta, callMeta } from "./meta.ts";
 import {
   musePayload,
   museUpperCost,
   validateMuseResponse,
 } from "./seo-muse.ts";
-import {
-  haikuPayload,
-  haikuSchema,
-  haikuUpperCost,
-  validateHaikuResponse,
-} from "./seo-haiku.ts";
 import type { AppEnv } from "./env.ts";
 import { providerFailure } from "./provider-failure.ts";
 import { imageContent, type MessageContent } from "./images.ts";
@@ -99,7 +94,9 @@ export async function runInference(
   if (seoProvider && purpose !== "seo") throw Error("seo_model_not_allowed");
   if (seoProvider?.maxCompletionTokens !== undefined) {
     if (
-      ![DEEPSEEK_MODEL, HAIKU_MODEL, MUSE_MODEL].includes(seoProvider.model) ||
+      ![DEEPSEEK_MODEL, RETIRED_HAIKU_MODEL, MUSE_MODEL].includes(
+        seoProvider.model,
+      ) ||
       seoProvider.maxCompletionTokens !== 48000
     )
       throw Error("seo_model_not_allowed");
@@ -129,7 +126,7 @@ export async function runInference(
     if (
       model === "gpt-6-luna" ||
       model === DEEPSEEK_MODEL ||
-      model === HAIKU_MODEL ||
+      model === RETIRED_HAIKU_MODEL ||
       model === MUSE_MODEL ||
       beforeRequest
     ) {
@@ -619,7 +616,6 @@ function getModel(env: AppEnv, purpose: "cms" | "seo") {
   const model = configured;
   if (
     model !== "gpt-6-luna" &&
-    model !== HAIKU_MODEL &&
     model !== MUSE_MODEL &&
     !isWorkersAiTextModel(model)
   ) {
@@ -672,7 +668,7 @@ export async function runTextModel(
         Date.now() >= requestDeadline!
       )
         throw Error("seo_model_not_allowed");
-      const schema = haikuSchema(request),
+      const schema = textSchema(request),
         payload = musePayload(request);
       museUpperCost(payload);
       const raw = await callMeta(
@@ -698,40 +694,7 @@ export async function runTextModel(
     if (beforeRequest) throw Error("seo_model_not_allowed");
     return runMeta(env, request, requestDeadline);
   }
-  if (model === HAIKU_MODEL) {
-    if (seoPinned) {
-      if (
-        !beforeRequest ||
-        !Number.isSafeInteger(requestDeadline) ||
-        Date.now() >= requestDeadline!
-      )
-        throw Error("seo_model_not_allowed");
-      const schema = haikuSchema(request),
-        payload = haikuPayload(request);
-      haikuUpperCost(payload);
-      const raw = await callAnthropic(
-        env,
-        payload,
-        requestDeadline,
-        () => beforeRequest(model, payload),
-        onResponse,
-        SEO_LONG_TEXT_MS,
-      );
-      const content = validateHaikuResponse(
-        raw,
-        payload,
-        schema,
-        requestDeadline!,
-      );
-      return {
-        choices: [
-          { finish_reason: "stop", message: { role: "assistant", content } },
-        ],
-      };
-    }
-    if (beforeRequest) throw Error("seo_model_not_allowed");
-    return runAnthropic(env, request, requestDeadline);
-  }
+  if (model === RETIRED_HAIKU_MODEL) throw Error("seo_haiku_retired");
   if (isWorkersAiTextModel(model)) {
     if (model === DEEPSEEK_MODEL) throw Error("seo_deepseek_retired");
     if (beforeRequest || seoPinned) throw Error("seo_model_not_allowed");
