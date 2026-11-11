@@ -5,7 +5,7 @@ import {
   museUpperCost,
   validateMuseResponse,
 } from "./seo-muse.ts";
-import { haikuSchema } from "./seo-haiku.ts";
+import { textSchema } from "./seo-text-schema.ts";
 import { SeoBudget, sha256 } from "./seo-budget.ts";
 import { assertStageInput } from "./seo-stage-budget.ts";
 import { assertPlanOutputPreflight } from "./seo-plan-output.ts";
@@ -30,7 +30,7 @@ export async function seoMuseTextResponse(
   let reserved = false;
   try {
     const request = args.request;
-    const schema = haikuSchema(request, true),
+    const schema = textSchema(request, true),
       payload = musePayload(request, true);
     assertStageInput(
       args.phase,

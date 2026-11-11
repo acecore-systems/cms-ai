@@ -64,6 +64,7 @@ export class SeoBudget {
       modelVersion?: 2 | 3 | 4;
     },
   ) {
+    if (modelAudit?.modelVersion === 3) throw new Error("seo_haiku_retired");
     const runLimit = stageBudget(version).runMicros;
     if (
       !/^seo-[0-9a-f-]{36}$/.test(runId) ||
@@ -88,7 +89,7 @@ export class SeoBudget {
         ? [
             this.db
               .prepare(
-                `INSERT INTO ${modelAudit.modelVersion === 4 ? "seo_muse_model_calls" : modelAudit.modelVersion === 3 ? "seo_haiku_model_calls" : "seo_model_calls"}(call_id,job_id,phase,model,request_sha256,budget_run_id) VALUES(?,?,?,?,?,?)`,
+                `INSERT INTO ${modelAudit.modelVersion === 4 ? "seo_muse_model_calls" : "seo_model_calls"}(call_id,job_id,phase,model,request_sha256,budget_run_id) VALUES(?,?,?,?,?,?)`,
               )
               .bind(
                 callId,

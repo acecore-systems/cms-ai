@@ -1,8 +1,6 @@
 import { MUSE_MODEL } from "./meta.ts";
 import { museUpperCost } from "./seo-muse.ts";
 import { SEO_DEEPSEEK, deepseekUpperCost } from "./seo-deepseek.ts";
-import { HAIKU_MODEL } from "./anthropic.ts";
-import { haikuUpperCost } from "./seo-haiku.ts";
 import { stageBudget, assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
 import {
@@ -42,6 +40,9 @@ export async function generateSeo(
     generationVersion?: 1 | 2;
   },
 ) {
+  const modelVersion = modelProfile?.version;
+  if (modelVersion === 3)
+    return { status: "retired" as const, reason: "seo_haiku_retired" as const };
   if (String(env.SEO_GENERATION_ENABLED) !== "true")
     return { status: "disabled" as const };
   let reserved = false;
@@ -157,13 +158,11 @@ export async function generateSeo(
           callId,
           site.id + ":" + articlePath,
           await sha256(JSON.stringify(request)),
-          modelProfile?.version === 4
+          modelVersion === 4
             ? museUpperCost(request)
-            : modelProfile?.version === 3
-              ? haikuUpperCost(request)
-              : modelProfile
-                ? deepseekUpperCost(request)
-                : upperCost(model, request),
+            : modelProfile
+              ? deepseekUpperCost(request)
+              : upperCost(model, request),
           Date.now(),
           deadline as number | undefined,
           version,
@@ -171,13 +170,8 @@ export async function generateSeo(
             ? {
                 jobId: modelProfile.jobId,
                 phase: "generation",
-                model:
-                  modelProfile.version === 4
-                    ? MUSE_MODEL
-                    : modelProfile.version === 3
-                      ? HAIKU_MODEL
-                      : SEO_DEEPSEEK,
-                modelVersion: modelProfile.version,
+                model: modelVersion === 4 ? MUSE_MODEL : SEO_DEEPSEEK,
+                modelVersion: modelVersion!,
               }
             : undefined,
         );
@@ -188,12 +182,7 @@ export async function generateSeo(
       "seo",
       modelProfile
         ? {
-            model:
-              modelProfile.version === 4
-                ? MUSE_MODEL
-                : modelProfile.version === 3
-                  ? HAIKU_MODEL
-                  : SEO_DEEPSEEK,
+            model: modelVersion === 4 ? MUSE_MODEL : SEO_DEEPSEEK,
             ...(modelProfile.generationVersion === 2
               ? { maxCompletionTokens: 48000 as const }
               : {}),
