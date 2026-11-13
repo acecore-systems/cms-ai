@@ -1,8 +1,7 @@
 export type SecretName =
   | "CMS_AI_ADMIN_ACCESS_AUD"
   | "CMS_AI_GITHUB_APP_CLIENT_ID"
-  | "CMS_AI_GITHUB_APP_INSTALLATION_ID"
-  | "CMS_AI_GITHUB_APP_PRIVATE_KEY";
+  | "CMS_AI_GITHUB_APP_INSTALLATION_ID";
 
 export type SeoCoordinatorBinding = {
   claim(input: {
@@ -19,6 +18,8 @@ export type SeoCoordinatorBinding = {
 };
 export type AppEnv = Omit<Cloudflare.Env, "SEO_COORDINATOR"> &
   Record<SecretName, string> & {
+    CMS_AI_GITHUB_APP_PRIVATE_KEY?: string;
+    CMS_AI_GITHUB_APP_PRIVATE_KEY_STORE?: { get(): Promise<string> };
     ANTHROPIC_API_KEY?: string;
     OPENAI_API_KEY_STORE?: { get(): Promise<string> };
     META_API_KEY_STORE?: { get(): Promise<string> };

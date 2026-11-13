@@ -16,6 +16,66 @@ describe("GitHub App authentication", () => {
     vi.unstubAllGlobals();
   });
 
+  it("uses the Store key when bound, even if the legacy key is invalid", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { format: "pem", type: "pkcs1" },
+      publicKeyEncoding: { format: "pem", type: "spki" },
+    });
+    const get = vi.fn().mockResolvedValue(privateKey);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith("/access_tokens")
+        ? Response.json({ token: "fixture" }, { status: 201 })
+        : new Response(null, { status: 204 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await dispatchCmsAiJob(
+      {
+        CMS_AI_GITHUB_APP_CLIENT_ID: "test",
+        CMS_AI_GITHUB_APP_INSTALLATION_ID: "123456",
+        CMS_AI_GITHUB_APP_PRIVATE_KEY: "invalid legacy key",
+        CMS_AI_GITHUB_APP_PRIVATE_KEY_STORE: { get },
+      } as AppEnv,
+      getSiteById("homepage-hatt")!,
+      testJob,
+    );
+    expect(get).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["empty", "failure"])(
+    "fails closed without exposing Store %s",
+    async (kind) => {
+      const { privateKey } = generateKeyPairSync("rsa", {
+        modulusLength: 2048,
+        privateKeyEncoding: { format: "pem", type: "pkcs1" },
+        publicKeyEncoding: { format: "pem", type: "spki" },
+      });
+      const get =
+        kind === "empty"
+          ? vi.fn().mockResolvedValue("   ")
+          : vi.fn().mockRejectedValue(new Error("SENTINEL_PRIVATE"));
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(
+        dispatchCmsAiJob(
+          {
+            CMS_AI_GITHUB_APP_CLIENT_ID: "test",
+            CMS_AI_GITHUB_APP_INSTALLATION_ID: "123456",
+            CMS_AI_GITHUB_APP_PRIVATE_KEY: privateKey,
+            CMS_AI_GITHUB_APP_PRIVATE_KEY_STORE: { get },
+          } as AppEnv,
+          getSiteById("homepage-hatt")!,
+          testJob,
+        ),
+      ).rejects.toMatchObject({
+        status: 503,
+        message: "CMS AI GitHub Appの設定を確認できません。",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("GitHubが配布するPKCS#1秘密鍵でworkflowを開始できる", async () => {
     const { privateKey } = generateKeyPairSync("rsa", {
       modulusLength: 2048,
