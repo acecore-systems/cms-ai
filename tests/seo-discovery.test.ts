@@ -353,8 +353,6 @@ it("keeps legacy planner payload unchanged and only adds named-entity guidance f
   expect({ ...current, instructions: old.instructions }).toEqual(old);
   expect(current.instructions).toContain("固有名詞");
 });
-import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
 import { responsesUpperCost } from "../src/seo-responses.ts";
 
 it("only retrieval high changes a single tool setting; old default and discovery remain low", async () => {
