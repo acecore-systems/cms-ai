@@ -56,6 +56,7 @@ describe("shared client and runner assets", () => {
     expect(config).toMatch(/"CMS_AI_MODEL":\s*"muse-ember-1.0"/);
     expect(config).toContain('"secret_name": "acecore-cms-meta-api-key"');
     expect(config).toContain('"SEO_AI_MODEL": "muse-ember-1.0"');
+    expect(config).toContain('"SEO_SEARCH_PROVIDER": "parallel-free"');
     expect(config).toMatch(/CMS_AI_IMAGES/);
     expect(config).toMatch(/CMS_AI_AUTOMERGE_ENABLED.*false/);
   });

@@ -50,7 +50,7 @@ it.skipIf(!process.env.SEO_CONTINUATION_REPLAY)(
     const db = new DatabaseSync(":memory:");
     db.exec("PRAGMA foreign_keys=OFF");
     for (const name of readdirSync(new URL("../migrations/", import.meta.url))
-      .filter((n) => n.endsWith(".sql") && n >= "0004")
+      .filter((n) => n.endsWith(".sql") && n.includes("_seo_") && n >= "0004")
       .sort())
       db.exec(
         readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8"),

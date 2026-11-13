@@ -1,8 +1,7 @@
+import { loadSeoMuseEffort } from "./seo-muse-effort.ts";
 import { MUSE_MODEL } from "./meta.ts";
 import { museUpperCost } from "./seo-muse.ts";
 import { SEO_DEEPSEEK, deepseekUpperCost } from "./seo-deepseek.ts";
-import { HAIKU_MODEL } from "./anthropic.ts";
-import { haikuUpperCost } from "./seo-haiku.ts";
 import { stageBudget, assertStageInput } from "./seo-stage-budget.ts";
 import type { AppEnv } from "./env.ts";
 import {
@@ -38,12 +37,20 @@ export async function generateSeo(
   input: unknown,
   modelProfile?: {
     jobId: string;
-    version: 2 | 3 | 4;
+    version: 2 | 3 | 4 | 5;
     generationVersion?: 1 | 2;
   },
 ) {
+  const modelVersion = modelProfile?.version;
+  if (modelVersion === 3)
+    return { status: "retired" as const, reason: "seo_haiku_retired" as const };
   if (String(env.SEO_GENERATION_ENABLED) !== "true")
     return { status: "disabled" as const };
+  if (
+    env.SEO_SEARCH_PROVIDER === "parallel-free" &&
+    modelProfile?.version !== 5
+  )
+    return { status: "failed" as const, error: "seo_legacy_model_retired" };
   let reserved = false;
   let stage = "validation";
   let callId = "";
@@ -157,13 +164,11 @@ export async function generateSeo(
           callId,
           site.id + ":" + articlePath,
           await sha256(JSON.stringify(request)),
-          modelProfile?.version === 4
+          modelVersion === 4 || modelVersion === 5
             ? museUpperCost(request)
-            : modelProfile?.version === 3
-              ? haikuUpperCost(request)
-              : modelProfile
-                ? deepseekUpperCost(request)
-                : upperCost(model, request),
+            : modelProfile
+              ? deepseekUpperCost(request)
+              : upperCost(model, request),
           Date.now(),
           deadline as number | undefined,
           version,
@@ -172,12 +177,10 @@ export async function generateSeo(
                 jobId: modelProfile.jobId,
                 phase: "generation",
                 model:
-                  modelProfile.version === 4
+                  modelVersion === 4 || modelVersion === 5
                     ? MUSE_MODEL
-                    : modelProfile.version === 3
-                      ? HAIKU_MODEL
-                      : SEO_DEEPSEEK,
-                modelVersion: modelProfile.version,
+                    : SEO_DEEPSEEK,
+                modelVersion: modelVersion!,
               }
             : undefined,
         );
@@ -189,11 +192,18 @@ export async function generateSeo(
       modelProfile
         ? {
             model:
-              modelProfile.version === 4
+              modelVersion === 4 || modelVersion === 5
                 ? MUSE_MODEL
-                : modelProfile.version === 3
-                  ? HAIKU_MODEL
-                  : SEO_DEEPSEEK,
+                : SEO_DEEPSEEK,
+            ...(modelVersion === 5
+              ? {
+                  reasoningEffort: await loadSeoMuseEffort(
+                    env,
+                    modelProfile.jobId,
+                    "generation",
+                  ),
+                }
+              : {}),
             ...(modelProfile.generationVersion === 2
               ? { maxCompletionTokens: 48000 as const }
               : {}),

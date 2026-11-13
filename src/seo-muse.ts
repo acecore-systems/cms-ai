@@ -1,14 +1,16 @@
 import { metaPayload, MUSE_MODEL } from "./meta.ts";
+import type { SeoMuseEffort } from "./seo-muse-effort.ts";
 import { assertStrictSchema } from "./seo-deepseek.ts";
-import { haikuSchema } from "./seo-haiku.ts";
+import { textSchema } from "./seo-text-schema.ts";
 
 // SEO is text-only, and its exact outbound envelope is also used for preflight
-// and reservation. The existing Haiku adapter remains available for v3 jobs.
+// and reservation.
 export function musePayload(
   request: Record<string, unknown>,
   responses = false,
+  effort: SeoMuseEffort = "medium",
 ) {
-  const schema = haikuSchema(request, responses);
+  const schema = textSchema(request, responses);
   return metaPayload(
     responses
       ? {
@@ -17,10 +19,12 @@ export function musePayload(
             { role: "user", content: request.input },
           ],
           max_completion_tokens: request.max_output_tokens,
+          reasoning_effort: effort,
           response_format: { type: "json_schema", json_schema: schema },
         }
       : {
           ...request,
+          reasoning_effort: effort,
           response_format: { type: "json_schema", json_schema: schema },
         },
   );
@@ -38,7 +42,7 @@ export function museUpperCost(payload: Record<string, unknown>) {
   const bytes = new TextEncoder().encode(JSON.stringify(payload)).length;
   if (
     payload.model !== MUSE_MODEL ||
-    payload.reasoning_effort !== "medium" ||
+    !["low", "medium", "max"].includes(payload.reasoning_effort as string) ||
     payload.store !== false ||
     !Array.isArray(messages) ||
     messages.length !== 2 ||

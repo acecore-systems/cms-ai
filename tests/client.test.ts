@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { JSDOM } from "jsdom";
 import { describe, expect, it, vi } from "vitest";
 
-async function setup(fail = false) {
+async function setup(fail = false, canEdit = true) {
   const dom = new JSDOM("<!doctype html><body></body>", {
     url: "https://site.test/admin/",
     runScripts: "outside-only",
@@ -26,7 +26,10 @@ async function setup(fail = false) {
       });
     }
     if (String(url).endsWith("session"))
-      return Response.json({ role: "editor", capabilities: { edit: true } });
+      return Response.json({
+        role: canEdit ? "editor" : "chat",
+        capabilities: { edit: canEdit },
+      });
     return Response.json({ conversations: [] });
   });
   window.eval(
@@ -58,6 +61,43 @@ async function setup(fail = false) {
   };
   return { dom, window, document, input, form, attach, posted };
 }
+
+it("相談専用の初期値と明示した最大値を送信する", async () => {
+  const ui = await setup(false, false);
+  try {
+    const effort = ui.form.elements.namedItem(
+      "reasoningEffort",
+    ) as HTMLSelectElement;
+    expect(effort.value).toBe("low");
+    effort.value = "max";
+    ui.attach();
+    ui.form.dispatchEvent(new ui.window.Event("submit", { cancelable: true }));
+    await vi.waitFor(() => expect(ui.posted).toHaveLength(1));
+    expect(ui.posted[0].get("reasoningEffort")).toBe("max");
+  } finally {
+    ui.window.close();
+  }
+});
+
+it("6段階を順序どおり選べる", async () => {
+  const ui = await setup();
+  try {
+    const effort = ui.form.elements.namedItem(
+      "reasoningEffort",
+    ) as HTMLSelectElement;
+    expect(Array.from(effort.options, (option) => option.value)).toEqual([
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(effort.value).toBe("medium");
+  } finally {
+    ui.window.close();
+  }
+});
 
 describe("image composer", () => {
   it("添付のプレビュー・削除・新規会話でobject URLを解放する", async () => {

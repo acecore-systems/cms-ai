@@ -12,44 +12,20 @@ import { getSiteById } from "../src/sites.ts";
 const site = getSiteById("homepage-hatt")!;
 const workersModel = "@cf/example/chat-model";
 
-it("Haiku response goes through the existing path authorization", async () => {
-  const fetcher = vi.fn().mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        type: "message",
-        role: "assistant",
-        model: "claude-haiku-5-5",
-        stop_reason: "end_turn",
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              summary: "変更",
-              clarification: "",
-              changes: [
-                { path: "package.json", content: "unsafe", reason: "変更" },
-              ],
-            }),
-          },
-        ],
-      }),
-    ),
-  );
+it("refuses the retired Haiku CMS configuration before any provider call", async () => {
+  const fetcher = vi.fn();
   vi.stubGlobal("fetch", fetcher);
   try {
     await expect(
       runInference(
-        {
-          CMS_AI_MODEL: "claude-haiku-5-5",
-          ANTHROPIC_API_KEY: "fixture",
-        } as unknown as AppEnv,
+        { CMS_AI_MODEL: "claude-haiku-5-5" } as unknown as AppEnv,
         site,
         job(),
         [{ content: "<main/>", path: "src/pages/index.astro" }],
         [],
       ),
-    ).rejects.toThrow(/許可された/);
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    ).rejects.toThrow();
+    expect(fetcher).not.toHaveBeenCalled();
   } finally {
     vi.unstubAllGlobals();
   }
@@ -465,46 +441,25 @@ describe("Workers AI inference", () => {
     });
   });
 
-  it("summaryに入った会話回答を既存のOpenAI呼び出し一回で受け取る", async () => {
-    const fetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          choices: [
-            {
-              message: {
-                content: JSON.stringify({
-                  changes: [],
-                  clarification: "",
-                  summary: "CMS inference canary OK",
-                }),
-              },
-            },
-          ],
-        }),
-        { status: 200 },
-      ),
-    );
-    vi.stubGlobal("fetch", fetch);
+  it("旧Luna CMS設定は送信もcredential取得もしない", async () => {
+    const fetcher = vi.fn();
+    const getKey = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
     try {
-      const result = await runInference(
-        {
-          CMS_AI_MODEL: "gpt-6-luna",
-          OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
-        } as unknown as AppEnv,
-        site,
-        job(),
-        [{ content: "<main>before</main>", path: "src/pages/index.astro" }],
-        [],
-      );
-      expect(fetch).toHaveBeenCalledTimes(1);
-      expect(fetch.mock.calls[0][0]).toBe(
-        "https://api.openai.com/v1/chat/completions",
-      );
-      expect(result).toEqual({
-        changes: [],
-        clarification: "CMS inference canary OK",
-        summary: "CMS inference canary OK",
-      });
+      await expect(
+        runInference(
+          {
+            CMS_AI_MODEL: "gpt-6-luna",
+            OPENAI_API_KEY_STORE: { get: getKey },
+          } as unknown as AppEnv,
+          site,
+          job(),
+          [{ content: "<main>before</main>", path: "src/pages/index.astro" }],
+          [],
+        ),
+      ).rejects.toThrow("AIモデルの設定が無効です");
+      expect(getKey).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

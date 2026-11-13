@@ -20,6 +20,17 @@ export default {
       }
 
       if (pathname.startsWith("/seo-runner/")) {
+        // Historical jobs remain readable and can be marked unresolved, but a
+        // rollback flag must not resume the retired Luna paid-call path.
+        if (
+          env.SEO_SEARCH_PROVIDER !== "parallel-free" &&
+          request.method !== "GET" &&
+          !pathname.endsWith("/unresolved")
+        )
+          return json(
+            { status: "retired", reason: "seo_legacy_model_retired" },
+            409,
+          );
         return await handleSeoRunnerRequest(request, env);
       }
 

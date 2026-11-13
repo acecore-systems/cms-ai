@@ -68,11 +68,15 @@ import {
   responseMessage,
   seoResponse,
 } from "./seo-responses.ts";
+import {
+  parallelResearch,
+  verifyParallelResearch,
+} from "./seo-parallel-flow.ts";
 
 export type CheckContext = {
   editorialScope?: 1 | 2;
   sourceRecovery?: 1 | 2;
-  modelVersion?: 1 | 2 | 3 | 4;
+  modelVersion?: 1 | 2 | 3 | 4 | 5;
   planInstructions?: 1 | 2;
   researchFocus?: 1 | 2;
   retrievalFallback?: 1 | 2;
@@ -483,8 +487,13 @@ export function buildPlanRequest(
       task: "検索可能な原文claimを1つ選んでreadyの計画を作る。通常候補は事実文、tableContext付きは表の行をexact指定する。裏付け判定と資料取得は後続段階。",
     });
   }
-  if (![1, 2, 3, 4].includes(modelVersion)) throw Error("seo_model_missing");
-  if (modelVersion === 2 || modelVersion === 3 || modelVersion === 4)
+  if (![1, 2, 3, 4, 5].includes(modelVersion)) throw Error("seo_model_missing");
+  if (
+    modelVersion === 2 ||
+    modelVersion === 3 ||
+    modelVersion === 4 ||
+    modelVersion === 5
+  )
     request.max_output_tokens = SEO_PLAN_OUTPUT_TOKENS;
   return request;
 }
@@ -649,6 +658,18 @@ export async function researchArticle(
       );
     },
   )) as ResearchPlan;
+  if (context.modelVersion === 5) {
+    if (!scope) throw Error("seo_external_scope");
+    await parallelResearch(
+      env,
+      context,
+      source,
+      plan,
+      scope,
+      (phase, input, action) => check(env, context, phase, input, action),
+    );
+    return loadResearch(env, context);
+  }
   // Bind the search input to the persisted plan, never ask the model to select again.
   const focused = {
     ...focusedInput(source.content, context.sourceSha256, plan),
@@ -835,6 +856,11 @@ export async function loadResearch(
     (await sha256(JSON.stringify(evidence))) !== row.result_sha256
   )
     throw new Error("seo_check_evidence");
+  if (context.modelVersion === 5) {
+    await verifyParallelResearch(env, context, evidence);
+    evidenceReferences(evidence);
+    return evidence;
+  }
   if (context.sourceRecovery === 2) {
     const proof = await loadSourceRecovery(env, context.jobId);
     if (proof.checkedAt >= context.deadline || proof.checkedAt > Date.now())

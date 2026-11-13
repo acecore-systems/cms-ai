@@ -1,3 +1,4 @@
+import { loadSeoMuseEffort } from "./seo-muse-effort.ts";
 import type { AppEnv } from "./env.ts";
 import { callMeta, MUSE_MODEL } from "./meta.ts";
 import {
@@ -5,7 +6,7 @@ import {
   museUpperCost,
   validateMuseResponse,
 } from "./seo-muse.ts";
-import { haikuSchema } from "./seo-haiku.ts";
+import { textSchema } from "./seo-text-schema.ts";
 import { SeoBudget, sha256 } from "./seo-budget.ts";
 import { assertStageInput } from "./seo-stage-budget.ts";
 import { assertPlanOutputPreflight } from "./seo-plan-output.ts";
@@ -20,7 +21,8 @@ export async function seoMuseTextResponse(
     articleKey: string;
     deadline: number;
     request: Record<string, unknown>;
-    phase: "plan" | "review";
+    phase: "plan" | "review" | "discovery" | "research";
+    modelVersion?: 4 | 5;
     budgetVersion?: number;
     recovery?: number;
     reviewOutput?: number;
@@ -30,17 +32,27 @@ export async function seoMuseTextResponse(
   let reserved = false;
   try {
     const request = args.request;
-    const schema = haikuSchema(request, true),
-      payload = musePayload(request, true);
+    const schema = textSchema(request, true),
+      payload = musePayload(
+        request,
+        true,
+        await loadSeoMuseEffort(env, args.jobId, args.phase),
+      );
     assertStageInput(
-      args.phase,
+      args.phase === "discovery" ? "research" : args.phase,
       payload,
       args.budgetVersion,
       args.recovery,
       args.reviewOutput,
     );
     if (args.phase === "plan")
-      await assertPlanOutputPreflight(env, args.jobId, args.runId, payload, 4);
+      await assertPlanOutputPreflight(
+        env,
+        args.jobId,
+        args.runId,
+        payload,
+        args.modelVersion ?? 4,
+      );
     const amount = museUpperCost(payload);
     const raw = await callMeta(
       env,
@@ -60,7 +72,7 @@ export async function seoMuseTextResponse(
             jobId: args.jobId,
             phase: args.phase,
             model: MUSE_MODEL,
-            modelVersion: 4,
+            modelVersion: args.modelVersion ?? 4,
           },
         );
         reserved = true;

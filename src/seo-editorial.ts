@@ -16,7 +16,7 @@ import {
   loadContinuation,
 } from "./seo-review-continuation.ts";
 import { SEO_DEEPSEEK } from "./seo-deepseek.ts";
-import { HAIKU_MODEL } from "./anthropic.ts";
+import { RETIRED_HAIKU_MODEL } from "./seo-model-retirement.ts";
 import {
   parseTrial,
   trialStatements,
@@ -90,8 +90,9 @@ type Run = {
 type EditorialJob = {
   editorial_scope: 1 | 2;
   source_recovery: 1 | 2;
-  model_version: 1 | 2 | 3 | 4;
+  model_version: 1 | 2 | 3 | 4 | 5;
   generation_output: 1 | 2;
+  effort_policy: 0 | 1;
   plan_instructions: 1 | 2;
   research_focus: 1 | 2;
   retrieval_fallback: 1 | 2;
@@ -142,7 +143,7 @@ export const runRow = (env: AppEnv, runId: string) =>
     .first<Run>();
 export const jobRow = (env: AppEnv, jobId: string) =>
   env.CMS_AI_DB.prepare(
-    "SELECT j.*,COALESCE(e.version,1) AS editorial_scope,COALESCE(mu.version,h.version,m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(mg.version,g.version,1) AS generation_output,COALESCE(s.version,1) AS source_recovery,COALESCE(f.version,1) AS research_focus,COALESCE(rf.version,1) AS retrieval_fallback FROM seo_editorial_jobs j LEFT JOIN seo_editorial_scope_contracts e ON e.job_id=j.id LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_haiku_job_models h ON h.job_id=j.id LEFT JOIN seo_muse_job_models mu ON mu.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_muse_generation_contracts mg ON mg.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id LEFT JOIN seo_retrieval_fallback_contracts rf ON rf.job_id=j.id WHERE j.id=?",
+    "SELECT j.*,COALESCE(e.version,1) AS editorial_scope,COALESCE(v5.version,mu.version,h.version,m.version,1) AS model_version,COALESCE(p.version,1) AS plan_instructions,COALESCE(ve.generation_version,vg.version,mg.version,g.version,1) AS generation_output,COALESCE(ve.version,0) AS effort_policy,COALESCE(s.version,1) AS source_recovery,COALESCE(f.version,1) AS research_focus,COALESCE(rf.version,1) AS retrieval_fallback FROM seo_editorial_jobs j LEFT JOIN seo_editorial_scope_contracts e ON e.job_id=j.id LEFT JOIN seo_job_models m ON m.job_id=j.id LEFT JOIN seo_haiku_job_models h ON h.job_id=j.id LEFT JOIN seo_muse_job_models mu ON mu.job_id=j.id LEFT JOIN seo_v5_job_models v5 ON v5.job_id=j.id LEFT JOIN seo_plan_contracts p ON p.job_id=j.id LEFT JOIN seo_generation_contracts g ON g.job_id=j.id LEFT JOIN seo_muse_generation_contracts mg ON mg.job_id=j.id LEFT JOIN seo_v5_generation_contracts vg ON vg.job_id=j.id LEFT JOIN seo_v5_effort_contracts ve ON ve.job_id=j.id LEFT JOIN seo_source_recovery_contracts s ON s.job_id=j.id LEFT JOIN seo_research_focus_contracts f ON f.job_id=j.id LEFT JOIN seo_retrieval_fallback_contracts rf ON rf.job_id=j.id WHERE j.id=?",
   )
     .bind(jobId)
     .first<EditorialJob>();
@@ -319,6 +320,14 @@ export async function startEditorial(
       }
       if (existing.input_sha256 !== inputHash)
         return { status: "unresolved" as const };
+      if (
+        existing.job_id &&
+        (await jobRow(env, existing.job_id))?.model_version === 3
+      )
+        return {
+          status: "retired" as const,
+          reason: "seo_haiku_retired" as const,
+        };
       return {
         status:
           existing.status === "unresolved"
@@ -327,6 +336,11 @@ export async function startEditorial(
         ...(existing.job_id ? { jobId: existing.job_id } : {}),
       };
     }
+    if (String(env.SEO_AI_MODEL) === RETIRED_HAIKU_MODEL)
+      return {
+        status: "retired" as const,
+        reason: "seo_haiku_retired" as const,
+      };
     const now = Date.now();
     if (deadline <= now || deadline > now + 30 * 60_000)
       return { status: "stopped" as const };
@@ -390,6 +404,13 @@ async function advance(env: AppEnv, runId: string) {
     }
     if (String(env.SEO_AI_MODEL) === SEO_DEEPSEEK)
       throw Error("seo_deepseek_retired");
+    if (
+      String(env.SEO_AI_MODEL) === MUSE_MODEL &&
+      !["parallel-free", "luna-legacy"].includes(
+        String(env.SEO_SEARCH_PROVIDER),
+      )
+    )
+      throw Error("seo_search_provider_invalid");
     const jobId = crypto.randomUUID();
     const transaction = await env.CMS_AI_DB.batch([
       env.CMS_AI_DB.prepare(
@@ -417,23 +438,25 @@ async function advance(env: AppEnv, runId: string) {
             ).bind(jobId, runId, run.candidate_index),
           ]
         : []),
-      ...(String(env.SEO_AI_MODEL) === MUSE_MODEL
+      ...(String(env.SEO_AI_MODEL) === MUSE_MODEL &&
+      env.SEO_SEARCH_PROVIDER === "parallel-free"
+        ? [
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_v5_job_models(job_id,version,text_model,search_model) SELECT ?,5,?,'parallel-free' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+            ).bind(jobId, MUSE_MODEL, runId, run.candidate_index),
+            env.CMS_AI_DB.prepare(
+              "INSERT INTO seo_v5_effort_contracts(job_id,version,generation_version,max_completion_tokens,generation_effort) SELECT ?,1,2,48000,'max' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
+            ).bind(jobId, runId, run.candidate_index),
+          ]
+        : []),
+      ...(String(env.SEO_AI_MODEL) === MUSE_MODEL &&
+      env.SEO_SEARCH_PROVIDER === "luna-legacy"
         ? [
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_muse_job_models(job_id,version,text_model,search_model) SELECT ?,4,?,'gpt-6-luna' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
             ).bind(jobId, MUSE_MODEL, runId, run.candidate_index),
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_muse_generation_contracts(job_id,version,max_completion_tokens,reasoning_effort) SELECT ?,2,48000,'medium' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
-            ).bind(jobId, runId, run.candidate_index),
-          ]
-        : []),
-      ...(String(env.SEO_AI_MODEL) === HAIKU_MODEL
-        ? [
-            env.CMS_AI_DB.prepare(
-              "INSERT INTO seo_haiku_job_models(job_id,version,text_model,search_model) SELECT ?,3,?,'gpt-6-luna' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
-            ).bind(jobId, HAIKU_MODEL, runId, run.candidate_index),
-            env.CMS_AI_DB.prepare(
-              "INSERT INTO seo_generation_contracts(job_id,version,max_completion_tokens,reasoning_effort) SELECT ?,2,48000,'high' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
             ).bind(jobId, runId, run.candidate_index),
           ]
         : []),
@@ -641,7 +664,9 @@ export async function editorialStatus(env: AppEnv, input: unknown) {
   try {
     let run = await runRow(env, (input as { runId: string }).runId);
     if (!run) return { status: "unresolved" as const };
-    if (run.status === "pending" && Date.now() >= run.deadline) {
+    const retiredJob =
+      run.job_id && (await jobRow(env, run.job_id))?.model_version === 3;
+    if (!retiredJob && run.status === "pending" && Date.now() >= run.deadline) {
       if (run.job_id) await markUnresolved(env, run.job_id);
       else
         await env.CMS_AI_DB.prepare(
@@ -653,6 +678,7 @@ export async function editorialStatus(env: AppEnv, input: unknown) {
     }
     if (
       run.job_id &&
+      !retiredJob &&
       !(await notify(env, run, (await jobRow(env, run.job_id))!))
     )
       return {
@@ -700,6 +726,8 @@ async function authorizedJob(
   const run = await runRow(env, job.run_id);
   if (!run || run.job_id !== job.id)
     throw new HttpError(409, "SEOジョブは終了しています。");
+  if (bind && job.status === "queued" && job.model_version === 3)
+    throw new HttpError(409, "seo_haiku_retired");
   if (bind && job.status === "queued") {
     await env.CMS_AI_DB.prepare(
       "UPDATE seo_editorial_jobs SET github_run_id=?,status='inspecting' WHERE id=? AND status='queued' AND github_run_id IS NULL",
@@ -730,6 +758,8 @@ export async function handleSeoRunnerRequest(request: Request, env: AppEnv) {
     match[1],
     operation === "read",
   );
+  if (job.model_version === 3 && operation !== "read")
+    return json({ status: "retired", reason: "seo_haiku_retired" }, 409);
   if (operation === "unresolved") {
     await markUnresolved(env, job.id);
     return json({ status: "unresolved" });
@@ -1118,7 +1148,8 @@ async function claimJob(
     const modelMaximum =
       (job.model_version === 2 ||
         job.model_version === 3 ||
-        job.model_version === 4) &&
+        job.model_version === 4 ||
+        job.model_version === 5) &&
       generationAllocation
         ? fallbackMaximum(
             generationAllocation,
@@ -1143,7 +1174,8 @@ async function claimJob(
           ).maximum) >
         (job.model_version === 2 ||
         job.model_version === 3 ||
-        job.model_version === 4
+        job.model_version === 4 ||
+        job.model_version === 5
           ? newJobMonthLimit(monthJst)
           : monthBudgetMicros(monthJst))
         ? ["monthly_budget_insufficient"]
@@ -1335,6 +1367,15 @@ export async function startReviewContinuation(env: AppEnv, input: unknown) {
       deadline: v.deadline,
     });
     if (!enabled(env)) throw Error("disabled");
+    const priorRun = await runRow(env, v.oldRunId);
+    if (
+      priorRun?.job_id &&
+      (await jobRow(env, priorRun.job_id))?.model_version === 3
+    )
+      return {
+        status: "retired" as const,
+        reason: "seo_haiku_retired" as const,
+      };
     const old = await inspectContinuationRequest(env, v.oldRunId, v.deadline);
     if (!(await continuationBudgetFits(env, old.reviewMicros)))
       throw Error("budget");
@@ -1770,7 +1811,8 @@ async function propose(
     },
     job.model_version === 2 ||
       job.model_version === 3 ||
-      job.model_version === 4
+      job.model_version === 4 ||
+      job.model_version === 5
       ? {
           jobId: job.id,
           version: job.model_version,

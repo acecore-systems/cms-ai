@@ -48,6 +48,8 @@ export async function recoverSources(
   source: string,
   deadline: number,
   fetcher: typeof fetch = fetch,
+  captureBody?: (url: string, bytes: Uint8Array) => Promise<void>,
+  allowParents = true,
 ): Promise<SourceRecovery> {
   if (d.version !== 5) throw new Error("seo_check_evidence");
   const proof: SourceRecovery = {
@@ -112,7 +114,7 @@ export async function recoverSources(
         if ([404, 410].includes(response.status)) {
           await response.body?.cancel();
           visit.status = response.status;
-          url = parent(url);
+          url = allowParents ? parent(url) : null;
           continue;
         }
         if (
@@ -155,6 +157,7 @@ export async function recoverSources(
           new Uint8Array(await crypto.subtle.digest("SHA-256", body)),
           (x) => x.toString(16).padStart(2, "0"),
         ).join("");
+        if (captureBody) await captureBody(url, body);
         visit.status = 200;
         chain.selected = url;
         break;

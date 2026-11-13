@@ -15,7 +15,7 @@ export function metaPayload(request: Record<string, unknown>) {
     model: MUSE_MODEL,
     messages: request.messages,
     max_tokens: request.max_completion_tokens,
-    reasoning_effort: "medium",
+    reasoning_effort: request.reasoning_effort ?? "medium",
     store: false,
     response_format: {
       type: "json_schema",

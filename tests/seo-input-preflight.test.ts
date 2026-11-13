@@ -10,17 +10,17 @@ import { seoSite } from "../src/sites.ts";
 import { sha256 } from "../src/seo-hash.ts";
 import { stageBudget } from "../src/seo-stage-budget.ts";
 import { buildPlanRequest } from "../src/seo-checks.ts";
-import { haikuPayload } from "../src/seo-haiku.ts";
+import { musePayload } from "../src/seo-muse.ts";
 import { externalScope } from "../src/seo-external-sources.ts";
 
-it("current eligibility measures the exact new-job Haiku plan envelope", () => {
+it("current eligibility measures the exact new-job Muse plan envelope", () => {
   const options = currentInputPreflightOptions("acecore-systems");
   const source = {
     path: "src/content/insights/example.md",
     content:
       "---\ntitle: Example\n---\nExampleEngine のローダーがファイルを再帰検出します。",
   };
-  expect(options.model_version).toBe(3);
+  expect(options.model_version).toBe(4);
   const request = buildPlanRequest(
     source.content,
     2,
@@ -28,15 +28,56 @@ it("current eligibility measures the exact new-job Haiku plan envelope", () => {
     externalScope(options.site_id, source),
     2,
     2,
-    3,
+    4,
   );
-  const payload = haikuPayload(request, true);
+  const payload = musePayload(request, true);
   expect(payload.max_tokens).toBe(24000);
   expect(planInputBytes(source, options)).toBe(
     Buffer.byteLength(JSON.stringify(payload)),
   );
   expect(planInputBytes(source, { ...options, model_version: 1 })).not.toBe(
     planInputBytes(source, options),
+  );
+});
+
+it("preflights new v5 using the exact stage effort envelope", async () => {
+  const spec = seoSite("systems")!;
+  const content =
+    '---\ntitle: Test\ndate: "2026-10-01"\n---\nExternal product supports complete configuration settings.';
+  const files = [
+    { path: "src/content/insights/example.md", content },
+    ...spec.locales.map((locale) => ({
+      path: `src/content/insights/${locale}/example.md`,
+      content: content + locale,
+    })),
+    ...spec.guidance.map((path) => ({ path, content: "Original guide." })),
+  ];
+  const article = sourceIdentity(
+    "systems",
+    "https://systems.acecore.net/insights/example/",
+    files,
+  )!;
+  const options = {
+    ...currentInputPreflightOptions(spec.site.id, 5),
+    editorial_scope: 1 as const,
+  };
+  const hash = await sha256(content);
+  const current = inputPreflight(
+    spec.site,
+    article,
+    files,
+    hash,
+    "reason",
+    options,
+  );
+  const legacy = inputPreflight(spec.site, article, files, hash, "reason", {
+    ...options,
+    effort_policy: 0,
+  });
+  expect(current.planBytes).toBe(legacy.planBytes);
+  expect(current.reviewBytes).toBe(legacy.reviewBytes - 3);
+  expect(current.generationInputs.map((x) => x.bytes)).toEqual(
+    legacy.generationInputs.map((x) => x.bytes - 3),
   );
 });
 

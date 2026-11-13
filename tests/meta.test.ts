@@ -25,12 +25,12 @@ const request = {
 };
 afterEach(() => vi.unstubAllGlobals());
 
-it("pins the Meta model, effort, image, and strict schema", () => {
+it("preserves the selected effort with the Meta model, image, and strict schema", () => {
   expect(metaPayload(request)).toEqual({
     model: MUSE_MODEL,
     messages: request.messages,
     max_tokens: 12000,
-    reasoning_effort: "medium",
+    reasoning_effort: "high",
     store: false,
     response_format: {
       type: "json_schema",
@@ -69,3 +69,12 @@ it("uses the fixed endpoint and refuses unexpected models or truncation", async 
   expect(fetcher.mock.calls[0][1].redirect).toBe("manual");
   await expect(runMeta(env, request)).rejects.toThrow("meta_response_invalid");
 });
+
+it.each(["minimal", "low", "medium", "high", "xhigh", "max"])(
+  "sends selected effort %s",
+  (effort) => {
+    expect(
+      metaPayload({ ...request, reasoning_effort: effort }).reasoning_effort,
+    ).toBe(effort);
+  },
+);

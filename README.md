@@ -6,10 +6,10 @@ AcecoreのSveltia CMS採用サイトで共用する、会話型CMS AI基盤で�
 
 ## 方針
 
-- `CMS_AI_MODEL` は `claude-haiku-5-5` です。Anthropic Messages APIでテキストと参考画像から会話回答・編集案を生成します。`ANTHROPIC_API_KEY` Worker secretが必要です。モデル自動切替やschemaを外した再送はしません。
+- `CMS_AI_MODEL` は `muse-ember-1.0` です。Meta Model APIでテキストと参考画像から会話回答・編集案を生成します。モデル自動切替やschemaを外した再送はしません。
 - 拒否・出力上限・不正形式は変更案として受理しません。応答検証の失敗には固定値の診断だけを使い、会話・ソース・画像・応答本文・推論過程をログに記録しません。
-- 推論深度はメッセージごとに`low`、`medium`、`high`、`max`から選べ、同名のAnthropic effortを使います（[公式仕様](https://platform.claude.com/docs/en/models/haiku-5-5/overview)）。
-- 新規SEO jobの文章判断・生成・校閲もHaiku、調査・検索は既存Luna hosted searchを使います。保存済みv2のDeepSeek呼出しは送信前に停止し、証跡・予約は変更しません。詳細と移行順は[移行記録](docs/seo-haiku-migration.md)を参照してください。
+- CMSでは `minimal` / `low` / `medium` / `high` / `xhigh` / `max` の推論深度を選択できます。相談専用権限の新規会話は `low`、編集権限は `medium` を初期値とし、深い編集には `max` を選べます。
+- 新規SEO jobの文章判断・生成・校閲はMuse、調査・検索は既存Luna hosted searchを使います。旧v2 DeepSeekとv3 Haikuの再開は送信・予約前に停止し、過去の証跡・予約を保持します。詳細は[SEO Muse移行記録](docs/seo-muse-migration.md)を参照してください。
 - 質問、相談、修正依頼は同じ会話で扱い、対象URLの入力は求めません。
 - 会話にPNG・JPEG・WebPを1回4枚、各2MiBまで添付・貼り付けできます。画像のみの送信も可能です。画像生成は行いません。
 - 添付は非公開R2へ保存し、Access・サイト権限・会話所有者の検証後にだけ配信します。GitHub Actionsや公開リポジトリへ画像データを渡しません。

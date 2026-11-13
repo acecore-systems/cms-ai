@@ -16,7 +16,7 @@ it("D1 atomically requires audit and preserves October weekly reserve across com
   try {
     const db = await mf.getD1Database("DB");
     for (const name of readdirSync(new URL("../migrations/", import.meta.url))
-      .filter((n) => n.endsWith(".sql") && n >= "0004")
+      .filter((n) => n.endsWith(".sql") && n.includes("_seo_") && n >= "0004")
       .sort()) {
       const sql = readFileSync(
         new URL("../migrations/" + name, import.meta.url),

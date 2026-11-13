@@ -1,4 +1,3 @@
-import { haikuPayload } from "../src/seo-haiku.ts";
 import { deepseekPayload, SEO_DEEPSEEK } from "../src/seo-deepseek.ts";
 import { SITES } from "../src/sites.ts";
 import { STAGE_INPUT_BYTES } from "../src/seo-stage-budget.ts";
@@ -208,113 +207,19 @@ it.each(["exact", "one-byte-over", "legacy"])(
   },
 );
 
-it.each(["valid", "missing-usage", "late", "budget"])(
-  "Haiku v3 generation reserves the exact payload and preserves evidence: %s",
-  async (kind) => {
-    const now = Date.parse("2026-11-03T01:00:00Z");
-    vi.spyOn(Date, "now").mockReturnValue(now);
-    const path = "src/content/blog/example.md",
-      files = [{ path, content: "original" }],
-      instruction = "参考資料に基づき改訂案を作成";
-    const expected = haikuPayload(
-      buildSeoGenerationRequest(
-        SITES.find((s) => s.id === "homepage-hatt")!,
-        path,
-        [path],
-        instruction,
-        files,
-      ),
-    );
-    const entries: any[] = [],
-      stored: string[] = [],
-      states: any[] = [];
-    const result = {
-      changes: [{ path, content: "revised", reason: "copy" }],
-      summary: "proposal",
-      clarification: "",
-    };
-    const fetcher = vi.fn(async (_url, options) => {
-      expect(entries.length).toBe(3);
-      expect(JSON.parse(options.body)).toEqual(expected);
-      if (kind === "late") vi.mocked(Date.now).mockReturnValue(now + 60001);
-      return new Response(
-        JSON.stringify({
-          type: "message",
-          role: "assistant",
-          model: "claude-haiku-5-5",
-          stop_reason: "end_turn",
-          content: [{ type: "text", text: JSON.stringify(result) }],
-          ...(kind === "missing-usage"
-            ? {}
-            : {
-                usage: {
-                  input_tokens: 100,
-                  output_tokens: 100,
-                  cache_read_input_tokens: 0,
-                  cache_creation_input_tokens: 0,
-                },
-              }),
-        }),
-      );
-    });
-    vi.stubGlobal("fetch", fetcher);
-    const env = {
+it("rejects a historical v3 generation before reservation or network", async () => {
+  const batch = vi.fn(),
+    fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const result = await generateSeo(
+    {
       SEO_GENERATION_ENABLED: "true",
-      ANTHROPIC_API_KEY: "fixture",
-      CMS_AI_DB: {
-        prepare: (query: string) => ({
-          bind: (...args: any[]) => ({
-            query,
-            args,
-            run: async () => {
-              states.push(args);
-              return { meta: { changes: 1 } };
-            },
-          }),
-        }),
-        batch: async (items: any[]) => {
-          if (kind === "budget") throw Error("cap");
-          entries.push(...items);
-          return items.map(() => ({ meta: { changes: 1 } }));
-        },
-      },
-      CMS_AI_IMAGES: {
-        put: async (key: string) => {
-          stored.push(key);
-          return {};
-        },
-      },
-    } as unknown as AppEnv;
-    const response = await generateSeo(
-      env,
-      {
-        runId: "seo-00000000-0000-4000-8000-000000000001",
-        callId: "seo-00000000-0000-4000-8000-000000000002",
-        siteId: "homepage-hatt",
-        articlePath: path,
-        allowedPaths: [path],
-        instruction,
-        files,
-        deadline: now + 60000,
-        budgetVersion: 2,
-        researchBudget: true,
-        generationInputCap: Buffer.byteLength(JSON.stringify(expected)),
-      },
-      { jobId: "00000000-0000-4000-8000-000000000003", version: 3 },
-    );
-    expect(response.status).toBe(
-      kind === "valid"
-        ? "proposal_created"
-        : kind === "budget"
-          ? "stopped"
-          : "unresolved",
-    );
-    expect(fetcher).toHaveBeenCalledTimes(kind === "budget" ? 0 : 1);
-    if (kind !== "budget") {
-      expect(stored[0]).toContain("seo-provider-responses/");
-      expect(states.at(-1)[0]).toBe(
-        kind === "valid" ? "complete" : "unresolved",
-      );
-    }
-  },
-);
+      CMS_AI_DB: { batch },
+    } as unknown as AppEnv,
+    {},
+    { jobId: "historical", version: 3 },
+  );
+  expect(result).toEqual({ status: "retired", reason: "seo_haiku_retired" });
+  expect(batch).not.toHaveBeenCalled();
+  expect(fetcher).not.toHaveBeenCalled();
+});
