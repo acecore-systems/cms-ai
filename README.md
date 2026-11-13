@@ -54,6 +54,8 @@ CMSの実モデル確認にはWorkers AIのremote bindingと有料アクセス�
 - `CMS_AI_GITHUB_APP_PRIVATE_KEY`
 - `CMS_AI_ADMIN_ACCESS_AUD`
 
+GitHub App秘密鍵は、`CMS_AI_GITHUB_APP_PRIVATE_KEY_STORE` bindingを設定した場合はSecrets Storeから取得します。binding未設定時のみ従来の`CMS_AI_GITHUB_APP_PRIVATE_KEY`を使い、取得失敗・空値ではフォールバックせず停止します。切替には専用のStore項目の準備、対象Workerへのbinding設定、非公開の動作確認と既存のCMS・SEO用途の検証が必要です。確認が完了するまで従来のsecretを保持し、問題時はbindingを外して戻します。値や取得エラーの詳細を記録しません。
+
 サイト別Access audienceは機密値ではありませんが、Access application作成後に`CMS_AI_SITE_AUDIENCES`へJSONで設定します。D1、custom domain、Access application、Pages Service Bindingは本番変更前に対象と影響を確認してから設定します。
 
 ## SEO定期処理との接続
