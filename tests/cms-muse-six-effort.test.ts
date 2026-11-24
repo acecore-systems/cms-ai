@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 import { getJob } from "../src/db.ts";
 import type { AppEnv } from "../src/env.ts";
-import { runInference } from "../src/inference.ts";
+import selection from "../config/ai-models.generated.json";
+import { handleRunnerRequest } from "../src/runner.ts";
 import { getSiteById } from "../src/sites.ts";
 import { handleUserRequest, readMessageInput } from "../src/user.ts";
 
@@ -13,6 +14,10 @@ vi.mock("../src/auth.ts", () => ({
     membership: { role: "editor" },
   }),
 }));
+vi.mock("../src/oidc.ts", () => ({
+  authenticateRunner: async () => ({ site: getSiteById("homepage-hatt") }),
+}));
+
 vi.mock("../src/github.ts", () => ({ dispatchCmsAiJob: async () => {} }));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -30,6 +35,8 @@ it("additive D1 migration preserves old jobs and carries each new effort from me
       ? (m as any).convertV4MiniflareOptions(options)
       : options,
   );
+  const policy = selection.features["cms.editor"];
+  const catalogModel = policy.api_model_id;
   try {
     const db = await mf.getD1Database("DB");
     for (const name of [
@@ -94,7 +101,7 @@ it("additive D1 migration preserves old jobs and carries each new effort from me
     ).toEqual(indexes);
     const fetcher = vi.fn(async (_url: string, init: RequestInit) =>
       Response.json({
-        model: "muse-ember-1.0",
+        model: policy.api_model_id,
         choices: [
           {
             finish_reason: "stop",
@@ -102,7 +109,16 @@ it("additive D1 migration preserves old jobs and carries each new effort from me
               content: JSON.stringify({
                 summary: "ok",
                 clarification: "",
-                changes: [],
+                changes:
+                  policy.api_model_id === catalogModel
+                    ? []
+                    : [
+                        {
+                          path: "src/pages/index.astro",
+                          content: "<main>updated</main>",
+                          reason: "fixture",
+                        },
+                      ],
               }),
             },
           },
@@ -112,10 +128,9 @@ it("additive D1 migration preserves old jobs and carries each new effort from me
     vi.stubGlobal("fetch", fetcher);
     const env = {
       CMS_AI_DB: db,
-      CMS_AI_MODEL: "muse-ember-1.0",
+
       META_API_KEY_STORE: { get: async () => "fixture" },
     } as unknown as AppEnv;
-    const site = getSiteById("homepage-hatt")!;
     for (const effort of ["minimal", "low", "medium", "high", "xhigh", "max"]) {
       const response = await handleUserRequest(
         new Request("https://example.test/admin/api/ai/jobs", {
@@ -153,16 +168,36 @@ it("additive D1 migration preserves old jobs and carries each new effort from me
           ? effort
           : null,
       });
-      await runInference(
+      // An alternate synthetic selection detects hardcoded outbound model IDs.
+      if (effort === "max") policy.api_model_id = "fixture-meta-model";
+      const inference = await handleRunnerRequest(
+        new Request("https://example.test/runner/inference", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobId: saved.id,
+            files: [{ path: "src/pages/index.astro", content: "<main />" }],
+          }),
+        }),
         env,
-        site,
-        saved,
-        [{ path: "src/pages/index.astro", content: "<main />" }],
-        [],
       );
-      expect(
-        JSON.parse(String(fetcher.mock.calls.at(-1)![1].body)).reasoning_effort,
-      ).toBe(effort);
+      expect(inference.status).toBe(200);
+      expect(await inference.json()).toMatchObject({
+        status: effort === "max" ? "running" : "responded",
+        result: {
+          changes:
+            effort === "max"
+              ? [expect.objectContaining({ path: "src/pages/index.astro" })]
+              : [],
+        },
+      });
+      const [endpoint, outbound] = fetcher.mock.calls.at(-1)!;
+      expect(endpoint).toBe("https://api.meta.ai/v1/chat/completions");
+      expect(JSON.parse(String(outbound.body))).toMatchObject({
+        model: effort === "max" ? "fixture-meta-model" : catalogModel,
+        reasoning_effort: effort,
+        response_format: { json_schema: { strict: true } },
+      });
     }
     await expect(
       readMessageInput(
@@ -184,6 +219,7 @@ it("additive D1 migration preserves old jobs and carries each new effort from me
         .run(),
     ).rejects.toThrow();
   } finally {
+    policy.api_model_id = catalogModel;
     await mf.dispose();
   }
 }, 30000);

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "policy_revision": "2026-11-18.3",
+  "features": {
+    "cms.editor": {
+      "profile": "text.default",
+      "provider": "meta",
+      "api_model_id": "muse-ember-1.0",
+      "execution_mode": "realtime"
+    }
+  }
+}

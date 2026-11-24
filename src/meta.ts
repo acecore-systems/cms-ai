@@ -2,7 +2,10 @@ import type { AppEnv } from "./env.ts";
 
 export const MUSE_MODEL = "muse-ember-1.0";
 
-export function metaPayload(request: Record<string, unknown>) {
+export function metaPayload(
+  request: Record<string, unknown>,
+  model = MUSE_MODEL,
+) {
   const schema = (request.response_format as any)?.json_schema;
   if (
     !Array.isArray(request.messages) ||
@@ -12,7 +15,7 @@ export function metaPayload(request: Record<string, unknown>) {
   )
     throw Error("meta_request_invalid");
   return {
-    model: MUSE_MODEL,
+    model,
     messages: request.messages,
     max_tokens: request.max_completion_tokens,
     reasoning_effort: request.reasoning_effort ?? "medium",
@@ -28,10 +31,11 @@ export async function runMeta(
   env: AppEnv,
   request: Record<string, unknown>,
   deadline?: number,
+  model = MUSE_MODEL,
 ) {
-  const raw = await callMeta(env, metaPayload(request), deadline);
+  const raw = await callMeta(env, metaPayload(request, model), deadline);
   if (
-    raw?.model !== MUSE_MODEL ||
+    raw?.model !== model ||
     raw?.choices?.length !== 1 ||
     raw.choices[0]?.finish_reason !== "stop" ||
     typeof raw.choices[0]?.message?.content !== "string"
