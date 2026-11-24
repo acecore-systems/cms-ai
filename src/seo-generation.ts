@@ -1,3 +1,4 @@
+import { loadSeoV5TextModel } from "./seo-model-policy.ts";
 import { loadSeoMuseEffort } from "./seo-muse-effort.ts";
 import { MUSE_MODEL } from "./meta.ts";
 import { museUpperCost } from "./seo-muse.ts";
@@ -141,6 +142,12 @@ export async function generateSeo(
       runId,
       callId,
     );
+    const profiledModel =
+      modelProfile?.version === 5
+        ? await loadSeoV5TextModel(env, modelProfile.jobId)
+        : modelProfile?.version === 4
+          ? MUSE_MODEL
+          : SEO_DEEPSEEK;
     const result = await runInference(
       env,
       site,
@@ -176,10 +183,7 @@ export async function generateSeo(
             ? {
                 jobId: modelProfile.jobId,
                 phase: "generation",
-                model:
-                  modelVersion === 4 || modelVersion === 5
-                    ? MUSE_MODEL
-                    : SEO_DEEPSEEK,
+                model,
                 modelVersion: modelVersion!,
               }
             : undefined,
@@ -191,10 +195,7 @@ export async function generateSeo(
       "seo",
       modelProfile
         ? {
-            model:
-              modelVersion === 4 || modelVersion === 5
-                ? MUSE_MODEL
-                : SEO_DEEPSEEK,
+            model: profiledModel,
             ...(modelVersion === 5
               ? {
                   reasoningEffort: await loadSeoMuseEffort(

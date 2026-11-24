@@ -1,3 +1,4 @@
+import { loadSeoV5TextModel } from "../src/seo-model-policy.ts";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AppEnv } from "../src/env.ts";
 import { MUSE_MODEL } from "../src/meta.ts";
@@ -146,7 +147,13 @@ it("workerd D1 atomically registers v4 and requires its matching audit for reser
   try {
     const db = await mf.getD1Database("DB");
     for (const name of readdirSync(new URL("../migrations/", import.meta.url))
-      .filter((n) => n.endsWith(".sql") && n.includes("_seo_") && n >= "0004")
+      .filter(
+        (n) =>
+          n.endsWith(".sql") &&
+          n.includes("_seo_") &&
+          n >= "0004" &&
+          n < "0051",
+      )
       .sort())
       await db.exec(
         readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8")
@@ -319,6 +326,46 @@ it("workerd D1 atomically registers v4 and requires its matching audit for reser
         )
         .run(),
     ).rejects.toThrow();
+    const originalModel = await db
+      .prepare("SELECT * FROM seo_v5_job_models WHERE job_id='new5'")
+      .first();
+    const originalAudit = await db
+      .prepare("SELECT * FROM seo_v5_model_calls WHERE job_id='new5'")
+      .first();
+    await db.exec(
+      readFileSync(
+        new URL(
+          "../migrations/0051_seo_v5_registry_routes.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ).replace(/\s+/g, " "),
+    );
+    expect(
+      await db
+        .prepare("SELECT * FROM seo_v5_job_models WHERE job_id='new5'")
+        .first(),
+    ).toEqual(originalModel);
+    expect(
+      await db
+        .prepare("SELECT * FROM seo_v5_model_calls WHERE job_id='new5'")
+        .first(),
+    ).toEqual(originalAudit);
+    expect(
+      await db
+        .prepare("SELECT * FROM seo_v5_registry_routes WHERE run_id='root2'")
+        .first(),
+    ).toBeNull();
+    expect(
+      await loadSeoV5TextModel({ CMS_AI_DB: db } as unknown as AppEnv, "new5"),
+    ).toBe(MUSE_MODEL);
+    await expect(
+      db
+        .prepare(
+          "INSERT INTO seo_v5_registry_routes VALUES('root2','2026-11-18.3','muse-ember-1.0')",
+        )
+        .run(),
+    ).rejects.toThrow(/seo_v5_registry_route_new_only/);
   } finally {
     await mf.dispose();
   }

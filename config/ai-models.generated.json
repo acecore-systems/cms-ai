@@ -7,6 +7,12 @@
       "provider": "meta",
       "api_model_id": "muse-ember-1.0",
       "execution_mode": "realtime"
+    },
+    "seo.editorial": {
+      "profile": "text.default",
+      "provider": "meta",
+      "api_model_id": "muse-ember-1.0",
+      "execution_mode": "realtime"
     }
   }
 }

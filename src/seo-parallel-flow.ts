@@ -1,3 +1,4 @@
+import { loadSeoV5TextModel } from "./seo-model-policy.ts";
 import type { AppEnv } from "./env.ts";
 import type { CheckContext } from "./seo-checks.ts";
 import type { EditorialFile } from "./seo-content.ts";
@@ -457,6 +458,7 @@ export async function verifyParallelResearch(
     visit.bodySha256 !== proof.evidence?.source?.bodySha256
   )
     throw Error("seo_check_evidence");
+  const model = await loadSeoV5TextModel(env, context.jobId);
   for (const [phase, callId] of [
     ["discovery", savedSelection.callId],
     ["research", row.call_id],
@@ -490,12 +492,13 @@ export async function verifyParallelResearch(
             context.jobId,
             phase as "discovery" | "research",
           ),
+          model,
         ),
       ),
     );
     if (
       !audit ||
-      audit.model !== "muse-ember-1.0" ||
+      audit.model !== model ||
       audit.request_sha256 !== audit.charged_hash ||
       audit.request_sha256 !== expectedHash ||
       audit.status !== "complete"

@@ -9,6 +9,7 @@ export function musePayload(
   request: Record<string, unknown>,
   responses = false,
   effort: SeoMuseEffort = "medium",
+  model = MUSE_MODEL,
 ) {
   const schema = textSchema(request, responses);
   return metaPayload(
@@ -27,6 +28,7 @@ export function musePayload(
           reasoning_effort: effort,
           response_format: { type: "json_schema", json_schema: schema },
         },
+    model,
   );
 }
 
@@ -75,7 +77,7 @@ export function validateMuseResponse(
     input > bytes + 8192 ||
     output > (payload.max_tokens as number) ||
     input * 0.3 + output * 1.5 > reserved ||
-    raw?.model !== MUSE_MODEL ||
+    raw?.model !== payload.model ||
     raw?.choices?.length !== 1 ||
     raw.choices[0]?.finish_reason !== "stop" ||
     typeof raw.choices[0]?.message?.content !== "string"

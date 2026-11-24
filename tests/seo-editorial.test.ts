@@ -1,3 +1,4 @@
+import selection from "../config/ai-models.generated.json";
 import { musePayload } from "../src/seo-muse.ts";
 import { verifyParallelResearch } from "../src/seo-parallel-flow.ts";
 import { expandSharedText } from "../src/seo-input-text.ts";
@@ -121,6 +122,7 @@ beforeEach(async () => {
     "0047_seo_muse_models.sql",
     "0048_seo_parallel_models.sql",
     "0049_seo_muse_effort.sql",
+    "0051_seo_v5_registry_routes.sql",
   ])
     sql.exec(
       readFileSync(
@@ -467,7 +469,10 @@ describe("SEO durable editorial boundary", () => {
       variant = "wiki-pass";
       deepseekProfile = true;
       env.SEO_AI_MODEL = "muse-ember-1.0";
-      if (parallel) env.SEO_SEARCH_PROVIDER = "parallel-free";
+      if (parallel) {
+        env.SEO_SEARCH_PROVIDER = "parallel-free";
+        env.SEO_AI_MODEL = "old-worker-variable";
+      }
       env.META_API_KEY_STORE = { get: async () => "fixture" };
       now = Date.parse("2026-11-03T01:00:00Z");
       clock.mockReturnValue(now);
@@ -756,7 +761,38 @@ describe("SEO durable editorial boundary", () => {
         ).status,
       ).toBe("claimed");
     } else jobId = await claimed();
-    const researchResult = await request(jobId, "research", {});
+    const editorialModel = selection.features["seo.editorial"];
+    const originalModel = editorialModel.api_model_id;
+    if (parallel) {
+      const saved = sql
+        .prepare(
+          "SELECT r.policy_revision,r.text_model,m.text_model AS job_model FROM seo_v5_registry_routes r JOIN seo_editorial_jobs j ON j.run_id=r.run_id JOIN seo_v5_job_models m ON m.job_id=j.id WHERE j.id=?",
+        )
+        .get(jobId);
+      expect(saved).toEqual({
+        policy_revision: selection.policy_revision,
+        text_model: originalModel,
+        job_model: originalModel,
+      });
+      expect(() =>
+        sql
+          .prepare(
+            "UPDATE seo_v5_registry_routes SET policy_revision='2026-11-26.1'",
+          )
+          .run(),
+      ).toThrow(/seo_v5_registry_route_immutable/);
+      expect(() =>
+        sql.prepare("DELETE FROM seo_v5_registry_routes").run(),
+      ).toThrow(/seo_v5_registry_route_immutable/);
+      editorialModel.api_model_id = "fixture-unsupported-after-admission";
+    }
+    const researchResult = await (async () => {
+      try {
+        return await request(jobId, "research", {});
+      } finally {
+        editorialModel.api_model_id = originalModel;
+      }
+    })();
     expect(
       researchResult.status,
       JSON.stringify(
@@ -3629,4 +3665,23 @@ it("keeps an existing v3 job readable and rejects every runner mutation without 
   );
   expect(fetcher).not.toHaveBeenCalled();
   expect(mocks.infer).not.toHaveBeenCalled();
+});
+
+it("fails closed before persisting or dispatching a new SEO run with an unsupported selection", async () => {
+  env.SEO_SEARCH_PROVIDER = "parallel-free";
+  const editorialModel = selection.features["seo.editorial"];
+  const originalModel = editorialModel.api_model_id;
+  try {
+    editorialModel.api_model_id = "fixture-unsupported-model";
+    expect(await start([candidate])).toEqual({ status: "unresolved" });
+    expect(
+      sql.prepare("SELECT COUNT(*) n FROM seo_editorial_runs").get()?.n,
+    ).toBe(0);
+    expect(
+      sql.prepare("SELECT COUNT(*) n FROM seo_budget_calls").get()?.n,
+    ).toBe(0);
+    expect(mocks.workflow).not.toHaveBeenCalled();
+  } finally {
+    editorialModel.api_model_id = originalModel;
+  }
 });

@@ -1,3 +1,4 @@
+import { loadSeoV5TextModel } from "./seo-model-policy.ts";
 import { loadSeoMuseEffort } from "./seo-muse-effort.ts";
 import type { AppEnv } from "./env.ts";
 import { callMeta, MUSE_MODEL } from "./meta.ts";
@@ -32,11 +33,16 @@ export async function seoMuseTextResponse(
   let reserved = false;
   try {
     const request = args.request;
+    const model =
+      args.modelVersion === 5
+        ? await loadSeoV5TextModel(env, args.jobId)
+        : MUSE_MODEL;
     const schema = textSchema(request, true),
       payload = musePayload(
         request,
         true,
         await loadSeoMuseEffort(env, args.jobId, args.phase),
+        model,
       );
     assertStageInput(
       args.phase === "discovery" ? "research" : args.phase,
@@ -71,7 +77,7 @@ export async function seoMuseTextResponse(
           {
             jobId: args.jobId,
             phase: args.phase,
-            model: MUSE_MODEL,
+            model,
             modelVersion: args.modelVersion ?? 4,
           },
         );
@@ -93,7 +99,7 @@ export async function seoMuseTextResponse(
     const result = {
       adapterVersion: 1,
       provider: "meta",
-      model: MUSE_MODEL,
+      model,
       id: raw.id,
       status: "completed",
       usage: {
