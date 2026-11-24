@@ -367,9 +367,17 @@ export async function dispatchSeoEditorialJob(
 
 async function createAppJwt(env: AppEnv) {
   const clientId = String(env.CMS_AI_GITHUB_APP_CLIENT_ID || "").trim();
-  const configuredPrivateKey = String(env.CMS_AI_GITHUB_APP_PRIVATE_KEY || "")
-    .replace(/\\n/g, "\n")
-    .trim();
+  let configuredPrivateKey: string;
+  try {
+    const value =
+      env.CMS_AI_GITHUB_APP_PRIVATE_KEY_STORE === undefined
+        ? env.CMS_AI_GITHUB_APP_PRIVATE_KEY
+        : await env.CMS_AI_GITHUB_APP_PRIVATE_KEY_STORE.get();
+    configuredPrivateKey =
+      typeof value === "string" ? value.replace(/\\n/g, "\n").trim() : "";
+  } catch {
+    throw new HttpError(503, "CMS AI GitHub Appの設定を確認できません。");
+  }
 
   if (!clientId || !configuredPrivateKey) {
     throw new HttpError(503, "CMS AI GitHub Appの設定を確認できません。");

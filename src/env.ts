@@ -1,8 +1,7 @@
 export type SecretName =
   | "CMS_AI_ADMIN_ACCESS_AUD"
   | "CMS_AI_GITHUB_APP_CLIENT_ID"
-  | "CMS_AI_GITHUB_APP_INSTALLATION_ID"
-  | "CMS_AI_GITHUB_APP_PRIVATE_KEY";
+  | "CMS_AI_GITHUB_APP_INSTALLATION_ID";
 
 export type SeoCoordinatorBinding = {
   claim(input: {
@@ -22,6 +21,8 @@ export type AppEnv = Omit<
   "SEO_COORDINATOR" | "SEO_SEARCH_PROVIDER"
 > &
   Record<SecretName, string> & {
+    CMS_AI_GITHUB_APP_PRIVATE_KEY?: string;
+    CMS_AI_GITHUB_APP_PRIVATE_KEY_STORE?: { get(): Promise<string> };
     OPENAI_API_KEY_STORE?: { get(): Promise<string> };
     META_API_KEY_STORE?: { get(): Promise<string> };
     SEO_SEARCH_PROVIDER?: string;
