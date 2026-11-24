@@ -1,3 +1,4 @@
+import { selectSeoEditorialModel } from "./seo-model-policy.ts";
 import { MUSE_MODEL } from "./meta.ts";
 import { reviewScopeVersion } from "./seo-review-scope.ts";
 import {
@@ -336,7 +337,8 @@ export async function startEditorial(
         ...(existing.job_id ? { jobId: existing.job_id } : {}),
       };
     }
-    if (String(env.SEO_AI_MODEL) === RETIRED_HAIKU_MODEL)
+    const parallel = env.SEO_SEARCH_PROVIDER === "parallel-free";
+    if (!parallel && String(env.SEO_AI_MODEL) === RETIRED_HAIKU_MODEL)
       return {
         status: "retired" as const,
         reason: "seo_haiku_retired" as const,
@@ -344,6 +346,7 @@ export async function startEditorial(
     const now = Date.now();
     if (deadline <= now || deadline > now + 30 * 60_000)
       return { status: "stopped" as const };
+    const route = parallel ? selectSeoEditorialModel() : null;
     const budgetRunId = "seo-" + crypto.randomUUID();
     const statement = env.CMS_AI_DB.prepare(
       "INSERT INTO seo_editorial_runs(run_id,budget_run_id,input_sha256,deadline,candidates_json,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(run_id) DO NOTHING",
@@ -355,21 +358,19 @@ export async function startEditorial(
       JSON.stringify(candidates),
       now,
     );
-    const inserted = trial
-      ? (
-          await env.CMS_AI_DB.batch([
-            ...trialStatements(
-              env,
-              trial,
-              value.runId,
-              budgetRunId,
-              now,
-              deadline,
-            ),
-            statement,
-          ])
-        ).at(-1)!
-      : await statement.run();
+    const statements = trial
+      ? trialStatements(env, trial, value.runId, budgetRunId, now, deadline)
+      : [];
+    statements.push(statement);
+    const runInsertIndex = statements.length - 1;
+    if (route) {
+      statements.push(
+        env.CMS_AI_DB.prepare(
+          "INSERT INTO seo_v5_registry_routes(run_id,policy_revision,text_model) SELECT run_id,?,? FROM seo_editorial_runs WHERE run_id=? AND budget_run_id=?",
+        ).bind(route.policyRevision, route.model, value.runId, budgetRunId),
+      );
+    }
+    const inserted = (await env.CMS_AI_DB.batch(statements))[runInsertIndex];
     if (inserted.meta.changes === 1) await advance(env, value.runId);
     const run = await runRow(env, value.runId);
     return {
@@ -387,6 +388,11 @@ export async function startEditorial(
 async function advance(env: AppEnv, runId: string) {
   let run = await runRow(env, runId);
   if (!run) throw new Error("run");
+  const savedRoute = await env.CMS_AI_DB.prepare(
+    "SELECT text_model FROM seo_v5_registry_routes WHERE run_id=?",
+  )
+    .bind(runId)
+    .first<{ text_model: string }>();
   const candidates: Candidate[] = JSON.parse(run.candidates_json);
   while (run.candidate_index < candidates.length) {
     alive(run);
@@ -402,9 +408,10 @@ async function advance(env: AppEnv, runId: string) {
       run = (await runRow(env, runId))!;
       continue;
     }
-    if (String(env.SEO_AI_MODEL) === SEO_DEEPSEEK)
+    if (!savedRoute && String(env.SEO_AI_MODEL) === SEO_DEEPSEEK)
       throw Error("seo_deepseek_retired");
     if (
+      !savedRoute &&
       String(env.SEO_AI_MODEL) === MUSE_MODEL &&
       !["parallel-free", "luna-legacy"].includes(
         String(env.SEO_SEARCH_PROVIDER),
@@ -438,18 +445,25 @@ async function advance(env: AppEnv, runId: string) {
             ).bind(jobId, runId, run.candidate_index),
           ]
         : []),
-      ...(String(env.SEO_AI_MODEL) === MUSE_MODEL &&
-      env.SEO_SEARCH_PROVIDER === "parallel-free"
+      ...(savedRoute ||
+      (String(env.SEO_AI_MODEL) === MUSE_MODEL &&
+        env.SEO_SEARCH_PROVIDER === "parallel-free")
         ? [
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_v5_job_models(job_id,version,text_model,search_model) SELECT ?,5,?,'parallel-free' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
-            ).bind(jobId, MUSE_MODEL, runId, run.candidate_index),
+            ).bind(
+              jobId,
+              savedRoute?.text_model ?? MUSE_MODEL,
+              runId,
+              run.candidate_index,
+            ),
             env.CMS_AI_DB.prepare(
               "INSERT INTO seo_v5_effort_contracts(job_id,version,generation_version,max_completion_tokens,generation_effort) SELECT ?,1,2,48000,'max' WHERE EXISTS(SELECT 1 FROM seo_editorial_runs WHERE run_id=? AND job_id IS NULL AND status='pending' AND candidate_index=?)",
             ).bind(jobId, runId, run.candidate_index),
           ]
         : []),
-      ...(String(env.SEO_AI_MODEL) === MUSE_MODEL &&
+      ...(!savedRoute &&
+      String(env.SEO_AI_MODEL) === MUSE_MODEL &&
       env.SEO_SEARCH_PROVIDER === "luna-legacy"
         ? [
             env.CMS_AI_DB.prepare(

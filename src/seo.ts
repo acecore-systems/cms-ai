@@ -1,3 +1,4 @@
+import { selectSeoEditorialModel } from "./seo-model-policy.ts";
 import { reviewContinuationProof } from "./seo-review-continuation.ts";
 import { reconsiderationProof } from "./seo-reconsideration.ts";
 import { seoRepositoryReader } from "./github.ts";
@@ -65,12 +66,9 @@ export class SeoEditorial extends WorkerEntrypoint<AppEnv> {
     const v = input as { site?: string; deadline?: number };
     const spec = v && typeof v.site === "string" ? seoSite(v.site) : null;
     if (!spec) throw new Error("seo_eligibility_unknown");
-    if (String(this.env.SEO_AI_MODEL) === "claude-haiku-5-5")
-      throw new Error("seo_haiku_retired");
-    if (String(this.env.SEO_AI_MODEL) !== "muse-ember-1.0")
-      throw new Error("seo_model_not_allowed");
     if (this.env.SEO_SEARCH_PROVIDER !== "parallel-free")
       throw new Error("seo_model_not_allowed");
+    selectSeoEditorialModel();
     return editorialEligibility(
       input,
       seoRepositoryReader(this.env, spec.site, v.deadline!),
@@ -81,10 +79,7 @@ export class SeoEditorial extends WorkerEntrypoint<AppEnv> {
     return new Response(null, { status: 404 });
   }
   async start(input: unknown) {
-    if (
-      this.env.SEO_SEARCH_PROVIDER !== "parallel-free" ||
-      this.env.SEO_AI_MODEL !== "muse-ember-1.0"
-    )
+    if (this.env.SEO_SEARCH_PROVIDER !== "parallel-free")
       return {
         status: "retired" as const,
         reason: "seo_legacy_model_retired" as const,
@@ -100,10 +95,7 @@ export class SeoEditorial extends WorkerEntrypoint<AppEnv> {
     deadline: number;
     candidates: unknown[];
   }) {
-    if (
-      this.env.SEO_SEARCH_PROVIDER !== "parallel-free" ||
-      this.env.SEO_AI_MODEL !== "muse-ember-1.0"
-    )
+    if (this.env.SEO_SEARCH_PROVIDER !== "parallel-free")
       return {
         status: "retired" as const,
         reason: "seo_legacy_model_retired" as const,

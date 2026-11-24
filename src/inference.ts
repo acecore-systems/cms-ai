@@ -667,7 +667,7 @@ export async function runTextModel(
       )
         throw Error("seo_model_not_allowed");
       const schema = textSchema(request),
-        payload = musePayload(request, false, seoEffort);
+        payload = musePayload(request, false, seoEffort, model);
       museUpperCost(payload);
       const raw = await callMeta(
         env,
