@@ -149,7 +149,6 @@ beforeEach(async () => {
   env = {
     SEO_EDITORIAL_ENABLED: "true",
     SEO_GENERATION_ENABLED: "true",
-    CMS_AI_MODEL: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
     SEO_AI_MODEL: "gpt-6-luna",
     SEO_SEARCH_PROVIDER: "luna-legacy",
     CMS_AI_DB: {

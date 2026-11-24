@@ -53,7 +53,7 @@ describe("shared client and runner assets", () => {
       new URL("../wrangler.jsonc", import.meta.url),
       "utf8",
     );
-    expect(config).toMatch(/"CMS_AI_MODEL":\s*"muse-ember-1.0"/);
+    expect(config).not.toContain('"CMS_AI_MODEL"');
     expect(config).toContain('"secret_name": "acecore-cms-meta-api-key"');
     expect(config).toContain('"SEO_AI_MODEL": "muse-ember-1.0"');
     expect(config).toContain('"SEO_SEARCH_PROVIDER": "parallel-free"');

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import selection from "../config/ai-models.generated.json";
+import { runMeta } from "../src/meta.ts";
 import type { AppEnv } from "../src/env.ts";
 import {
   parseInferenceResponse,
@@ -10,35 +12,50 @@ import type { Job, Role } from "../src/models.ts";
 import { getSiteById } from "../src/sites.ts";
 
 const site = getSiteById("homepage-hatt")!;
-const workersModel = "@cf/example/chat-model";
+const cmsModel = selection.features["cms.editor"].api_model_id;
 
-it("refuses the retired Haiku CMS configuration before any provider call", async () => {
-  const fetcher = vi.fn();
-  vi.stubGlobal("fetch", fetcher);
+vi.mock("../src/meta.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/meta.ts")>()),
+  runMeta: vi.fn(),
+}));
+
+function mockCmsResponse(run: (request: any) => unknown) {
+  vi.mocked(runMeta).mockImplementation(async (_env, request) => run(request));
+}
+
+it.each([
+  { provider: "openai" },
+  { profile: "text.fast" },
+  { execution_mode: "batch" },
+  { api_model_id: "" },
+])("fails closed for an incompatible CMS selection %j", async (override) => {
+  const original = selection.features["cms.editor"];
+  selection.features["cms.editor"] = { ...original, ...override };
+  vi.mocked(runMeta).mockClear();
   try {
     await expect(
       runInference(
-        { CMS_AI_MODEL: "claude-haiku-5-5" } as unknown as AppEnv,
+        {} as AppEnv,
         site,
         job(),
-        [{ content: "<main/>", path: "src/pages/index.astro" }],
+        [{ path: "src/pages/index.astro", content: "<main/>" }],
         [],
       ),
-    ).rejects.toThrow();
-    expect(fetcher).not.toHaveBeenCalled();
+    ).rejects.toMatchObject({ status: 503 });
+    expect(runMeta).not.toHaveBeenCalled();
   } finally {
-    vi.unstubAllGlobals();
+    selection.features["cms.editor"] = original;
   }
 });
 
-describe("Workers AI inference", () => {
+describe("CMS inference", () => {
   it.each([
     ["low", "low"],
     ["medium", "medium"],
     ["high", "high"],
     ["max", "max"],
   ] as const)(
-    "Workers AIの編集へ%sを%sとして送りschema付き応答を検証する",
+    "CMSの編集へ%sを%sとして送りschema付き応答を検証する",
     async (effort, mappedEffort) => {
       const change = {
         content: "<main>after</main>\n",
@@ -59,10 +76,9 @@ describe("Workers AI inference", () => {
         ],
       });
       const getKey = vi.fn();
+      mockCmsResponse(run);
       const result = await runInference(
         {
-          AI: { run },
-          CMS_AI_MODEL: workersModel,
           SEO_AI_MODEL: "gpt-6-luna",
           OPENAI_API_KEY_STORE: { get: getKey },
         } as unknown as AppEnv,
@@ -73,8 +89,9 @@ describe("Workers AI inference", () => {
         "見出しはmain内だけを修正してください。",
       );
       expect(run).toHaveBeenCalledTimes(1);
-      const [model, input] = run.mock.calls[0];
-      expect(model).toBe(workersModel);
+      const [input] = run.mock.calls[0];
+      const model = vi.mocked(runMeta).mock.lastCall?.[3];
+      expect(model).toBe(cmsModel);
       expect(input).toMatchObject({
         max_completion_tokens: 12_000,
         reasoning_effort: mappedEffort,
@@ -92,27 +109,7 @@ describe("Workers AI inference", () => {
     },
   );
 
-  it("旧DeepSeek CMS設定は送信もfallbackもしない", async () => {
-    const run = vi.fn(),
-      getKey = vi.fn();
-    await expect(
-      runInference(
-        {
-          AI: { run },
-          CMS_AI_MODEL: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
-          OPENAI_API_KEY_STORE: { get: getKey },
-        } as unknown as AppEnv,
-        site,
-        job(),
-        [{ content: "<main/>", path: "src/pages/index.astro" }],
-        [],
-      ),
-    ).rejects.toThrow(/AIの応答/);
-    expect(run).not.toHaveBeenCalled();
-    expect(getKey).not.toHaveBeenCalled();
-  });
-
-  it("Workers AIでも許可範囲外の変更を拒否する", async () => {
+  it("CMSでも許可範囲外の変更を拒否する", async () => {
     const run = vi.fn().mockResolvedValue({
       choices: [
         {
@@ -128,9 +125,10 @@ describe("Workers AI inference", () => {
         },
       ],
     });
+    mockCmsResponse(run);
     await expect(
       runInference(
-        { AI: { run }, CMS_AI_MODEL: workersModel } as unknown as AppEnv,
+        {} as AppEnv,
         site,
         job(),
         [{ content: "<main/>\n", path: "src/pages/index.astro" }],
@@ -147,7 +145,6 @@ describe("Workers AI inference", () => {
       await expect(
         runInference(
           {
-            CMS_AI_MODEL: workersModel,
             SEO_AI_MODEL: "gpt-6-luna",
             OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
           } as unknown as AppEnv,
@@ -179,7 +176,6 @@ describe("Workers AI inference", () => {
       await expect(
         runInference(
           {
-            CMS_AI_MODEL: workersModel,
             SEO_AI_MODEL: "gpt-6-luna",
             OPENAI_API_KEY_STORE: { get: async () => "fixture-key" },
           } as unknown as AppEnv,
@@ -219,13 +215,12 @@ describe("Workers AI inference", () => {
         clarification: "青い四角です",
       },
     });
+    mockCmsResponse(run);
     const get = vi
       .fn()
       .mockResolvedValue({ size: 3, arrayBuffer: async () => bytes.buffer });
     const env = {
-      AI: { run },
       CMS_AI_IMAGES: { get },
-      CMS_AI_MODEL: workersModel,
     } as unknown as AppEnv;
     const previous = job({
       id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -241,8 +236,8 @@ describe("Workers AI inference", () => {
       [{ path: "src/pages/index.astro", content: "<main/>" }],
       [previous, current],
     );
-    const input = run.mock.calls[0][1];
-    expect(run.mock.calls[0][0]).toBe(workersModel);
+    const input = run.mock.calls[0][0];
+    expect(vi.mocked(runMeta).mock.lastCall?.[3]).toBe(cmsModel);
     expect(input.reasoning_effort).toBe("medium");
     expect(input.response_format.json_schema.required).toEqual([
       "summary",
@@ -265,12 +260,10 @@ describe("Workers AI inference", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const run = vi.fn().mockRejectedValue(new Error("private-image-payload"));
+      mockCmsResponse(run);
       await expect(
         runInference(
-          {
-            AI: { run },
-            CMS_AI_MODEL: "@cf/example/chat-model",
-          } as unknown as AppEnv,
+          {} as AppEnv,
           site,
           job(),
           [{ path: "src/pages/index.astro", content: "<main/>" }],
@@ -303,29 +296,26 @@ describe("Workers AI inference", () => {
       ).toThrow(/許可された/);
     }
   });
-  it("Workers AIへeffortと会話履歴を渡す", async () => {
+  it("CMSでeffortと会話履歴を渡す", async () => {
     const calls: Array<{ input: any; model: string; options: any }> = [];
-    const env = {
-      CMS_AI_MODEL: workersModel,
-      AI: {
-        async run(model: string, input: unknown, options: any) {
-          calls.push({ input, model, options });
-          return {
-            response: {
-              changes: [
-                {
-                  content: "<main>after</main>\n",
-                  path: "src/pages/index.astro",
-                  reason: "依頼された文言を更新します。",
-                },
-              ],
-              clarification: "",
-              summary: "トップページを更新しました。",
-            },
-          };
-        },
+    vi.mocked(runMeta).mockImplementation(
+      async (_env, input, options, model) => {
+        calls.push({ input, model: model!, options });
+        return {
+          response: {
+            changes: [
+              {
+                content: "<main>after</main>\n",
+                path: "src/pages/index.astro",
+                reason: "依頼された文言を更新します。",
+              },
+            ],
+            clarification: "",
+            summary: "トップページを更新しました。",
+          },
+        };
       },
-    } as unknown as AppEnv;
+    );
     const previous = job({
       assistantMessage: "現在の見出しを確認しました。",
       instruction: "見出しを確認して",
@@ -338,7 +328,7 @@ describe("Workers AI inference", () => {
       turnNumber: 2,
     });
     const result = await runInference(
-      env,
+      {} as AppEnv,
       site,
       current,
       [{ content: "<main>before</main>\n", path: "src/pages/index.astro" }],
@@ -346,7 +336,7 @@ describe("Workers AI inference", () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].model).toBe(workersModel);
+    expect(calls[0].model).toBe(cmsModel);
     expect(calls[0].options).toBe(undefined);
     expect(calls[0].input.reasoning_effort).toBe("high");
     expect(calls[0].input.response_format.type).toBe("json_schema");
@@ -357,28 +347,21 @@ describe("Workers AI inference", () => {
   });
 
   it("chat権限ではモデルが変更を返してもサーバー側で変更を空にする", async () => {
-    const env = {
-      CMS_AI_MODEL: workersModel,
-      AI: {
-        async run() {
-          return {
-            response: {
-              changes: [
-                {
-                  content: "<main>changed</main>",
-                  path: "src/pages/index.astro",
-                  reason: "変更案です。",
-                },
-              ],
-              clarification: "",
-              summary: "変更案を説明します。",
-            },
-          };
-        },
+    mockCmsResponse(() => ({
+      response: {
+        changes: [
+          {
+            content: "<main>changed</main>",
+            path: "src/pages/index.astro",
+            reason: "変更案です。",
+          },
+        ],
+        clarification: "",
+        summary: "変更案を説明します。",
       },
-    } as unknown as AppEnv;
+    }));
     const result = await runInference(
-      env,
+      {} as AppEnv,
       site,
       job({ requestedRole: "chat" }),
       [{ content: "<main>before</main>", path: "src/pages/index.astro" }],
@@ -441,30 +424,6 @@ describe("Workers AI inference", () => {
     });
   });
 
-  it("旧Luna CMS設定は送信もcredential取得もしない", async () => {
-    const fetcher = vi.fn();
-    const getKey = vi.fn();
-    vi.stubGlobal("fetch", fetcher);
-    try {
-      await expect(
-        runInference(
-          {
-            CMS_AI_MODEL: "gpt-6-luna",
-            OPENAI_API_KEY_STORE: { get: getKey },
-          } as unknown as AppEnv,
-          site,
-          job(),
-          [{ content: "<main>before</main>", path: "src/pages/index.astro" }],
-          [],
-        ),
-      ).rejects.toThrow("AIモデルの設定が無効です");
-      expect(getKey).not.toHaveBeenCalled();
-      expect(fetcher).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
   it.each(["", " \n\t"])(
     "回答と変更案が両方空の場合は空文字%sでもエラーにする",
     (text) => {
@@ -504,11 +463,12 @@ describe("inference response validation", () => {
     reason: string,
   ) {
     const run = vi.fn().mockResolvedValue(value);
+    mockCmsResponse(run);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       await expect(
         runInference(
-          { AI: { run }, CMS_AI_MODEL: workersModel } as unknown as AppEnv,
+          {} as AppEnv,
           site,
           job({ instruction: "private-instruction" }),
           [{ path: change.path, content: "private-source" }],
@@ -519,7 +479,7 @@ describe("inference response validation", () => {
       expect(warn).toHaveBeenCalledTimes(1);
       expect(JSON.parse(warn.mock.calls[0][0])).toEqual({
         event: "cms_ai_response_rejected",
-        model: workersModel,
+        model: cmsModel,
         purpose: "cms",
         phase,
         reason,

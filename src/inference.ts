@@ -1,3 +1,4 @@
+import { getCmsModel } from "./cms-model.ts";
 import type { SeoMuseEffort } from "./seo-muse-effort.ts";
 import { SEO_LONG_TEXT_MS } from "./seo-time-bounds.ts";
 import { RETIRED_HAIKU_MODEL } from "./seo-model-retirement.ts";
@@ -105,37 +106,36 @@ export async function runInference(
     request.max_completion_tokens = seoProvider.maxCompletionTokens;
   }
   const model =
-    purpose === "seo"
-      ? (seoProvider?.model ?? "gpt-6-luna")
-      : getModel(env, purpose);
+    purpose === "seo" ? (seoProvider?.model ?? "gpt-6-luna") : getCmsModel();
   if (
-    purpose === "cms" &&
-    model !== MUSE_MODEL &&
-    ["minimal", "xhigh"].includes(job.reasoningEffort)
-  )
-    throw new HttpError(
-      503,
-      "現在のAIモデルはこの考える深さに対応していません。",
-    );
-  if (model === "gpt-6-luna" && !env.OPENAI_API_KEY_STORE) {
+    purpose === "seo" &&
+    model === "gpt-6-luna" &&
+    !env.OPENAI_API_KEY_STORE
+  ) {
     throw new HttpError(503, "OpenAI APIの設定がありません。");
   }
   let response: unknown;
 
   try {
-    response = await runTextModel(
-      env,
-      model,
-      request,
-      beforeRequest,
-      requestDeadline,
-      purpose === "seo" && !!seoProvider,
-      seoProvider?.onResponse,
-      seoProvider?.reasoningEffort,
-    );
+    if (purpose === "cms" && beforeRequest)
+      throw Error("seo_model_not_allowed");
+    response =
+      purpose === "cms"
+        ? await runMeta(env, request, requestDeadline, model)
+        : await runTextModel(
+            env,
+            model,
+            request,
+            beforeRequest,
+            requestDeadline,
+            purpose === "seo" && !!seoProvider,
+            seoProvider?.onResponse,
+            seoProvider?.reasoningEffort,
+          );
   } catch (error) {
     if (error instanceof HttpError) throw error;
     if (
+      purpose === "cms" ||
       model === "gpt-6-luna" ||
       model === DEEPSEEK_MODEL ||
       model === RETIRED_HAIKU_MODEL ||
@@ -619,17 +619,6 @@ function parseJson(value: string): unknown {
       "AIの応答形式を確認できません。",
     );
   }
-}
-
-function getModel(env: AppEnv, purpose: "cms" | "seo") {
-  const configured = String(
-    (purpose === "seo" ? env.SEO_AI_MODEL : env.CMS_AI_MODEL) || "",
-  ).trim();
-  const model = configured;
-  if (model !== MUSE_MODEL && !isWorkersAiTextModel(model)) {
-    throw new HttpError(503, "AIモデルの設定が無効です。");
-  }
-  return model;
 }
 
 function openAiPayload(

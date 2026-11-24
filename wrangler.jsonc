@@ -52,7 +52,6 @@
     "CMS_AI_ACCESS_TEAM_DOMAIN": "https://acecore.cloudflareaccess.com",
     "CMS_AI_AUTOMERGE_ENABLED": "false",
     "CMS_AI_GITHUB_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
-    "CMS_AI_MODEL": "muse-ember-1.0",
     "SEO_AI_MODEL": "muse-ember-1.0",
     "SEO_SEARCH_PROVIDER": "parallel-free",
     "CMS_AI_RUNNER_AUDIENCE": "https://cms-ai.acecore.net/runner",
